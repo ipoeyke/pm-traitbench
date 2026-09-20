@@ -98,7 +98,7 @@ def test_build_parser_duplicate_stage_names_raises_value_error_naming_the_stage(
 def test_build_parser_duplicate_stage_numbers_raises_value_error_naming_the_number() -> None:
     stage_a = Stage(number=1, name="fake_a", help="a", run=_write_two_traits)
     stage_b = Stage(number=1, name="fake_b", help="b", run=_write_two_traits)
-    with pytest.raises(ValueError, match="1"):
+    with pytest.raises(ValueError, match=r"duplicate stage number: 1$"):
         build_parser((stage_a, stage_b))
 
 

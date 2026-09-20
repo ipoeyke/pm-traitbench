@@ -5,6 +5,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from pm_traitbench.distributions import BetaSpec, Distribution, LogNormalSpec
+from pm_traitbench.errors import SamplingError
 
 _DISTRIBUTION_ADAPTER = TypeAdapter(Distribution)
 
@@ -116,7 +117,7 @@ def test_narrow_window_over_an_array_never_returns_inf() -> None:
     assert np.all(np.isfinite(values))
 
 
-def test_non_finite_ppf_result_raises_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_finite_ppf_result_raises_sampling_error(monkeypatch: pytest.MonkeyPatch) -> None:
     spec = LogNormalSpec(median=1.1, sigma=0.10)
     frozen = spec._frozen()
 
@@ -128,7 +129,7 @@ def test_non_finite_ppf_result_raises_value_error(monkeypatch: pytest.MonkeyPatc
             return np.full_like(np.asarray(q, dtype=float), np.inf)
 
     monkeypatch.setattr(spec, "_frozen", lambda: _AlwaysInf())
-    with pytest.raises(ValueError, match="non-finite"):
+    with pytest.raises(SamplingError, match="non-finite"):
         spec.ppf(0.5)
 
 

@@ -214,9 +214,10 @@ def test_drift_event_dormant_valid() -> None:
 # --- Trait bias/preference invariants ---
 
 
-def test_trait_bias_requires_float_value() -> None:
-    with pytest.raises(ValidationError):
-        _bias_trait(value="not-a-number")
+@pytest.mark.parametrize("text", ["not-a-number", "inf", "nan", "1_0", " 5 ", "1e999"])
+def test_trait_bias_rejects_text_that_is_not_a_finite_plain_number(text: str) -> None:
+    with pytest.raises(ValidationError, match="finite number"):
+        _bias_trait(value=text)
 
 
 def test_trait_bias_requires_positive_multipliers() -> None:

@@ -6,6 +6,8 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from scipy import stats
 
+from pm_traitbench.errors import SamplingError
+
 
 class _BoundedSpec(BaseModel):
     """Shared truncation logic for distribution specs with optional lo/hi bounds."""
@@ -48,7 +50,7 @@ class _BoundedSpec(BaseModel):
         q = np.clip(f_lo + uu * (f_hi - f_lo), 1e-12, 1 - 1e-12)
         result = dist.ppf(q)
         if not np.all(np.isfinite(result)):
-            raise ValueError(
+            raise SamplingError(
                 f"ppf produced a non-finite value for bounds [lo={self.lo}, hi={self.hi}]"
             )
         return float(result[0]) if is_scalar else result

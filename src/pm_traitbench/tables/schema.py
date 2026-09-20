@@ -116,7 +116,10 @@ class Trait(BaseModel):
     @classmethod
     def _coerce_bias_value(cls, value: Any, info: ValidationInfo) -> Any:
         if info.data.get("kind") == Kind.BIAS and isinstance(value, str):
-            return float(value)
+            parsed = parse_number(value)
+            if parsed is None:
+                raise ValueError(f"bias value must be a finite number, got {value!r}")
+            return parsed
         return value
 
     @model_validator(mode="after")
