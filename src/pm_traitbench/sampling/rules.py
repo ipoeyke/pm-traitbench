@@ -6,13 +6,14 @@ from pm_traitbench.catalogues.loader import render_template
 from pm_traitbench.catalogues.models import Catalogue, RuleEntry, RuleVariant
 from pm_traitbench.config import Config
 from pm_traitbench.enums import RuleScope, RuleSource
+from pm_traitbench.sampling.picks import pick_index
 from pm_traitbench.tables.schema import Mandate, Rule
 
 
 def _draw_level(variant: RuleVariant, rng: Generator) -> float | str:
     """Draw a rule level: a uniform choice, or a range value snapped to round_to."""
     if variant.level_choices:
-        choice = variant.level_choices[rng.integers(len(variant.level_choices))]
+        choice = variant.level_choices[pick_index(rng, len(variant.level_choices), "level choices")]
         return round(choice, 4) if isinstance(choice, float) else choice
     raw = rng.uniform(variant.level_min, variant.level_max)
     snapped = variant.round_to * round(raw / variant.round_to)
@@ -29,7 +30,7 @@ def _build_rule(
     level: float | str,
     rng: Generator,
 ) -> Rule:
-    template = variant.templates[rng.integers(len(variant.templates))]
+    template = variant.templates[pick_index(rng, len(variant.templates), "rule templates")]
     return Rule(
         pm_id=pm_id,
         rule_id=rule_id,
@@ -65,7 +66,9 @@ def _repair_inclusion(
 
     if not any(by_param[param].discipline for param in included):
         discipline_params = [entry.param for entry in entries if entry.discipline]
-        included.append(discipline_params[rng.integers(len(discipline_params))])
+        included.append(
+            discipline_params[pick_index(rng, len(discipline_params), "discipline rule params")]
+        )
 
     while len(included) > config.rules.n_self_rules_max:
         discipline_included = [param for param in included if by_param[param].discipline]
@@ -75,11 +78,13 @@ def _repair_inclusion(
             if not by_param[param].mandatory
             and not (len(discipline_included) == 1 and param == discipline_included[0])
         ]
-        included.remove(removable[rng.integers(len(removable))])
+        included.remove(removable[pick_index(rng, len(removable), "removable self rules")])
 
     while len(included) < config.rules.n_self_rules_min:
         not_included = [entry.param for entry in entries if entry.param not in included]
-        included.append(not_included[rng.integers(len(not_included))])
+        included.append(
+            not_included[pick_index(rng, len(not_included), "rule entries not yet included")]
+        )
 
     return included
 

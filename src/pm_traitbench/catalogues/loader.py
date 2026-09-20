@@ -224,8 +224,15 @@ def _check_sub_styles(catalogue: Catalogue, asset_classes: Sequence[AssetClass])
 
 
 def _check_self_descriptions(catalogue: Catalogue) -> None:
-    if set(catalogue.self_descriptions) != set(BIAS_PARAMS):
-        raise CatalogueError("self_descriptions: keys must equal the bias parameter set")
+    actual = set(catalogue.self_descriptions)
+    expected = set(BIAS_PARAMS)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise CatalogueError(
+            f"self_descriptions: keys must equal the bias parameter set; "
+            f"missing {missing}, extra {extra}"
+        )
     for param, phrasings in catalogue.self_descriptions.items():
         if len(phrasings.agree) < 2:
             raise CatalogueError(

@@ -7,6 +7,7 @@ from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.enums import Typicality
 from pm_traitbench.errors import SamplingError
 from pm_traitbench.sampling.biases import BiasDraw
+from pm_traitbench.sampling.picks import pick_index
 
 
 def sample_self_description(
@@ -28,6 +29,6 @@ def sample_self_description(
     for bias in top_two:
         phrasings = catalogue.self_descriptions[bias.param]
         options = phrasings.agree if typicality == Typicality.TYPICAL else phrasings.contradict
-        phrases.append(options[rng.integers(len(options))])
+        phrases.append(options[pick_index(rng, len(options), f"phrasings for '{bias.param}'")])
 
     return ", ".join(phrases)

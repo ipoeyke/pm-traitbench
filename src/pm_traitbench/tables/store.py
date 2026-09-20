@@ -44,6 +44,13 @@ def _row_key(spec: TableSpec, row: BaseModel) -> tuple:
     return tuple(getattr(row, field) for field in spec.key)
 
 
+def _check_duplicate_keys(spec: TableSpec, rows: Sequence[BaseModel]) -> None:
+    counts = Counter(_row_key(spec, row) for row in rows)
+    duplicate = next((key for key, count in counts.items() if count > 1), None)
+    if duplicate is not None:
+        raise TableValidationError(f"table '{spec.name}' has duplicate key {duplicate}")
+
+
 class DataStore:
     """Reads and writes a pipeline's tables, in whatever format is configured."""
 
@@ -77,24 +84,23 @@ class DataStore:
                     f"got {type(row).__name__}"
                 )
 
-        keyed = [(_row_key(spec, row), row) for row in rows]
-        counts = Counter(key for key, _ in keyed)
-        duplicate = next((key for key, count in counts.items() if count > 1), None)
-        if duplicate is not None:
-            raise TableValidationError(f"table '{spec.name}' has duplicate key {duplicate}")
-        keyed.sort(key=lambda item: item[0])
+        _check_duplicate_keys(spec, rows)
+        keyed = sorted(((_row_key(spec, row), row) for row in rows), key=lambda item: item[0])
 
-        self._data_dir.mkdir(parents=True, exist_ok=True)
+        # Resolve the format and target path (may raise ConfigError) before
+        # creating anything on disk.
         target = self.path(spec)
         tmp_path = target.with_name(target.name + ".tmp")
         fmt = FORMATS[self.format_name(spec)]
         records = [to_record(row) for _, row in keyed]
+
+        self._data_dir.mkdir(parents=True, exist_ok=True)
         try:
             fmt.write(records, spec.model, tmp_path)
+            os.replace(tmp_path, target)
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
-        os.replace(tmp_path, target)
         return target
 
     def read(self, spec: TableSpec) -> list[BaseModel]:
@@ -116,10 +122,7 @@ class DataStore:
                     f"field(s) {fields}: {e}"
                 ) from e
 
-        counts = Counter(_row_key(spec, row) for row in rows)
-        duplicate = next((key for key, count in counts.items() if count > 1), None)
-        if duplicate is not None:
-            raise TableValidationError(f"table '{spec.name}' has duplicate key {duplicate}")
+        _check_duplicate_keys(spec, rows)
         return rows
 
     def _missing_table_message(self, spec: TableSpec, target: Path) -> str:

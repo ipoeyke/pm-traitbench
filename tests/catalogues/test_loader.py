@@ -405,7 +405,18 @@ def test_check_self_descriptions_missing_bias_param_raises(tmp_path: Path) -> No
     del data["self_descriptions"]["exit_deficiency"]
     _dump_yaml(path, data)
     catalogue = load_catalogue(tmp_path)
-    with pytest.raises(CatalogueError, match="self_descriptions"):
+    with pytest.raises(CatalogueError, match="missing.*exit_deficiency"):
+        _check(catalogue)
+
+
+def test_check_self_descriptions_extra_key_raises_naming_it(tmp_path: Path) -> None:
+    _copy_fixture(tmp_path)
+    path = tmp_path / "self_descriptions.yaml"
+    data = _load_yaml(path)
+    data["self_descriptions"]["not_a_bias_param"] = data["self_descriptions"]["exit_deficiency"]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="extra.*not_a_bias_param"):
         _check(catalogue)
 
 

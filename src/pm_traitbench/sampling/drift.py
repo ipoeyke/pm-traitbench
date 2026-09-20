@@ -6,6 +6,7 @@ from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config
 from pm_traitbench.enums import DriftEventType, Kind
 from pm_traitbench.errors import SamplingError
+from pm_traitbench.sampling.picks import pick_index
 from pm_traitbench.tables.schema import DriftEvent, Trait
 from pm_traitbench.timeline import Timeline
 
@@ -53,9 +54,9 @@ def sample_drift(
 def _sample_bias_update(
     pm_id: str, active_bias_traits: list[Trait], config: Config, timeline: Timeline, rng: Generator
 ) -> DriftEvent:
-    updated = active_bias_traits[rng.integers(len(active_bias_traits))]
+    updated = active_bias_traits[pick_index(rng, len(active_bias_traits), "active bias traits")]
     dates = timeline.weekdays_in_weeks(*config.drift.bias_update_weeks)
-    date = dates[rng.integers(len(dates))]
+    date = dates[pick_index(rng, len(dates), "bias update dates")]
     remaining = rng.uniform(*config.drift.bias_update_remaining)
 
     neutral = config.biases.params[updated.param].neutral.median_value()
@@ -80,16 +81,18 @@ def _sample_preference_update(
     timeline: Timeline,
     rng: Generator,
 ) -> DriftEvent | None:
-    trait = preference_traits[rng.integers(len(preference_traits))]
+    trait = preference_traits[pick_index(rng, len(preference_traits), "preference traits")]
     dates = timeline.weekdays_in_weeks(*config.drift.preference_update_weeks)
-    date = dates[rng.integers(len(dates))]
+    date = dates[pick_index(rng, len(dates), "preference update dates")]
 
     entry = next((e for e in catalogue.preferences if e.param == trait.param), None)
     other_values = [v for v in entry.values if v != trait.value] if entry is not None else []
     if not other_values:
         return None
 
-    to_value = other_values[rng.integers(len(other_values))]
+    to_value = other_values[
+        pick_index(rng, len(other_values), f"other values for preference '{trait.param}'")
+    ]
     return DriftEvent(
         pm_id=pm_id,
         date=date,
@@ -103,11 +106,11 @@ def _sample_preference_update(
 def _sample_dormant_revive(
     pm_id: str, others: list[Trait], config: Config, timeline: Timeline, rng: Generator
 ) -> list[DriftEvent]:
-    trait = others[rng.integers(len(others))]
+    trait = others[pick_index(rng, len(others), "other active bias traits")]
     dormant_dates = timeline.weekdays_in_weeks(*config.drift.dormant_weeks)
-    dormant_date = dormant_dates[rng.integers(len(dormant_dates))]
+    dormant_date = dormant_dates[pick_index(rng, len(dormant_dates), "dormant dates")]
     revive_dates = timeline.weekdays_in_weeks(*config.drift.revive_weeks)
-    revive_date = revive_dates[rng.integers(len(revive_dates))]
+    revive_date = revive_dates[pick_index(rng, len(revive_dates), "revive dates")]
 
     return [
         DriftEvent(

@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from numpy.random import Generator
 
 from pm_traitbench.catalogues.loader import check_catalogue, load_catalogue
-from pm_traitbench.catalogues.models import Catalogue
+from pm_traitbench.catalogues.models import Catalogue, PreferenceGroup
 from pm_traitbench.config import Config
+from pm_traitbench.errors import ConfigError
 from pm_traitbench.rng import stream
 from pm_traitbench.sampling.biases import sample_biases
 from pm_traitbench.sampling.drift import sample_drift
@@ -44,8 +45,46 @@ def _pm_stream(config: Config, slot: PmSlot, *purpose: str) -> Generator:
     return stream(config.seed.root, "pm", slot.index, *purpose)
 
 
+def check_sampling_config(config: Config, catalogue: Catalogue) -> None:
+    """Check config values that a sampler would otherwise accept and then fail on.
+
+    These are cross-cutting invariants between config and catalogue size that
+    pydantic's per-field validation cannot see.
+    """
+    n_groups = len(PreferenceGroup)
+    if config.preferences.n_min < n_groups:
+        raise ConfigError(
+            f"preferences.n_min must be at least {n_groups} (one preference is always drawn "
+            f"per group), got {config.preferences.n_min}"
+        )
+
+    if config.biases.min_active < 2:
+        raise ConfigError(
+            f"biases.min_active must be at least 2 (the self-description needs two active "
+            f"biases), got {config.biases.min_active}"
+        )
+
+    entries = catalogue.rules.entries
+    n_mandatory = sum(1 for entry in entries if entry.mandatory)
+    mandatory_has_discipline = any(entry.mandatory and entry.discipline for entry in entries)
+    min_required_max = n_mandatory + (0 if mandatory_has_discipline else 1)
+    if config.rules.n_self_rules_max < min_required_max:
+        raise ConfigError(
+            f"rules.n_self_rules_max must be at least {min_required_max} (the mandatory rule "
+            f"entries, plus a discipline rule when none of them is one), got "
+            f"{config.rules.n_self_rules_max}"
+        )
+
+    if config.rules.n_self_rules_min > len(entries):
+        raise ConfigError(
+            f"rules.n_self_rules_min must not exceed the number of rule entries "
+            f"({len(entries)}), got {config.rules.n_self_rules_min}"
+        )
+
+
 def sample_all(config: Config, catalogue: Catalogue) -> SampleResult:
     """Sample personas, traits, rules and drift events for the whole population."""
+    check_sampling_config(config, catalogue)
     timeline = config.timeline()
     personas: list[Persona] = []
     traits: list[Trait] = []
@@ -103,6 +142,7 @@ def run(config: Config, store: DataStore) -> None:
     """Load and check the catalogue, sample the population, then write the four tables."""
     catalogue = load_catalogue()
     check_catalogue(catalogue, config.population.asset_classes, config.preferences.n_max)
+    check_sampling_config(config, catalogue)
     result = sample_all(config, catalogue)
     store.write(PERSONAS, result.personas)
     store.write(TRAITS, result.traits)

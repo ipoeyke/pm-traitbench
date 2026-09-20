@@ -184,6 +184,56 @@ def test_csv_header_mismatch_raises(tmp_path: Path) -> None:
         fmt.read(path, Trait)
 
 
+def test_csv_read_ragged_row_raises_table_validation_error_naming_the_row(
+    tmp_path: Path,
+) -> None:
+    fmt = FORMATS["csv"]
+    path = tmp_path / "table.csv"
+    header = "pm_id,trait_id,kind,param,value,active,mult_range,mult_risk_off,mult_risk_on"
+    path.write_text(f"{header}\npm_001,t_01,bias,x,1.0,true,1.0\n", encoding="utf-8")
+    with pytest.raises(TableValidationError, match=r"row 1\b") as exc_info:
+        fmt.read(path, Trait)
+    assert str(path) in str(exc_info.value)
+
+
+def test_csv_write_missing_record_column_raises_table_validation_error(tmp_path: Path) -> None:
+    fmt = FORMATS["csv"]
+    path = tmp_path / "table.csv"
+    record = to_record(_bias_trait())
+    del record["value"]
+    with pytest.raises(TableValidationError, match=r"row 1\b"):
+        fmt.write([record], Trait, path)
+
+
+def test_jsonl_write_missing_record_column_raises_table_validation_error(tmp_path: Path) -> None:
+    fmt = FORMATS["jsonl"]
+    path = tmp_path / "table.jsonl"
+    record = to_record(_bias_trait())
+    del record["value"]
+    with pytest.raises(TableValidationError, match=r"row 1\b"):
+        fmt.write([record], Trait, path)
+
+
+def test_jsonl_read_blank_line_raises_table_validation_error_naming_the_row(
+    tmp_path: Path,
+) -> None:
+    fmt = FORMATS["jsonl"]
+    path = tmp_path / "table.jsonl"
+    path.write_text('{"a":1}\n\n', encoding="utf-8")
+    with pytest.raises(TableValidationError, match=r"row 2\b"):
+        fmt.read(path, Trait)
+
+
+def test_jsonl_read_malformed_line_raises_table_validation_error_naming_the_row(
+    tmp_path: Path,
+) -> None:
+    fmt = FORMATS["jsonl"]
+    path = tmp_path / "table.jsonl"
+    path.write_text('{"a":1}\nnot json\n', encoding="utf-8")
+    with pytest.raises(TableValidationError, match=r"row 2\b"):
+        fmt.read(path, Trait)
+
+
 def test_csv_bytes_contain_no_carriage_return(tmp_path: Path) -> None:
     fmt = FORMATS["csv"]
     path = tmp_path / "table.csv"

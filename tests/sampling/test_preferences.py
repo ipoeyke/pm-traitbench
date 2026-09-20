@@ -1,3 +1,5 @@
+import pytest
+
 from pm_traitbench.catalogues.models import Catalogue, PreferenceGroup
 from pm_traitbench.config import Config
 from pm_traitbench.enums import AssetClass
@@ -76,6 +78,16 @@ def test_over_many_draws_every_count_occurs(fixture_catalogue: Catalogue):
         draws = _draw(config, fixture_catalogue, AssetClass.EQUITIES, i)
         counts.add(len(draws))
     assert counts == set(range(config.preferences.n_min, config.preferences.n_max + 1))
+
+
+def test_drawn_count_below_group_count_raises_sampling_error(fixture_catalogue: Catalogue):
+    # n_min/n_max are set below the number of preference groups directly on
+    # the sampler, bypassing check_sampling_config, to exercise the sampler's
+    # own defensive guard.
+    config = Config.model_validate({"preferences": {"n_min": 1, "n_max": 1}})
+    rng = stream(1, "t", 0, "preferences")
+    with pytest.raises(SamplingError):
+        sample_preferences(AssetClass.EQUITIES, config, fixture_catalogue, rng)
 
 
 def test_catalogue_cut_below_n_raises_sampling_error(fixture_catalogue: Catalogue):

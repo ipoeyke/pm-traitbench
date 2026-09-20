@@ -473,6 +473,8 @@ def load_config(path: Path | None) -> Config:
         raise ConfigError(f"failed to read config file '{path}': {e}") from e
     except yaml.YAMLError as e:
         raise ConfigError(f"invalid YAML in config file '{path}': {e}") from e
+    if not isinstance(raw, dict):
+        raise ConfigError(f"config file '{path}' must contain a mapping")
     merged = _deep_merge(Config().model_dump(mode="python"), raw)
     try:
         return Config.model_validate(merged)

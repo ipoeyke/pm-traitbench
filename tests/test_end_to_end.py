@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from pm_traitbench import pipeline
 from pm_traitbench.cli import build_parser, main
 from pm_traitbench.config import OutputConfig
@@ -76,3 +78,14 @@ def test_parquet_output_config_matches_default_format_rows(tmp_path: Path) -> No
 def test_help_output_lists_the_sample_subcommand() -> None:
     help_text = build_parser(pipeline.STAGES).format_help()
     assert "sample" in help_text
+
+
+def test_non_mapping_config_yaml_exits_2_with_error_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bad_config = tmp_path / "bad.yaml"
+    bad_config.write_text("- a\n- b\n")
+    result = main(["sample", "--config", str(bad_config), "--data-dir", str(tmp_path / "out")])
+    captured = capsys.readouterr()
+    assert result == 2
+    assert captured.err.startswith("error:")

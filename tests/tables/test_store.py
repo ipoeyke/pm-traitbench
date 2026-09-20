@@ -161,6 +161,29 @@ def test_write_wrong_model_instance_raises(tmp_path: Path) -> None:
         store.write(TRAITS, [_persona("pm_001")])
 
 
+def test_write_config_error_before_mkdir_leaves_no_directory(tmp_path: Path) -> None:
+    data_dir = tmp_path / "nested" / "data"
+    store = DataStore(data_dir, OutputConfig(tables={"personas": "csv"}))
+    with pytest.raises(ConfigError):
+        store.write(PERSONAS, [_persona("pm_001")])
+    assert not data_dir.exists()
+
+
+def test_write_replace_failure_removes_tmp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+
+    def _boom(src: object, dst: object) -> None:
+        raise OSError("boom")
+
+    monkeypatch.setattr("pm_traitbench.tables.store.os.replace", _boom)
+    with pytest.raises(OSError, match="boom"):
+        store.write(TRAITS, [_trait("pm_001", "t_01")])
+    assert not (tmp_path / "traits.csv.tmp").exists()
+    assert not (tmp_path / "traits.csv").exists()
+
+
 def test_write_failure_midway_removes_tmp_and_preserves_existing_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -211,11 +234,26 @@ def test_read_corrupted_csv_cell_raises_table_validation_error(tmp_path: Path) -
     lines[1] = ",".join(cells)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    with pytest.raises(TableValidationError, match="traits") as exc_info:
+    with pytest.raises(TableValidationError, match=r"row 1\b") as exc_info:
         store.read(TRAITS)
-    message = str(exc_info.value)
-    assert "1" in message
-    assert "active" in message
+    assert "active" in str(exc_info.value)
+
+
+def test_read_corrupted_csv_cell_on_the_second_row_names_row_two(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    store.write(TRAITS, [_trait("pm_001", "t_01"), _trait("pm_002", "t_01")])
+    path = tmp_path / "traits.csv"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    header = lines[0].split(",")
+    active_index = header.index("active")
+    cells = lines[2].split(",")
+    cells[active_index] = "maybe"
+    lines[2] = ",".join(cells)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(TableValidationError, match=r"row 2\b") as exc_info:
+        store.read(TRAITS)
+    assert "active" in str(exc_info.value)
 
 
 def test_read_duplicate_key_raises(tmp_path: Path) -> None:

@@ -47,8 +47,14 @@ class CsvFormat:
         with open(path, "w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f, lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
             writer.writerow([col.name for col in cols])
-            for record in records:
-                writer.writerow([_encode_csv_cell(record[col.name]) for col in cols])
+            for row_number, record in enumerate(records, start=1):
+                try:
+                    cells = [_encode_csv_cell(record[col.name]) for col in cols]
+                except KeyError as e:
+                    raise TableValidationError(
+                        f"CSV write to '{path}' row {row_number} is missing column {e}"
+                    ) from e
+                writer.writerow(cells)
 
     def read(self, path: Path, model: type[BaseModel]) -> list[dict[str, Any]]:
         cols = columns(model)
@@ -61,7 +67,12 @@ class CsvFormat:
                     f"CSV header {header} does not match columns {expected_header}"
                 )
             rows = []
-            for raw_row in reader:
+            for row_number, raw_row in enumerate(reader, start=1):
+                if len(raw_row) != len(cols):
+                    raise TableValidationError(
+                        f"CSV file '{path}' row {row_number} has {len(raw_row)} field(s), "
+                        f"expected {len(cols)}"
+                    )
                 record: dict[str, Any] = {}
                 for col, cell in zip(cols, raw_row, strict=True):
                     record[col.name] = None if col.nullable and cell == "" else cell
@@ -75,14 +86,30 @@ class JsonlFormat:
     def write(self, records: list[dict[str, Any]], model: type[BaseModel], path: Path) -> None:
         cols = columns(model)
         with open(path, "w", encoding="utf-8", newline="") as f:
-            for record in records:
-                ordered = {col.name: record[col.name] for col in cols}
+            for row_number, record in enumerate(records, start=1):
+                try:
+                    ordered = {col.name: record[col.name] for col in cols}
+                except KeyError as e:
+                    raise TableValidationError(
+                        f"JSONL write to '{path}' row {row_number} is missing column {e}"
+                    ) from e
                 f.write(json.dumps(ordered, ensure_ascii=False, separators=(",", ":")))
                 f.write("\n")
 
     def read(self, path: Path, model: type[BaseModel]) -> list[dict[str, Any]]:
+        rows = []
         with open(path, encoding="utf-8", newline="") as f:
-            return [json.loads(line) for line in f if line]
+            for row_number, line in enumerate(f, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    raise TableValidationError(f"JSONL file '{path}' row {row_number} is blank")
+                try:
+                    rows.append(json.loads(stripped))
+                except json.JSONDecodeError as e:
+                    raise TableValidationError(
+                        f"JSONL file '{path}' row {row_number} is malformed: {e}"
+                    ) from e
+        return rows
 
 
 def _pyarrow_type(col: ColumnInfo) -> pa.DataType:

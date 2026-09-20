@@ -87,6 +87,20 @@ def test_missing_file_raises_config_error(tmp_path: Path) -> None:
         load_config(tmp_path / "does_not_exist.yaml")
 
 
+def test_list_document_raises_config_error_naming_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("- a\n- b\n")
+    with pytest.raises(ConfigError, match="mapping"):
+        load_config(path)
+
+
+def test_scalar_document_raises_config_error_naming_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("just a scalar\n")
+    with pytest.raises(ConfigError, match="mapping"):
+        load_config(path)
+
+
 def test_load_config_none_equals_default() -> None:
     assert load_config(None) == Config()
 

@@ -8,6 +8,7 @@ from pm_traitbench.catalogues.models import Catalogue, PreferenceEntry, Preferen
 from pm_traitbench.config import Config
 from pm_traitbench.enums import AssetClass
 from pm_traitbench.errors import SamplingError
+from pm_traitbench.sampling.picks import pick_index
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,11 @@ def sample_preferences(
 ) -> list[PreferenceDraw]:
     """Sample 4-8 preferences: one per group, then fill uniformly without replacement."""
     n = int(rng.integers(config.preferences.n_min, config.preferences.n_max + 1))
+    if n < len(PreferenceGroup):
+        raise SamplingError(
+            f"drawn preference count {n} is below the number of preference groups "
+            f"({len(PreferenceGroup)})"
+        )
     applicable = catalogue.preferences_for(asset_class)
     if len(applicable) < n:
         raise SamplingError(
@@ -33,7 +39,9 @@ def sample_preferences(
     picked: list[PreferenceEntry] = []
     for group in PreferenceGroup:
         group_entries = [entry for entry in applicable if entry.group == group]
-        picked.append(group_entries[rng.integers(len(group_entries))])
+        picked.append(
+            group_entries[pick_index(rng, len(group_entries), f"entries for group '{group}'")]
+        )
 
     pool = [entry for entry in applicable if entry not in picked]
     fill_count = n - len(picked)
@@ -44,6 +52,11 @@ def sample_preferences(
     picked_params = {entry.param for entry in picked}
     ordered = [entry for entry in applicable if entry.param in picked_params]
     return [
-        PreferenceDraw(param=entry.param, value=entry.values[rng.integers(len(entry.values))])
+        PreferenceDraw(
+            param=entry.param,
+            value=entry.values[
+                pick_index(rng, len(entry.values), f"values for preference '{entry.param}'")
+            ],
+        )
         for entry in ordered
     ]

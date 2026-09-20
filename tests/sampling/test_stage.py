@@ -1,10 +1,13 @@
 """Tests for the sample stage's pure sampling pass: sample_all."""
 
+import pytest
+
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config
 from pm_traitbench.enums import AssetClass, Kind, Typicality
+from pm_traitbench.errors import ConfigError
 from pm_traitbench.sampling.population import build_population
-from pm_traitbench.sampling.stage import sample_all
+from pm_traitbench.sampling.stage import check_sampling_config, sample_all
 
 
 def _config(**overrides) -> Config:
@@ -124,3 +127,47 @@ def test_changing_root_seed_changes_trait_values(fixture_catalogue: Catalogue):
     values_a = [t.value for t in result_a.traits]
     values_b = [t.value for t in result_b.traits]
     assert values_a != values_b
+
+
+# --- check_sampling_config ---
+
+
+def test_valid_default_config_passes(fixture_catalogue: Catalogue):
+    check_sampling_config(Config(), fixture_catalogue)
+
+
+def test_preferences_n_min_below_group_count_raises_naming_the_path(
+    fixture_catalogue: Catalogue,
+):
+    config = Config.model_validate({"preferences": {"n_min": 2, "n_max": 8}})
+    with pytest.raises(ConfigError, match="preferences.n_min"):
+        check_sampling_config(config, fixture_catalogue)
+
+
+def test_biases_min_active_below_two_raises_naming_the_path(fixture_catalogue: Catalogue):
+    config = Config.model_validate({"biases": {"min_active": 1}})
+    with pytest.raises(ConfigError, match="biases.min_active"):
+        check_sampling_config(config, fixture_catalogue)
+
+
+def test_rules_n_self_rules_max_too_small_raises_naming_the_path(fixture_catalogue: Catalogue):
+    config = Config.model_validate({"rules": {"n_self_rules_min": 0, "n_self_rules_max": 0}})
+    with pytest.raises(ConfigError, match="rules.n_self_rules_max"):
+        check_sampling_config(config, fixture_catalogue)
+
+
+def test_rules_n_self_rules_min_above_entry_count_raises_naming_the_path(
+    fixture_catalogue: Catalogue,
+):
+    n_entries = len(fixture_catalogue.rules.entries)
+    config = Config.model_validate(
+        {"rules": {"n_self_rules_min": n_entries + 1, "n_self_rules_max": n_entries + 1}}
+    )
+    with pytest.raises(ConfigError, match="rules.n_self_rules_min"):
+        check_sampling_config(config, fixture_catalogue)
+
+
+def test_sample_all_runs_check_sampling_config_first(fixture_catalogue: Catalogue):
+    config = _config(biases={"min_active": 1})
+    with pytest.raises(ConfigError, match="biases.min_active"):
+        sample_all(config, fixture_catalogue)
