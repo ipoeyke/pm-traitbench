@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from pm_traitbench import pipeline
 from pm_traitbench.cli import build_parser, main
 from pm_traitbench.config import Config
 from pm_traitbench.enums import Kind
@@ -104,5 +103,4 @@ def test_build_parser_duplicate_stage_numbers_raises_value_error() -> None:
 
 
 def test_main_with_real_pipeline_stages_returns_0() -> None:
-    assert pipeline.STAGES == ()
     assert main([]) == 0

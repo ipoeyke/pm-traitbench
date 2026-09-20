@@ -14,8 +14,12 @@ uv sync
 ## Usage
 
 ```sh
-uv run pm-traitbench --help
+uv run pm-traitbench sample --config configs/demo.yaml --data-dir data
 ```
+
+This runs the `sample` stage, which writes four tables to `data`: `personas`,
+`traits`, `rules` and `drift_events`. Pass `--force` to overwrite a table that
+already exists. Run `uv run pm-traitbench --help` for the full command list.
 
 ## Development
 
