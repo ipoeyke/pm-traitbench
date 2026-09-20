@@ -228,6 +228,29 @@ def test_deterministic_for_a_given_stream(fixture_catalogue: Catalogue):
     assert first == second
 
 
+def test_mixed_active_and_inactive_biases_only_touch_active_trait_ids(
+    fixture_catalogue: Catalogue,
+):
+    config = Config()
+    timeline = config.timeline()
+    # Half the bias traits are inactive; every update/dormant/revive
+    # trait_id must belong to the active subset, never the inactive one.
+    traits = [
+        _bias_trait(i + 1, param, config.biases.params[param].active.median_value(), active=i % 2)
+        for i, param in enumerate(BIAS_PARAMS)
+    ]
+    active_ids = {t.trait_id for t in traits if t.active}
+    inactive_ids = {t.trait_id for t in traits if not t.active}
+    seen_dormant = False
+    for i in range(_N):
+        events = _draw(config, fixture_catalogue, timeline, traits, i)
+        for event in events:
+            assert event.trait_id in active_ids
+            assert event.trait_id not in inactive_ids
+            seen_dormant = seen_dormant or event.event == DriftEventType.DORMANT
+    assert seen_dormant
+
+
 def test_no_active_bias_trait_raises_sampling_error(fixture_catalogue: Catalogue):
     config = Config()
     timeline = config.timeline()

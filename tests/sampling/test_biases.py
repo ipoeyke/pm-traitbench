@@ -112,6 +112,22 @@ def test_zero_cluster_probability_gives_all_multipliers_one():
             assert all(m == 1.0 for m in draw.multipliers.values())
 
 
+def test_inactive_draws_follow_the_neutral_marginal_for_the_unmapped_biases():
+    # Confirms inactive draws use the neutral distribution, not the active
+    # one: an accidental active/neutral swap would move these medians by
+    # roughly 0.35-0.40, far outside this band.
+    config = Config()
+    n = 3000
+    pms = _sample_many(config, n)
+    for param in ("exit_deficiency", "conviction_size_miscalibration"):
+        idx = list(BIAS_PARAMS).index(param)
+        inactive_values = [draws[idx].value for draws in pms if not draws[idx].active]
+        assert inactive_values
+        neutral_median = config.biases.params[param].neutral.median_value()
+        median = statistics.median(inactive_values)
+        assert abs(median - neutral_median) <= 0.05
+
+
 def test_statistical_properties_over_many_draws():
     config = Config()
     n = 5000

@@ -51,7 +51,11 @@ def test_anti_typical_pm_picks_only_from_contradict_phrasings(fixture_catalogue:
 
 
 def test_ties_in_strength_break_by_bias_params_order(fixture_catalogue: Catalogue):
-    biases = [_bias(param, True, 0.5) for param in BIAS_PARAMS]
+    # Biases are fed in reversed BIAS_PARAMS order with equal strengths.
+    # Python's sort is stable, so without an explicit BIAS_PARAMS-order
+    # tie-break key, the top two would be the last two BIAS_PARAMS entries
+    # instead of the first two.
+    biases = [_bias(param, True, 0.5) for param in reversed(BIAS_PARAMS)]
     candidates = _candidates(fixture_catalogue, BIAS_PARAMS[0], BIAS_PARAMS[1], Typicality.TYPICAL)
     for i in range(50):
         rng = stream(1, "t", i, "profile")
