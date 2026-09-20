@@ -4,10 +4,10 @@ preferences:
     group: communication
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "three lines max, number first"
-      - "short bullets, no prose"
-      - "one paragraph, conclusion first"
-      - "full memo format with headers"
+      - "short bullets"
+      - "one prose paragraph"
+      - "a table with columns"
+      - "a memo with headers"
   - param: pushback_style
     group: communication
     asset_classes: [equities, rates_credit, commodities, multi_asset]
@@ -28,10 +28,9 @@ preferences:
     group: communication
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "basis points for rates, percent for equities"
-      - "percent throughout, no basis points"
-      - "round to whole numbers"
-      - "keep one decimal place"
+      - "quote moves in basis points"
+      - "quote moves in percent"
+      - "quote moves in both basis points and percent"
   - param: answer_ordering
     group: communication
     asset_classes: [equities, rates_credit, commodities, multi_asset]
@@ -43,9 +42,9 @@ preferences:
     group: communication
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "state the hedge before the trade"
-      - "state the trade before the hedge"
-      - "mention the hedge only if asked"
+      - "state views plainly, no qualifiers"
+      - "flag uncertainty once, then commit to a view"
+      - "give an explicit confidence level on every call"
   - param: length_on_routine_questions
     group: communication
     asset_classes: [equities, rates_credit, commodities, multi_asset]
@@ -59,10 +58,9 @@ preferences:
     group: information
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "mention current position before new commentary"
+      - "restate the position before any new commentary"
+      - "mention the position only if asked"
       - "give commentary without repeating the position"
-      - "state position size only if asked"
-      - "always restate the position at the top"
   - param: carry_display
     group: information
     asset_classes: [equities, rates_credit, commodities, multi_asset]
@@ -74,8 +72,8 @@ preferences:
     group: information
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "lead with the macro backdrop"
-      - "keep macro commentary to one line"
+      - "put macro commentary at the top of every answer"
+      - "keep macro commentary brief and secondary"
       - "leave macro commentary out unless asked"
   - param: calendar_citation
     group: information
@@ -212,8 +210,8 @@ preferences:
     asset_classes: [commodities]
     values:
       - "express curve views as calendar spreads"
-      - "express curve views as outright contract positions"
       - "express curve views as spread ratios"
+      - "express curve views as butterfly spreads"
   - param: pair_vs_outright
     group: expression
     asset_classes: [equities]
@@ -227,7 +225,7 @@ preferences:
     values:
       - "hedge fx exposure with forwards"
       - "hedge fx exposure with options"
-      - "leave fx exposure unhedged and call it out"
+      - "hedge fx exposure with currency futures"
   - param: credit_index_vs_single_name
     group: expression
     asset_classes: [rates_credit]

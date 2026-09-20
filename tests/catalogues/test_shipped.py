@@ -7,11 +7,21 @@ from typing import Any
 import pytest
 import yaml
 
-from pm_traitbench.catalogues.loader import check_catalogue, load_catalogue
+from pm_traitbench.catalogues.loader import check_catalogue, load_catalogue, render_template
 from pm_traitbench.enums import AssetClass
 
 _N_PREFERENCES_MAX = 8
 _BANNED_WORDS = ("really", "actually", "truly", "genuinely")
+_BIAS_WORDS = (
+    "bias",
+    "anchor",
+    "herd",
+    "overconfiden",
+    "loss avers",
+    "disposition",
+    "extrapolat",
+    "miscalibrat",
+)
 
 _EXPECTED_SUB_STYLES = {
     AssetClass.EQUITIES: (
@@ -124,3 +134,38 @@ def test_no_em_dash_or_banned_words_in_any_shipped_file(name: str) -> None:
         lowered = text.lower()
         for banned in _BANNED_WORDS:
             assert not re.search(rf"\b{banned}\b", lowered), (name, banned, text)
+
+
+def test_self_descriptions_never_name_a_bias() -> None:
+    catalogue = load_catalogue()
+    for param, phrasings in catalogue.self_descriptions.items():
+        for fragment in (*phrasings.agree, *phrasings.contradict):
+            lowered = fragment.lower()
+            for word in _BIAS_WORDS:
+                assert word not in lowered, (param, word, fragment)
+
+
+def _representative_levels(variant, is_cap: bool) -> tuple:
+    """Levels worth rendering for one rule variant: min, max, and each choice."""
+    if is_cap:
+        return (10.0,)
+    if variant.level_choices:
+        return variant.level_choices
+    return (variant.level_min, variant.level_max)
+
+
+def test_every_rule_template_renders_cleanly() -> None:
+    catalogue = load_catalogue()
+    for entry in (catalogue.rules.mandate_cap, *catalogue.rules.entries):
+        is_cap = entry is catalogue.rules.mandate_cap
+        for variant in entry.variants:
+            for level in _representative_levels(variant, is_cap):
+                for template in variant.templates:
+                    rendered = render_template(template, level, variant.unit)
+                    context = (entry.param, variant.asset_class, template, rendered)
+                    assert "{" not in rendered and "}" not in rendered, context
+                    assert "pct" not in rendered.lower(), context
+                    assert "None" not in rendered, context
+                    assert "  " not in rendered, context
+                    assert "_" not in rendered, context
+                    assert rendered == rendered.strip(), context

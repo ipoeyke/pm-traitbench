@@ -133,6 +133,17 @@ def test_render_template_with_string_level() -> None:
     assert render_template("exclude {level}", "energy", None) == "exclude energy"
 
 
+def test_render_template_with_string_level_replaces_underscores_with_spaces() -> None:
+    assert render_template("exclude {level}", "ccc_and_below", None) == "exclude ccc and below"
+    assert (
+        render_template("exclude {level}", "emerging_markets", None) == "exclude emerging markets"
+    )
+
+
+def test_render_template_with_float_level_ignores_underscore_handling() -> None:
+    assert render_template("stop at {level}%", -15.0, None) == "stop at -15%"
+
+
 # --- load_catalogue error paths ---
 
 
@@ -166,11 +177,6 @@ def test_unknown_nested_key_raises_catalogue_error(tmp_path: Path) -> None:
     data = _load_yaml(path)
     data["preferences"][0]["bogus_field"] = 1
     _dump_yaml(path, data)
-    with pytest.raises(CatalogueError):
-        load_catalogue(tmp_path)
-
-
-def test_load_catalogue_raises_when_files_missing(tmp_path: Path) -> None:
     with pytest.raises(CatalogueError):
         load_catalogue(tmp_path)
 

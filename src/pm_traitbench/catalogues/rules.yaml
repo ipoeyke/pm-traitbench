@@ -55,8 +55,8 @@ entries:
         action: exit
         templates:
           - "stop at {level}% from entry"
-          - "I exit if position pnl falls to {level}{unit} from entry"
-          - "I'm out once losses hit {level}{unit}"
+          - "I exit if position pnl falls to {level}% from entry"
+          - "I'm out if the position is down to {level}% from entry"
       - asset_class: rates_credit
         sub_styles: [sovereign_rates]
         field: adverse_yield_move_bp
@@ -93,8 +93,8 @@ entries:
         action: exit
         templates:
           - "stop at {level}% from entry on the front month"
-          - "I exit the contract if pnl falls to {level}{unit}"
-          - "out once losses reach {level}{unit} of notional"
+          - "I exit the contract if pnl falls to {level}% from entry"
+          - "I'm out if the contract is down to {level}% from entry"
       - asset_class: multi_asset
         field: sleeve_drawdown
         op: "<="
@@ -104,9 +104,9 @@ entries:
         round_to: 0.5
         action: exit
         templates:
-          - "I cut the sleeve if drawdown reaches {level}{unit}"
+          - "I cut the sleeve if drawdown reaches {level}%"
           - "exit the sleeve at {level}% drawdown"
-          - "stop the allocation once it draws down {level}{unit}"
+          - "the allocation stops out once drawdown reaches {level}%"
 
   - param: trim_at_target
     share: 0.7
@@ -319,5 +319,5 @@ entries:
         level_choices: [4, 5, 6]
         action: cap
         templates:
-          - "I cap the sleeve count at {level} {unit}"
+          - "I run at most {level} sleeves"
           - "no more than {level} sleeves on at once"

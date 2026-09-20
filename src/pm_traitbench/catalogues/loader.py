@@ -89,8 +89,12 @@ def load_catalogue(directory: Path | None = None) -> Catalogue:
 
 
 def render_template(template: str, level: float | str, unit: str | None) -> str:
-    """Render a rule template, filling its {level} and {unit} slots."""
-    rendered_level = format(level, "g") if isinstance(level, float) else str(level)
+    """Render a rule template, filling its {level} and {unit} slots.
+
+    A string level is a snake_case id (e.g. "ccc_and_below"); it renders with
+    underscores replaced by spaces. The stored level itself is untouched.
+    """
+    rendered_level = format(level, "g") if isinstance(level, float) else level.replace("_", " ")
     return template.format(level=rendered_level, unit=unit if unit is not None else "")
 
 

@@ -46,7 +46,7 @@ entries:
         round_to: 1
         action: exit
         templates:
-          - "exit if position pnl falls to {level}{unit} from entry"
+          - "exit if position pnl falls to {level}% from entry"
       - asset_class: rates_credit
         sub_styles: [sovereign_rates]
         field: adverse_yield_move_bp
@@ -78,7 +78,7 @@ entries:
         round_to: 1
         action: exit
         templates:
-          - "exit if position pnl falls to {level}{unit} from entry"
+          - "exit if position pnl falls to {level}% from entry"
       - asset_class: multi_asset
         field: sleeve_drawdown
         op: "<="
