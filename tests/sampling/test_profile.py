@@ -9,8 +9,8 @@ from pm_traitbench.sampling.biases import BiasDraw
 from pm_traitbench.sampling.profile import sample_self_description
 
 
-def _multipliers() -> dict[Regime, float]:
-    return {regime: 1.0 for regime in Regime}
+def _multipliers() -> tuple[tuple[Regime, float], ...]:
+    return tuple((regime, 1.0) for regime in Regime)
 
 
 def _bias(param: str, active: bool, strength: float) -> BiasDraw:

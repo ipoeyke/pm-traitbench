@@ -3,6 +3,7 @@ import statistics
 from scipy import stats
 
 from pm_traitbench.config import BIAS_PARAMS, Config
+from pm_traitbench.enums import Regime
 from pm_traitbench.errors import SamplingError
 from pm_traitbench.rng import stream
 from pm_traitbench.sampling.biases import BiasDraw, sample_biases
@@ -26,6 +27,22 @@ def _sample_many(config: Config, n: int) -> list[list[BiasDraw]]:
 def test_returns_eight_draws_in_bias_params_order():
     draws = _draw(Config(), 0)
     assert [d.param for d in draws] == list(BIAS_PARAMS)
+
+
+def test_bias_draw_is_hashable():
+    draw = _draw(Config(), 0)[0]
+    assert isinstance(hash(draw), int)
+
+
+def test_multiplier_returns_the_value_for_the_requested_regime():
+    draw = _draw(Config(), 0)[0]
+    for regime, value in draw.multipliers:
+        assert draw.multiplier(regime) == value
+
+
+def test_multipliers_are_in_regime_enum_order():
+    draw = _draw(Config(), 0)[0]
+    assert [regime for regime, _ in draw.multipliers] == list(Regime)
 
 
 def test_fixed_streams_give_equal_draws_across_two_calls():
@@ -56,7 +73,7 @@ def test_zero_min_active_and_zero_p_active_gives_all_inactive():
     draws = _draw(config, 0)
     assert all(not d.active for d in draws)
     assert all(d.strength == 0.0 for d in draws)
-    assert all(m == 1.0 for d in draws for m in d.multipliers.values())
+    assert all(m == 1.0 for d in draws for _, m in d.multipliers)
 
 
 def test_active_values_respect_floors_and_unit_bounds():
@@ -77,7 +94,7 @@ def test_multipliers_differ_from_one_only_on_active_mapped_biases_within_bounds(
     for i in range(200):
         for draw in _draw(config, i):
             spec = config.biases.params[draw.param]
-            for regime, multiplier in draw.multipliers.items():
+            for regime, multiplier in draw.multipliers:
                 assert 1.0 <= multiplier <= 1.5
                 if multiplier != 1.0:
                     assert draw.active
@@ -89,7 +106,7 @@ def test_unmapped_biases_never_cluster():
     for i in range(200):
         for draw in _draw(config, i):
             if draw.param in _UNMAPPED:
-                assert all(m == 1.0 for m in draw.multipliers.values())
+                assert all(m == 1.0 for _, m in draw.multipliers)
 
 
 def test_full_cluster_probability_gives_mapped_multiplier_at_least_one_and_sometimes_above():
@@ -99,7 +116,7 @@ def test_full_cluster_probability_gives_mapped_multiplier_at_least_one_and_somet
         for draw in _draw(config, i):
             spec = config.biases.params[draw.param]
             if draw.active and spec.cluster_regime is not None:
-                multiplier = draw.multipliers[spec.cluster_regime]
+                multiplier = draw.multiplier(spec.cluster_regime)
                 assert multiplier >= 1.0
                 any_above_one = any_above_one or multiplier > 1.0
     assert any_above_one
@@ -109,7 +126,7 @@ def test_zero_cluster_probability_gives_all_multipliers_one():
     config = Config.model_validate({"biases": {"p_regime_cluster": 0.0}})
     for i in range(200):
         for draw in _draw(config, i):
-            assert all(m == 1.0 for m in draw.multipliers.values())
+            assert all(m == 1.0 for _, m in draw.multipliers)
 
 
 def test_inactive_draws_follow_the_neutral_marginal_for_the_unmapped_biases():
@@ -169,7 +186,7 @@ def test_statistical_properties_over_many_draws():
             spec = config.biases.params[d.param]
             if d.active and spec.cluster_regime is not None:
                 active_mapped_count += 1
-                if d.multipliers[spec.cluster_regime] != 1.0:
+                if d.multiplier(spec.cluster_regime) != 1.0:
                     cluster_count += 1
     cluster_rate = cluster_count / active_mapped_count
     assert 0.45 <= cluster_rate <= 0.55

@@ -88,18 +88,30 @@ def test_main_version_flag_exits_with_0() -> None:
     assert exc.value.code == 0
 
 
-def test_build_parser_duplicate_stage_names_raises_value_error() -> None:
+def test_build_parser_duplicate_stage_names_raises_value_error_naming_the_stage() -> None:
     stage_a = Stage(number=1, name="fake", help="a", run=_write_two_traits)
     stage_b = Stage(number=2, name="fake", help="b", run=_write_two_traits)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="fake"):
         build_parser((stage_a, stage_b))
 
 
-def test_build_parser_duplicate_stage_numbers_raises_value_error() -> None:
+def test_build_parser_duplicate_stage_numbers_raises_value_error_naming_the_number() -> None:
     stage_a = Stage(number=1, name="fake_a", help="a", run=_write_two_traits)
     stage_b = Stage(number=1, name="fake_b", help="b", run=_write_two_traits)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="1"):
         build_parser((stage_a, stage_b))
+
+
+def test_stage_subcommand_help_documents_config_data_dir_and_force(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = build_parser(_fake_stages())
+    with pytest.raises(SystemExit):
+        parser.parse_args(["fake", "--help"])
+    help_text = capsys.readouterr().out
+    assert "YAML file overriding default settings" in help_text
+    assert "directory for pipeline tables (default: data)" in help_text
+    assert "overwrite existing output tables" in help_text
 
 
 def test_main_with_real_pipeline_stages_returns_0() -> None:

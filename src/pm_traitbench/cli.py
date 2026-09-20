@@ -15,11 +15,19 @@ from pm_traitbench.tables.store import DataStore
 
 def build_parser(stages: Sequence[Stage]) -> argparse.ArgumentParser:
     names = [stage.name for stage in stages]
-    if len(set(names)) != len(names):
-        raise ValueError("duplicate stage names")
+    if len(names) != len(set(names)):
+        seen: set[str] = set()
+        for name in names:
+            if name in seen:
+                raise ValueError(f"duplicate stage name: {name}")
+            seen.add(name)
     numbers = [stage.number for stage in stages]
-    if len(set(numbers)) != len(numbers):
-        raise ValueError("duplicate stage numbers")
+    if len(numbers) != len(set(numbers)):
+        seen_numbers: set[int] = set()
+        for number in numbers:
+            if number in seen_numbers:
+                raise ValueError(f"duplicate stage number: {number}")
+            seen_numbers.add(number)
 
     parser = argparse.ArgumentParser(
         prog="pm-traitbench",
@@ -30,9 +38,23 @@ def build_parser(stages: Sequence[Stage]) -> argparse.ArgumentParser:
 
     for stage in sorted(stages, key=lambda s: s.number):
         subparser = subparsers.add_parser(stage.name, help=f"stage {stage.number}: {stage.help}")
-        subparser.add_argument("--config", type=Path, default=None)
-        subparser.add_argument("--data-dir", default="data")
-        subparser.add_argument("--force", action="store_true")
+        subparser.add_argument(
+            "--config",
+            type=Path,
+            default=None,
+            metavar="PATH",
+            help="YAML file overriding default settings",
+        )
+        subparser.add_argument(
+            "--data-dir",
+            type=Path,
+            default=Path("data"),
+            metavar="PATH",
+            help="directory for pipeline tables (default: data)",
+        )
+        subparser.add_argument(
+            "--force", action="store_true", help="overwrite existing output tables"
+        )
         subparser.set_defaults(stage=stage)
 
     return parser
@@ -50,7 +72,7 @@ def main(argv: list[str] | None = None, stages: Sequence[Stage] | None = None) -
 
     try:
         config = load_config(args.config)
-        store = DataStore(Path(args.data_dir), config.output)
+        store = DataStore(args.data_dir, config.output)
         run_stage(args.stage, config, store, force=args.force)
     except PmTraitbenchError as e:
         print(f"error: {e}", file=sys.stderr)

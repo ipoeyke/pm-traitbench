@@ -17,9 +17,7 @@ def build_traits(
     trait_index = 1
 
     for bias in biases:
-        multiplier_kwargs = {
-            multiplier_field(regime): value for regime, value in bias.multipliers.items()
-        }
+        multiplier_kwargs = {multiplier_field(regime): value for regime, value in bias.multipliers}
         traits.append(
             Trait(
                 pm_id=pm_id,

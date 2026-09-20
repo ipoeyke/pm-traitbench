@@ -4,11 +4,13 @@ from pm_traitbench.sampling.preferences import PreferenceDraw
 from pm_traitbench.sampling.traits import build_traits
 
 
-def _multipliers() -> dict[Regime, float]:
-    return {Regime.RANGE: 1.0, Regime.RISK_OFF: 1.0, Regime.RISK_ON: 1.0}
+def _multipliers() -> tuple[tuple[Regime, float], ...]:
+    return tuple((regime, 1.0) for regime in Regime)
 
 
-def _bias(param: str, active: bool, multipliers: dict[Regime, float] | None = None) -> BiasDraw:
+def _bias(
+    param: str, active: bool, multipliers: tuple[tuple[Regime, float], ...] | None = None
+) -> BiasDraw:
     return BiasDraw(
         param=param,
         value=1.5,
@@ -27,7 +29,7 @@ def test_bias_traits_get_ids_t01_through_t08_in_given_order():
 
 
 def test_bias_multipliers_copied_into_matching_columns():
-    multipliers = {Regime.RANGE: 1.1, Regime.RISK_OFF: 1.2, Regime.RISK_ON: 1.3}
+    multipliers = ((Regime.RANGE, 1.1), (Regime.RISK_OFF, 1.2), (Regime.RISK_ON, 1.3))
     traits = build_traits("pm_001", [_bias("loss_aversion_lambda", True, multipliers)], [])
     trait = traits[0]
     assert trait.mult_range == 1.1

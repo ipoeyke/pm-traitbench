@@ -25,7 +25,7 @@ def test_sample_writes_default_files_and_run_metadata(tmp_path: Path) -> None:
 
 
 def test_sample_output_reads_back_and_validates_with_twelve_personas(tmp_path: Path) -> None:
-    main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(tmp_path)])
+    assert main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(tmp_path)]) == 0
     store = DataStore(tmp_path, OutputConfig())
     personas = store.read(PERSONAS)
     assert len(personas) == 12
@@ -36,8 +36,8 @@ def test_sample_output_reads_back_and_validates_with_twelve_personas(tmp_path: P
 def test_two_runs_into_separate_directories_give_byte_identical_tables(tmp_path: Path) -> None:
     dir_a = tmp_path / "a"
     dir_b = tmp_path / "b"
-    main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(dir_a)])
-    main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(dir_b)])
+    assert main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(dir_a)]) == 0
+    assert main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(dir_b)]) == 0
     store_a = DataStore(dir_a, OutputConfig())
     store_b = DataStore(dir_b, OutputConfig())
     for spec in _TABLES:
@@ -45,13 +45,13 @@ def test_two_runs_into_separate_directories_give_byte_identical_tables(tmp_path:
 
 
 def test_rerun_without_force_returns_1(tmp_path: Path) -> None:
-    main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(tmp_path)])
+    assert main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(tmp_path)]) == 0
     result = main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(tmp_path)])
     assert result == 1
 
 
 def test_rerun_with_force_returns_0(tmp_path: Path) -> None:
-    main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(tmp_path)])
+    assert main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(tmp_path)]) == 0
     result = main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(tmp_path), "--force"])
     assert result == 0
 

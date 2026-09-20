@@ -25,7 +25,11 @@ class BiasDraw:
     value: float
     active: bool
     strength: float
-    multipliers: dict[Regime, float]
+    multipliers: tuple[tuple[Regime, float], ...]
+
+    def multiplier(self, regime: Regime) -> float:
+        """Return the multiplier for the given regime."""
+        return dict(self.multipliers)[regime]
 
 
 def _draw_activation(config: Config, rng: Generator) -> np.ndarray:
@@ -84,7 +88,7 @@ def sample_biases(
                 value=round(raw_value, 4),
                 active=is_active,
                 strength=strength,
-                multipliers=multipliers,
+                multipliers=tuple((regime, multipliers[regime]) for regime in Regime),
             )
         )
 

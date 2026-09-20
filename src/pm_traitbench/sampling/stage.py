@@ -1,11 +1,13 @@
 """Ties every per-PM sampler into one deterministic pass over the population.
 
 Draws follow a fixed order per PM, each on its own stream keyed by
-``stream(config.seed.root, "pm", slot.index, purpose)``: mandate first, since
-rules and preferences need it; then biases, preferences and rules; trait
-assembly; self-description, which needs the PM's two strongest biases; and
-drift last, since it needs the final trait list and only runs for PMs
-marked for drift.
+``stream(config.seed.root, "pm", slot.index, purpose)``: mandate, biases,
+preferences, rules, trait assembly, self-description, then drift.
+
+The order is fixed, but not every step depends on the one before it. Rules
+need the mandate. Preferences need the asset class from the population slot,
+not the mandate. The self-description needs the two strongest biases. Drift
+needs the final trait list, and only runs for PMs marked for drift.
 """
 
 from dataclasses import dataclass
