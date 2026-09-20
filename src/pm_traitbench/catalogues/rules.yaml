@@ -1,0 +1,323 @@
+mandate_cap:
+  param: max_risk_pct
+  share: 1.0
+  mandatory: true
+  variants:
+    - asset_class: equities
+      field: size_pct_book
+      op: "<="
+      unit: pct
+      action: cap
+      templates:
+        - "I cap any single position at {level}% of the book"
+        - "no name gets more than {level}% of NAV"
+        - "position size tops out at {level}% of book"
+    - asset_class: rates_credit
+      field: size_pct_book
+      op: "<="
+      unit: pct
+      action: cap
+      templates:
+        - "I cap any single line at {level}% of the book"
+        - "no issuer gets more than {level}% of NAV"
+        - "position size tops out at {level}% of book"
+    - asset_class: commodities
+      field: size_pct_book
+      op: "<="
+      unit: pct
+      action: cap
+      templates:
+        - "I cap any single contract exposure at {level}% of the book"
+        - "no commodity gets more than {level}% of NAV"
+        - "position size tops out at {level}% of book"
+    - asset_class: multi_asset
+      field: size_pct_book
+      op: "<="
+      unit: pct
+      action: cap
+      templates:
+        - "I cap any single sleeve at {level}% of the book"
+        - "no sleeve gets more than {level}% of NAV"
+        - "position size tops out at {level}% of book"
+
+entries:
+  - param: stop_loss
+    share: 1.0
+    mandatory: true
+    variants:
+      - asset_class: equities
+        field: pnl_from_entry
+        op: "<="
+        unit: pct
+        level_min: -20
+        level_max: -10
+        round_to: 1
+        action: exit
+        templates:
+          - "stop at {level}% from entry"
+          - "I exit if position pnl falls to {level}{unit} from entry"
+          - "I'm out once losses hit {level}{unit}"
+      - asset_class: rates_credit
+        sub_styles: [sovereign_rates]
+        field: adverse_yield_move_bp
+        op: ">="
+        unit: bp
+        level_min: 15
+        level_max: 30
+        round_to: 5
+        action: exit
+        templates:
+          - "I close the trade if yields move {level}{unit} against me"
+          - "stop level is a {level}{unit} adverse yield move"
+          - "out once the adverse yield move hits {level}bp"
+      - asset_class: rates_credit
+        sub_styles: [long_short_credit]
+        field: adverse_spread_move_bp
+        op: ">="
+        unit: bp
+        level_min: 25
+        level_max: 50
+        round_to: 5
+        action: exit
+        templates:
+          - "out if the spread moves {level}{unit} against me"
+          - "I exit once spreads widen {level}{unit} beyond entry"
+          - "stop triggers at a {level}bp adverse spread move"
+      - asset_class: commodities
+        field: pnl_from_entry
+        op: "<="
+        unit: pct
+        level_min: -15
+        level_max: -8
+        round_to: 1
+        action: exit
+        templates:
+          - "stop at {level}% from entry on the front month"
+          - "I exit the contract if pnl falls to {level}{unit}"
+          - "out once losses reach {level}{unit} of notional"
+      - asset_class: multi_asset
+        field: sleeve_drawdown
+        op: "<="
+        unit: pct
+        level_min: -6
+        level_max: -3
+        round_to: 0.5
+        action: exit
+        templates:
+          - "I cut the sleeve if drawdown reaches {level}{unit}"
+          - "exit the sleeve at {level}% drawdown"
+          - "stop the allocation once it draws down {level}{unit}"
+
+  - param: trim_at_target
+    share: 0.7
+    variants:
+      - asset_class: equities
+        field: target_hit
+        op: "=="
+        unit: null
+        level_choices: [1]
+        action: trim_half
+        templates:
+          - "I trim half my position once the price target prints"
+          - "half the size comes off at target"
+      - asset_class: rates_credit
+        field: target_hit
+        op: "=="
+        unit: null
+        level_choices: [1]
+        action: trim_half
+        templates:
+          - "I trim half the risk once the target level trades"
+          - "half the notional comes off when the target is reached"
+      - asset_class: commodities
+        field: target_hit
+        op: "=="
+        unit: null
+        level_choices: [1]
+        action: trim_half
+        templates:
+          - "I trim half the contracts once the target trades"
+          - "half the position comes off at the target level"
+      - asset_class: multi_asset
+        field: target_hit
+        op: "=="
+        unit: null
+        level_choices: [1]
+        action: trim_half
+        templates:
+          - "I trim half the sleeve once the target is reached"
+          - "half the allocation comes off at target"
+
+  - param: no_add_before_trigger
+    share: 0.6
+    discipline: true
+    variants:
+      - asset_class: equities
+        field: triggers_fired
+        op: "=="
+        unit: null
+        level_choices: [0]
+        action: no_add
+        templates:
+          - "I don't add to the position before a trigger fires"
+          - "no adds until a catalyst confirms the thesis"
+      - asset_class: rates_credit
+        field: triggers_fired
+        op: "=="
+        unit: null
+        level_choices: [0]
+        action: no_add
+        templates:
+          - "I don't add risk before a trigger fires"
+          - "no adding to the trade until a catalyst confirms it"
+      - asset_class: commodities
+        field: triggers_fired
+        op: "=="
+        unit: null
+        level_choices: [0]
+        action: no_add
+        templates:
+          - "I don't add to the contract before a trigger fires"
+          - "no adds until a signal confirms the setup"
+      - asset_class: multi_asset
+        field: triggers_fired
+        op: "=="
+        unit: null
+        level_choices: [0]
+        action: no_add
+        templates:
+          - "I don't add to the sleeve before a trigger fires"
+          - "no adds to the allocation until a catalyst confirms"
+
+  - param: min_holding_period
+    share: 0.4
+    discipline: true
+    variants:
+      - asset_class: equities
+        field: sessions_held
+        op: ">="
+        unit: sessions
+        level_min: 5
+        level_max: 20
+        round_to: 5
+        action: hold
+        templates:
+          - "I hold a position for at least {level} {unit} before exiting"
+          - "no exits inside {level} {unit} of putting the trade on"
+      - asset_class: rates_credit
+        field: sessions_held
+        op: ">="
+        unit: sessions
+        level_min: 10
+        level_max: 30
+        round_to: 5
+        action: hold
+        templates:
+          - "I hold the trade for at least {level} {unit} before closing"
+          - "the position stays on for {level} {unit} minimum"
+      - asset_class: commodities
+        field: sessions_held
+        op: ">="
+        unit: sessions
+        level_min: 5
+        level_max: 15
+        round_to: 5
+        action: hold
+        templates:
+          - "I hold the contract for at least {level} {unit} before exiting"
+          - "no exits inside {level} {unit} of the initial trade"
+      - asset_class: multi_asset
+        field: sessions_held
+        op: ">="
+        unit: sessions
+        level_choices: [20]
+        action: hold
+        templates:
+          - "I hold the allocation for at least {level} {unit}, one rebalance cycle"
+          - "the sleeve stays in place for {level} {unit} before I revisit it"
+
+  - param: exclusion
+    share: 0.4
+    variants:
+      - asset_class: equities
+        field: sector
+        op: "!="
+        unit: null
+        level_choices: [energy, financials, utilities, real_estate]
+        action: exclude
+        templates:
+          - "nothing in the {level} sector"
+          - "I stay out of {level} names"
+      - asset_class: rates_credit
+        field: rating_band
+        op: "!="
+        unit: null
+        level_choices: [ccc_and_below, single_b, subordinated_financials]
+        action: exclude
+        templates:
+          - "nothing in the {level} rating band"
+          - "I avoid {level} credits"
+      - asset_class: commodities
+        field: commodity_group
+        op: "!="
+        unit: null
+        level_choices: [agriculture, energy, precious_metals]
+        action: exclude
+        templates:
+          - "nothing in the {level} group"
+          - "I stay out of {level} markets"
+      - asset_class: multi_asset
+        field: sleeve
+        op: "!="
+        unit: null
+        level_choices: [emerging_markets, commodities_sleeve, fx_sleeve]
+        action: exclude
+        templates:
+          - "nothing in the {level} sleeve"
+          - "I keep the book out of the {level} allocation"
+
+  - param: max_positions
+    share: 0.5
+    variants:
+      - asset_class: equities
+        field: n_positions
+        op: "<="
+        unit: positions
+        level_min: 15
+        level_max: 40
+        round_to: 5
+        action: cap
+        templates:
+          - "I cap the book at {level} {unit}"
+          - "no more than {level} names at once"
+      - asset_class: rates_credit
+        field: n_positions
+        op: "<="
+        unit: positions
+        level_min: 10
+        level_max: 25
+        round_to: 5
+        action: cap
+        templates:
+          - "I cap the book at {level} {unit}"
+          - "no more than {level} lines at once"
+      - asset_class: commodities
+        field: n_positions
+        op: "<="
+        unit: positions
+        level_min: 8
+        level_max: 20
+        round_to: 1
+        action: cap
+        templates:
+          - "I cap the book at {level} {unit}"
+          - "no more than {level} contracts on at once"
+      - asset_class: multi_asset
+        field: n_positions
+        op: "<="
+        unit: positions
+        level_choices: [4, 5, 6]
+        action: cap
+        templates:
+          - "I cap the sleeve count at {level} {unit}"
+          - "no more than {level} sleeves on at once"

@@ -170,9 +170,9 @@ def test_unknown_nested_key_raises_catalogue_error(tmp_path: Path) -> None:
         load_catalogue(tmp_path)
 
 
-def test_load_catalogue_none_raises_when_packaged_files_missing() -> None:
+def test_load_catalogue_raises_when_files_missing(tmp_path: Path) -> None:
     with pytest.raises(CatalogueError):
-        load_catalogue(None)
+        load_catalogue(tmp_path)
 
 
 # --- level-shape invariant (mandate_cap vs. other rule entries) ---
