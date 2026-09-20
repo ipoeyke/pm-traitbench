@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 import yaml
+from _render_checks import assert_every_rule_template_renders_cleanly
 
 from pm_traitbench.catalogues.loader import check_catalogue, load_catalogue, render_template
 from pm_traitbench.catalogues.models import (
@@ -106,6 +107,10 @@ def test_variant_for_raises_catalogue_error_when_no_variant_matches() -> None:
         entry.variant_for(AssetClass.COMMODITIES, "any")
 
 
+def test_every_fixture_rule_template_renders_cleanly(fixture_catalogue: Catalogue) -> None:
+    assert_every_rule_template_renders_cleanly(fixture_catalogue)
+
+
 def test_fixture_stop_loss_variant_for_prefers_matching_sub_style(
     fixture_catalogue: Catalogue,
 ) -> None:
@@ -142,6 +147,10 @@ def test_render_template_with_string_level_replaces_underscores_with_spaces() ->
 
 def test_render_template_with_float_level_ignores_underscore_handling() -> None:
     assert render_template("stop at {level}%", -15.0, None) == "stop at -15%"
+
+
+def test_render_template_with_int_level() -> None:
+    assert render_template("cap at {level}", 4, None) == "cap at 4"
 
 
 # --- load_catalogue error paths ---

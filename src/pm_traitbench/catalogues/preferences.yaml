@@ -49,18 +49,18 @@ preferences:
     group: communication
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "one line for routine questions"
-      - "a short paragraph for routine questions"
-      - "match the length of the question"
+      - "one sentence"
+      - "two to three sentences"
+      - "up to a short page"
 
   # information (all asset classes, plus two asset-specific)
   - param: positioning_context
     group: information
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "restate the position before any new commentary"
-      - "mention the position only if asked"
-      - "give commentary without repeating the position"
+      - "open every answer on a name with my current position in it"
+      - "mention my position only when I ask"
+      - "never restate my position"
   - param: carry_display
     group: information
     asset_classes: [equities, rates_credit, commodities, multi_asset]
@@ -72,9 +72,9 @@ preferences:
     group: information
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "put macro commentary at the top of every answer"
-      - "keep macro commentary brief and secondary"
-      - "leave macro commentary out unless asked"
+      - "no macro commentary unless I ask"
+      - "one line of macro context per answer"
+      - "full macro backdrop on every idea"
   - param: calendar_citation
     group: information
     asset_classes: [equities, rates_credit, commodities, multi_asset]

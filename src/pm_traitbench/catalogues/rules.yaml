@@ -273,7 +273,7 @@ entries:
         level_choices: [emerging_markets, commodities_sleeve, fx_sleeve]
         action: exclude
         templates:
-          - "nothing in the {level} sleeve"
+          - "no allocation to {level}"
           - "I keep the book out of the {level} allocation"
 
   - param: max_positions

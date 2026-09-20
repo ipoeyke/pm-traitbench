@@ -88,7 +88,7 @@ entries:
         round_to: 0.5
         action: exit
         templates:
-          - "exit the sleeve if drawdown reaches {level}{unit}"
+          - "exit the sleeve if drawdown reaches {level}%"
 
   - param: trim_at_target
     share: 0.7
@@ -240,7 +240,7 @@ entries:
         level_choices: [emerging_markets, commodities_sleeve, fx_sleeve]
         action: exclude
         templates:
-          - "exclude the {level} sleeve"
+          - "no allocation to {level}"
 
   - param: max_positions
     share: 0.5

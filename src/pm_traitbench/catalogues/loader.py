@@ -94,7 +94,7 @@ def render_template(template: str, level: float | str, unit: str | None) -> str:
     A string level is a snake_case id (e.g. "ccc_and_below"); it renders with
     underscores replaced by spaces. The stored level itself is untouched.
     """
-    rendered_level = format(level, "g") if isinstance(level, float) else level.replace("_", " ")
+    rendered_level = level.replace("_", " ") if isinstance(level, str) else format(level, "g")
     return template.format(level=rendered_level, unit=unit if unit is not None else "")
 
 
