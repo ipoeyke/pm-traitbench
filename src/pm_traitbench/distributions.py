@@ -19,6 +19,11 @@ class _BoundedSpec(BaseModel):
     def _check_bounds(self) -> "_BoundedSpec":
         if self.lo is not None and self.hi is not None and self.lo >= self.hi:
             raise ValueError("lo must be less than hi")
+        dist = self._frozen()
+        f_lo = dist.cdf(self.lo) if self.lo is not None else 0.0
+        f_hi = dist.cdf(self.hi) if self.hi is not None else 1.0
+        if f_hi - f_lo < 1e-9:
+            raise ValueError(f"truncation window [lo={self.lo}, hi={self.hi}] is degenerate")
         return self
 
     def _frozen(self) -> Any:
@@ -39,13 +44,13 @@ class _BoundedSpec(BaseModel):
         return float(result[0]) if is_scalar else result
 
     def cdf(self, x: np.ndarray | float) -> np.ndarray | float:
-        """Truncated CDF: inverse of the rescaling used in ppf."""
+        """Truncated CDF: inverse of the rescaling used in ppf, clipped to [0, 1]."""
         dist = self._frozen()
         is_scalar = np.isscalar(x)
         xx = np.atleast_1d(np.asarray(x, dtype=float))
         f_lo = dist.cdf(self.lo) if self.lo is not None else 0.0
         f_hi = dist.cdf(self.hi) if self.hi is not None else 1.0
-        result = (dist.cdf(xx) - f_lo) / (f_hi - f_lo)
+        result = np.clip((dist.cdf(xx) - f_lo) / (f_hi - f_lo), 0.0, 1.0)
         return float(result[0]) if is_scalar else result
 
 

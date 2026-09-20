@@ -14,6 +14,8 @@ from pm_traitbench.config import (
     DriftConfig,
     load_config,
 )
+from pm_traitbench.distributions import BetaSpec, LogNormalSpec
+from pm_traitbench.enums import Regime
 from pm_traitbench.errors import ConfigError
 
 
@@ -117,6 +119,19 @@ def test_non_monday_calendar_start_from_yaml_raises_config_error(tmp_path: Path)
         load_config(path)
 
 
+def test_degenerate_truncation_bound_from_yaml_raises_config_error(tmp_path: Path) -> None:
+    path = _write_yaml(tmp_path, {"biases": {"regime_multiplier": {"lo": 20.0, "hi": None}}})
+    with pytest.raises(ConfigError):
+        load_config(path)
+
+
+def test_params_out_of_order_input_normalizes_to_bias_params_order() -> None:
+    default = Config().biases.params
+    shuffled = {name: default[name] for name in reversed(BIAS_PARAMS)}
+    biases = BiasesConfig(params=shuffled)
+    assert tuple(biases.params.keys()) == BIAS_PARAMS
+
+
 def _default_correlation_matrix() -> list[list[float]]:
     n = len(BIAS_PARAMS)
     return [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
@@ -151,6 +166,103 @@ def test_non_positive_definite_correlation_raises() -> None:
         BiasesConfig(correlation=tuple(tuple(row) for row in matrix))
 
 
+_EXPECTED_CORRELATION_PAIRS: dict[tuple[str, str], float] = {
+    ("loss_aversion_lambda", "disposition_ratio"): 0.42,
+    ("overconfidence_coverage", "herding_weight"): -0.31,
+    ("loss_aversion_lambda", "herding_weight"): -0.08,
+    ("extrapolation_theta", "herding_weight"): 0.05,
+    ("exit_deficiency", "disposition_ratio"): 0.30,
+    ("conviction_size_miscalibration", "overconfidence_coverage"): -0.30,
+}
+
+
+def test_correlation_pairs_match_binding_defaults() -> None:
+    matrix = Config().biases.correlation
+    n = len(BIAS_PARAMS)
+    expected = [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+    for (name_a, name_b), value in _EXPECTED_CORRELATION_PAIRS.items():
+        i, j = BIAS_PARAMS.index(name_a), BIAS_PARAMS.index(name_b)
+        expected[i][j] = value
+        expected[j][i] = value
+    for i in range(n):
+        for j in range(n):
+            assert matrix[i][j] == pytest.approx(expected[i][j])
+
+
+_EXPECTED_BIAS_PARAMS: dict[str, tuple] = {
+    "loss_aversion_lambda": (
+        LogNormalSpec(median=1.1, sigma=0.10),
+        LogNormalSpec(median=2.0, sigma=0.25, lo=1.5),
+        True,
+        Regime.RISK_OFF,
+    ),
+    "disposition_ratio": (
+        LogNormalSpec(median=1.0, sigma=0.08),
+        LogNormalSpec(median=1.2, sigma=0.15, lo=1.2),
+        True,
+        Regime.RISK_OFF,
+    ),
+    "anchoring_rho": (
+        BetaSpec(a=2, b=12),
+        BetaSpec(a=9, b=12),
+        True,
+        Regime.RANGE,
+    ),
+    "extrapolation_theta": (
+        BetaSpec(a=2, b=10),
+        BetaSpec(a=12, b=8),
+        True,
+        Regime.RISK_ON,
+    ),
+    "herding_weight": (
+        BetaSpec(a=2, b=10),
+        BetaSpec(a=7, b=5),
+        True,
+        Regime.RISK_ON,
+    ),
+    "overconfidence_coverage": (
+        BetaSpec(a=16, b=4),
+        BetaSpec(a=4, b=6),
+        False,
+        None,
+    ),
+    "conviction_size_miscalibration": (
+        BetaSpec(a=2, b=10),
+        BetaSpec(a=5, b=5),
+        True,
+        None,
+    ),
+    "exit_deficiency": (
+        BetaSpec(a=1, b=15),
+        BetaSpec(a=4, b=5),
+        True,
+        None,
+    ),
+}
+
+
+@pytest.mark.parametrize("name", BIAS_PARAMS)
+def test_bias_param_matches_binding_defaults(name: str) -> None:
+    spec = Config().biases.params[name]
+    neutral, active, higher_is_stronger, cluster_regime = _EXPECTED_BIAS_PARAMS[name]
+    assert spec.neutral == neutral
+    assert spec.active == active
+    assert spec.higher_is_stronger is higher_is_stronger
+    assert spec.cluster_regime == cluster_regime
+
+
+def test_bias_spec_empty_note_raises() -> None:
+    with pytest.raises(ValidationError):
+        BiasSpec(
+            neutral=BetaSpec(a=2, b=10),
+            active=BetaSpec(a=5, b=5),
+            higher_is_stronger=True,
+            cluster_regime=None,
+            basis="guess",
+            note="",
+        )
+
+
 def test_dump_with_basis_covers_every_leaf() -> None:
     config = Config()
     rows = config.dump_with_basis()
@@ -159,6 +271,7 @@ def test_dump_with_basis_covers_every_leaf() -> None:
     for row in rows:
         assert row.basis in ("sourced", "design", "guess")
         assert isinstance(row.note, str)
+        assert row.note.strip()
 
     assert "biases.p_active" in paths
     assert "biases.params.herding_weight" in paths

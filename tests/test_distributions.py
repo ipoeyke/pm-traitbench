@@ -41,6 +41,33 @@ def test_truncated_lognormal_with_lo_at_median_stays_above_lo() -> None:
     assert spec.ppf(0.0001) >= spec.lo
 
 
+def test_degenerate_truncation_window_raises() -> None:
+    with pytest.raises(ValidationError):
+        LogNormalSpec(median=2.0, sigma=0.25, lo=20.0)
+
+
+def test_truncated_cdf_below_lo_is_zero() -> None:
+    spec = BetaSpec(a=9, b=12, lo=0.1, hi=0.9)
+    assert spec.cdf(0.05) == 0.0
+
+
+def test_truncated_cdf_above_hi_is_one() -> None:
+    spec = BetaSpec(a=9, b=12, lo=0.1, hi=0.9)
+    assert spec.cdf(0.95) == 1.0
+
+
+def test_truncated_cdf_inside_bounds_is_strictly_between_zero_and_one() -> None:
+    spec = BetaSpec(a=9, b=12, lo=0.1, hi=0.9)
+    value = spec.cdf(0.5)
+    assert 0.0 < value < 1.0
+
+
+def test_truncated_cdf_ppf_round_trip() -> None:
+    spec = LogNormalSpec(median=2.0, sigma=0.25, lo=1.5, hi=3.0)
+    u = np.linspace(0.01, 0.99, 50)
+    assert np.allclose(spec.cdf(spec.ppf(u)), u)
+
+
 def test_cdf_ppf_round_trip_for_untruncated_lognormal() -> None:
     spec = LogNormalSpec(median=1.1, sigma=0.10)
     u = np.linspace(0.01, 0.99, 50)

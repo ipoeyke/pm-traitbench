@@ -36,7 +36,7 @@ class BiasSpec(BaseModel):
     higher_is_stronger: bool
     cluster_regime: Regime | None
     basis: Basis
-    note: str
+    note: str = Field(min_length=1)
 
 
 def _default_bias_params() -> dict[str, BiasSpec]:
@@ -222,7 +222,8 @@ class BiasesConfig(BaseModel):
     def _check_params_keys(cls, value: dict[str, BiasSpec]) -> dict[str, BiasSpec]:
         if set(value) != set(BIAS_PARAMS):
             raise ValueError(f"params keys must be exactly {BIAS_PARAMS}")
-        return value
+        # Rebuild in BIAS_PARAMS order: correlation is indexed positionally by it.
+        return {name: value[name] for name in BIAS_PARAMS}
 
     @field_validator("correlation")
     @classmethod
@@ -366,10 +367,7 @@ class CalendarConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_timeline(self) -> "CalendarConfig":
-        try:
-            Timeline(self.start, self.n_weeks)
-        except ValueError as e:
-            raise ValueError(str(e)) from e
+        Timeline(self.start, self.n_weeks)
         return self
 
 
