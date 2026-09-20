@@ -58,9 +58,9 @@ preferences:
     group: information
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "open every answer on a name with my current position in it"
-      - "mention my position only when I ask"
-      - "never restate my position"
+      - "mention street positioning on every idea"
+      - "mention street positioning only when it is extreme"
+      - "leave street positioning out unless I ask"
   - param: carry_display
     group: information
     asset_classes: [equities, rates_credit, commodities, multi_asset]
