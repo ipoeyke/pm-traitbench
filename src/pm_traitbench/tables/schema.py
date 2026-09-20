@@ -20,6 +20,7 @@ from pm_traitbench.enums import (
     Split,
     Typicality,
 )
+from pm_traitbench.numeric import parse_number
 
 __all__ = [
     "AssetClass",
@@ -54,10 +55,8 @@ def _coerce_numeric_str(value: Any) -> Any:
     numbers without misreading genuinely textual levels.
     """
     if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return value
+        parsed = parse_number(value)
+        return value if parsed is None else parsed
     return value
 
 

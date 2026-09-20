@@ -44,6 +44,16 @@ def test_book_size_is_within_bounds_and_a_multiple_of_one_million(fixture_catalo
         assert mandate.book_size % 1e6 == 0
 
 
+def test_book_size_stays_within_bounds_that_are_not_multiples_of_one_million(
+    fixture_catalogue: Catalogue,
+):
+    config = Config.model_validate({"mandate": {"book_size_min": 50.4e6, "book_size_max": 60.6e6}})
+    for i in range(50):
+        rng = stream(1, "t", i, "mandate")
+        mandate = sample_mandate(_slot(AssetClass.EQUITIES), config, fixture_catalogue, rng)
+        assert config.mandate.book_size_min <= mandate.book_size <= config.mandate.book_size_max
+
+
 def test_over_many_draws_both_sub_styles_appear_and_median_book_size_is_plausible(
     fixture_catalogue: Catalogue,
 ):

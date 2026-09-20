@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -98,6 +100,36 @@ def test_non_positive_median_raises() -> None:
 def test_non_positive_beta_param_raises() -> None:
     with pytest.raises(ValidationError):
         BetaSpec(a=0.0, b=5)
+
+
+def test_narrow_window_near_upper_bound_does_not_return_inf() -> None:
+    # Window is ~1e-6 wide; the mapped probability at u close to 1 rounds to
+    # exactly 1.0 in float64 before the fix, which made scipy's ppf return inf.
+    spec = LogNormalSpec(median=2.0, sigma=0.25, lo=6.563363878)
+    value = spec.ppf(1 - 1e-12)
+    assert math.isfinite(value)
+
+
+def test_narrow_window_over_an_array_never_returns_inf() -> None:
+    spec = LogNormalSpec(median=2.0, sigma=0.25, lo=6.563363878)
+    values = spec.ppf(np.array([0.5, 1 - 1e-12, 1 - 1e-10]))
+    assert np.all(np.isfinite(values))
+
+
+def test_non_finite_ppf_result_raises_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = LogNormalSpec(median=1.1, sigma=0.10)
+    frozen = spec._frozen()
+
+    class _AlwaysInf:
+        def cdf(self, x: float | None) -> float:
+            return 0.0 if x is None else frozen.cdf(x)
+
+        def ppf(self, q: np.ndarray) -> np.ndarray:
+            return np.full_like(np.asarray(q, dtype=float), np.inf)
+
+    monkeypatch.setattr(spec, "_frozen", lambda: _AlwaysInf())
+    with pytest.raises(ValueError, match="non-finite"):
+        spec.ppf(0.5)
 
 
 def test_discriminated_union_parses_beta() -> None:

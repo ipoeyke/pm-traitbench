@@ -268,6 +268,16 @@ def test_check_preference_value_parsing_as_float_raises(tmp_path: Path) -> None:
         _check(catalogue)
 
 
+def test_check_preference_value_with_underscore_separator_is_not_numeric(tmp_path: Path) -> None:
+    _copy_fixture(tmp_path)
+    path = tmp_path / "preferences.yaml"
+    data = _load_yaml(path)
+    data["preferences"][0]["values"][0] = "1_0"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    _check(catalogue)
+
+
 def test_check_preference_empty_value_raises(tmp_path: Path) -> None:
     _copy_fixture(tmp_path)
     path = tmp_path / "preferences.yaml"

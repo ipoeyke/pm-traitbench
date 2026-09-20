@@ -20,7 +20,8 @@ def sample_mandate(slot: PmSlot, config: Config, catalogue: Catalogue, rng: Gene
     book_min = config.mandate.book_size_min
     book_max = config.mandate.book_size_max
     raw_book_size = exp(rng.uniform(log(book_min), log(book_max)))
-    book_size = round(round(raw_book_size / _BOOK_SIZE_ROUND_TO) * _BOOK_SIZE_ROUND_TO, 4)
+    snapped = round(raw_book_size / _BOOK_SIZE_ROUND_TO) * _BOOK_SIZE_ROUND_TO
+    book_size = round(min(max(snapped, book_min), book_max), 4)
 
     return Mandate(
         asset_class=slot.asset_class,

@@ -274,6 +274,24 @@ def test_rule_level_non_numeric_string_stays_str() -> None:
     assert isinstance(rule.level, str)
 
 
+def test_rule_level_underscore_separated_digits_stays_str() -> None:
+    rule = _pm_rule(level="1_0")
+    assert rule.level == "1_0"
+    assert isinstance(rule.level, str)
+
+
+def test_rule_level_nan_spelling_stays_str() -> None:
+    rule = _pm_rule(level="nan")
+    assert rule.level == "nan"
+    assert isinstance(rule.level, str)
+
+
+def test_rule_level_whitespace_padded_digits_stays_str() -> None:
+    rule = _pm_rule(level=" 5 ")
+    assert rule.level == " 5 "
+    assert isinstance(rule.level, str)
+
+
 def test_rule_pm_scope_rejects_trade_idea_id() -> None:
     with pytest.raises(ValidationError):
         _pm_rule(trade_idea_id="idea_001")

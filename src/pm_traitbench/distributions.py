@@ -34,13 +34,23 @@ class _BoundedSpec(BaseModel):
         return float(self._frozen().median())
 
     def ppf(self, u: np.ndarray | float) -> np.ndarray | float:
-        """Truncated inverse CDF: rescale u onto [F(lo), F(hi)] before inverting."""
+        """Truncated inverse CDF: rescale u onto [F(lo), F(hi)] before inverting.
+
+        The mapped probability is clipped again before inversion: for a
+        truncation window narrower than about 5e-5, rounding can otherwise
+        push it to exactly 1.0 and scipy's ppf returns inf.
+        """
         dist = self._frozen()
         is_scalar = np.isscalar(u)
         uu = np.clip(np.atleast_1d(np.asarray(u, dtype=float)), 1e-12, 1 - 1e-12)
         f_lo = dist.cdf(self.lo) if self.lo is not None else 0.0
         f_hi = dist.cdf(self.hi) if self.hi is not None else 1.0
-        result = dist.ppf(f_lo + uu * (f_hi - f_lo))
+        q = np.clip(f_lo + uu * (f_hi - f_lo), 1e-12, 1 - 1e-12)
+        result = dist.ppf(q)
+        if not np.all(np.isfinite(result)):
+            raise ValueError(
+                f"ppf produced a non-finite value for bounds [lo={self.lo}, hi={self.hi}]"
+            )
         return float(result[0]) if is_scalar else result
 
     def cdf(self, x: np.ndarray | float) -> np.ndarray | float:

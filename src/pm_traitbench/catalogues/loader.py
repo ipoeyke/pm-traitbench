@@ -21,6 +21,7 @@ from pm_traitbench.catalogues.models import (
 from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.enums import AssetClass
 from pm_traitbench.errors import CatalogueError
+from pm_traitbench.numeric import parse_number
 
 _FILE_NAMES = ("preferences.yaml", "rules.yaml", "mandates.yaml", "self_descriptions.yaml")
 
@@ -135,13 +136,10 @@ def _check_preference_values(catalogue: Catalogue) -> None:
         for value in entry.values:
             if not value.strip():
                 raise CatalogueError(f"preferences: param '{entry.param}' has an empty value")
-            try:
-                float(value)
-            except ValueError:
-                continue
-            raise CatalogueError(
-                f"preferences: param '{entry.param}' has a value that parses as a number"
-            )
+            if parse_number(value) is not None:
+                raise CatalogueError(
+                    f"preferences: param '{entry.param}' has a value that parses as a number"
+                )
 
 
 def _all_rule_entries(catalogue: Catalogue) -> tuple:
