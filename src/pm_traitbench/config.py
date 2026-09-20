@@ -47,7 +47,10 @@ def _default_bias_params() -> dict[str, BiasSpec]:
             higher_is_stronger=True,
             cluster_regime=Regime.RISK_OFF,
             basis="sourced",
-            note="Tversky and Kahneman 1992 prospect theory loss aversion near 2.25.",
+            note=(
+                "Brown et al. 2024 meta-analysis of 607 estimates, mean 1.955; Tversky "
+                "and Kahneman 1992 report 2.25. Spread is a guess."
+            ),
         ),
         "disposition_ratio": BiasSpec(
             neutral=LogNormalSpec(median=1.0, sigma=0.08),
@@ -55,7 +58,10 @@ def _default_bias_params() -> dict[str, BiasSpec]:
             higher_is_stronger=True,
             cluster_regime=Regime.RISK_OFF,
             basis="sourced",
-            note="Shefrin and Statman 1985 disposition effect, realized gain to loss ratio.",
+            note=(
+                "Odean 1998 retail ratio 1.51; Frazzini 2006 and Locke and Mann 2005 "
+                "give a professional centre near 1.2."
+            ),
         ),
         "anchoring_rho": BiasSpec(
             neutral=BetaSpec(a=2, b=12),
@@ -63,7 +69,10 @@ def _default_bias_params() -> dict[str, BiasSpec]:
             higher_is_stronger=True,
             cluster_regime=Regime.RANGE,
             basis="sourced",
-            note="Tversky and Kahneman 1974 anchoring and adjustment heuristic.",
+            note=(
+                "Northcraft and Neale 1987 valuation-anchor correlation 0.41 for "
+                "experts; Yee and Koh 2026 benchmark 0.43."
+            ),
         ),
         "extrapolation_theta": BiasSpec(
             neutral=BetaSpec(a=2, b=10),
@@ -71,7 +80,10 @@ def _default_bias_params() -> dict[str, BiasSpec]:
             higher_is_stronger=True,
             cluster_regime=Regime.RISK_ON,
             basis="sourced",
-            note="Barberis, Shleifer and Vishny 1998 extrapolative belief formation.",
+            note=(
+                "Bloomfield and Hales 2002 forecast-past return correlation 0.63; "
+                "Greenwood and Shleifer 2014 report 0.57."
+            ),
         ),
         "herding_weight": BiasSpec(
             neutral=BetaSpec(a=2, b=10),
@@ -79,7 +91,10 @@ def _default_bias_params() -> dict[str, BiasSpec]:
             higher_is_stronger=True,
             cluster_regime=Regime.RISK_ON,
             basis="sourced",
-            note="Grinblatt, Titman and Wermers 1995 herding among fund managers.",
+            note=(
+                "Anderson and Holt 1997 follow-the-crowd rate 0.68 in cascades; "
+                "professional centre lowered to 0.58 as a guess."
+            ),
         ),
         "overconfidence_coverage": BiasSpec(
             neutral=BetaSpec(a=16, b=4),
@@ -87,7 +102,10 @@ def _default_bias_params() -> dict[str, BiasSpec]:
             higher_is_stronger=False,
             cluster_regime=None,
             basis="sourced",
-            note="Barber and Odean 2001 overconfidence and excessive trading.",
+            note=(
+                "Ben-David, Graham and Harvey 2013: CFO 80 percent intervals "
+                "contained the outcome 36 percent of the time."
+            ),
         ),
         "conviction_size_miscalibration": BiasSpec(
             neutral=BetaSpec(a=2, b=10),
@@ -95,7 +113,9 @@ def _default_bias_params() -> dict[str, BiasSpec]:
             higher_is_stronger=True,
             cluster_regime=None,
             basis="guess",
-            note="Position sizing miscalibrated relative to realized conviction accuracy.",
+            note=(
+                "No source for magnitude; motivated by Cohen, Polk and Silli 2010 on best ideas."
+            ),
         ),
         "exit_deficiency": BiasSpec(
             neutral=BetaSpec(a=1, b=15),
@@ -103,7 +123,10 @@ def _default_bias_params() -> dict[str, BiasSpec]:
             higher_is_stronger=True,
             cluster_regime=None,
             basis="guess",
-            note="Reluctance to exit a position once an initial thesis is established.",
+            note=(
+                "Direction from Akepanidtaworn et al. 2023 on weak selling "
+                "decisions; magnitude is a guess."
+            ),
         ),
     }
 
