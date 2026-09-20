@@ -1,0 +1,57 @@
+self_descriptions:
+  loss_aversion_lambda:
+    agree:
+      - "I hold losers longer than winners because losses feel worse."
+      - "I cut winners quickly but let losing positions run."
+    contradict:
+      - "I treat a dollar of loss and a dollar of gain the same way."
+      - "I close losing and winning positions on the same rules."
+  disposition_ratio:
+    agree:
+      - "I sell winners faster than I sell losers."
+      - "I ride a loss hoping it comes back before I sell."
+    contradict:
+      - "I sell winners and losers on the same schedule."
+      - "I exit a loss as fast as I take a profit."
+  anchoring_rho:
+    agree:
+      - "My exit target stays anchored to my entry price."
+      - "I judge a new price mostly against where I bought."
+    contradict:
+      - "I reprice my view fresh each session, ignoring my entry."
+      - "My entry price has no bearing on my target."
+  extrapolation_theta:
+    agree:
+      - "A strong recent run makes me expect it to continue."
+      - "I raise my forecast after a few good sessions in a row."
+    contradict:
+      - "A recent run does not change my long-run forecast."
+      - "I treat a short streak as noise, not a signal."
+  herding_weight:
+    agree:
+      - "I feel more comfortable holding a position other desks also hold."
+      - "Seeing peers buy the same name reinforces my own view."
+    contradict:
+      - "What other desks hold does not affect my position."
+      - "I ignore consensus positioning when I size a trade."
+  overconfidence_coverage:
+    agree:
+      - "My price targets come with a narrow range because I am usually right."
+      - "I rarely widen my confidence range even under uncertainty."
+    contradict:
+      - "I keep a wide range around any target because outcomes vary."
+      - "I assume I could be badly wrong and size for that."
+  conviction_size_miscalibration:
+    agree:
+      - "My biggest positions are not always my highest-conviction ideas."
+      - "Position size and conviction do not always line up for me."
+    contradict:
+      - "I size a position in direct proportion to my conviction."
+      - "My largest positions are always my highest-conviction ideas."
+  exit_deficiency:
+    agree:
+      - "I struggle to close a position once I have decided to exit."
+      - "I delay selling even after my exit case plays out."
+    contradict:
+      - "I exit exactly when my exit case is met."
+      - "I close a position the moment my thesis breaks."
