@@ -43,3 +43,25 @@ def test_string_key_hashing_is_stable_across_processes() -> None:
 def test_negative_int_key_raises_value_error() -> None:
     with pytest.raises(ValueError, match="non-negative"):
         stream(1, "pm", -1, "biases")
+
+
+def test_too_large_int_key_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="64 bits"):
+        stream(1, 2**64)
+
+
+def test_bool_key_raises_type_error() -> None:
+    with pytest.raises(TypeError, match="bool"):
+        stream(1, True)
+
+
+def test_int_keys_that_folded_together_now_differ() -> None:
+    a = stream(7, 0, 1).random()
+    b = stream(7, 2**32).random()
+    assert a != b
+
+
+def test_int_key_differs_from_str_key_with_the_same_digits() -> None:
+    a = stream(1, 5).random()
+    b = stream(1, "5").random()
+    assert a != b
