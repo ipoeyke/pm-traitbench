@@ -169,8 +169,16 @@ class PopulationConfig(BaseModel):
         default=("A", "B", "C"),
         json_schema_extra={"basis": "design", "note": "three parallel market seeds per cell"},
     )
+    pilot_market_seed_count: int = Field(
+        1,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": "the pilot uses only this many of the leading market seeds",
+        },
+    )
     pilot_per_cell: int = Field(
-        1, ge=0, json_schema_extra={"basis": "design", "note": "small pilot batch per cell"}
+        2, ge=0, json_schema_extra={"basis": "design", "note": "small pilot batch per cell"}
     )
     full_per_cell: int = Field(
         3, ge=0, json_schema_extra={"basis": "design", "note": "full batch size per cell"}
@@ -189,6 +197,11 @@ class PopulationConfig(BaseModel):
                 raise ValueError(f"{name} must not repeat an entry: {list(values)}")
         if any(not seed.strip() for seed in self.market_seeds):
             raise ValueError("market_seeds must not contain a blank name")
+        if self.pilot_market_seed_count > len(self.market_seeds):
+            raise ValueError(
+                f"pilot_market_seed_count is {self.pilot_market_seed_count} but only "
+                f"{len(self.market_seeds)} market_seeds are configured"
+            )
         if self.pilot_per_cell == 0 and self.full_per_cell == 0:
             raise ValueError("pilot_per_cell and full_per_cell cannot both be 0")
         return self

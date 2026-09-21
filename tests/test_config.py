@@ -28,7 +28,8 @@ def _write_yaml(tmp_path: Path, data: dict) -> Path:
 def test_config_builds_with_defaults() -> None:
     config = Config()
     assert config.seed.root == 20260105
-    assert config.population.pilot_per_cell == 1
+    assert config.population.pilot_per_cell == 2
+    assert config.population.pilot_market_seed_count == 1
     assert config.population.full_per_cell == 3
     assert config.mandate.book_size_min == 50e6
     assert config.mandate.book_size_max == 2e9
@@ -78,6 +79,8 @@ def test_yaml_override_of_one_bias_entry_field_keeps_others(tmp_path: Path) -> N
         ({"market_seeds": ["A", "A"]}, "market_seeds"),
         ({"market_seeds": []}, "market_seeds"),
         ({"market_seeds": ["A", " "]}, "market_seeds"),
+        ({"pilot_market_seed_count": 4}, "pilot_market_seed_count"),
+        ({"pilot_market_seed_count": 0}, "pilot_market_seed_count"),
         ({"pilot_per_cell": 0, "full_per_cell": 0}, "per_cell"),
     ],
 )
