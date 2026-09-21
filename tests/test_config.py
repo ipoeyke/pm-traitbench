@@ -315,3 +315,15 @@ def test_dump_with_basis_covers_every_leaf() -> None:
 
     walk(config, "")
     assert paths == expected_paths
+
+
+@pytest.mark.parametrize("revive_first", [38, 40])
+def test_revive_weeks_must_start_after_dormant_weeks_end(revive_first: int) -> None:
+    overrides = {"drift": {"dormant_weeks": [32, 40], "revive_weeks": [revive_first, 48]}}
+    with pytest.raises(ValidationError, match="revive_weeks must start after dormant_weeks"):
+        Config.model_validate(overrides)
+
+
+def test_revive_weeks_starting_the_week_after_dormant_weeks_is_accepted() -> None:
+    config = Config.model_validate({"drift": {"dormant_weeks": [32, 40], "revive_weeks": [41, 48]}})
+    assert config.drift.revive_weeks == (41, 48)
