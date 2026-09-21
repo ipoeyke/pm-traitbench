@@ -1,10 +1,9 @@
-"""CSV, JSONL and parquet readers/writers for row model tables.
+"""JSONL and parquet readers/writers for row model tables.
 
 Formats work only with plain records (dicts as produced by ``to_record``);
 they never validate rows and never sort them.
 """
 
-import csv
 import datetime
 import json
 from pathlib import Path
@@ -24,60 +23,6 @@ class TableFormat(Protocol):
     def write(self, records: list[dict[str, Any]], model: type[BaseModel], path: Path) -> None: ...
 
     def read(self, path: Path, model: type[BaseModel]) -> list[dict[str, Any]]: ...
-
-
-def _encode_csv_cell(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, float):
-        return repr(value)
-    return str(value)
-
-
-class CsvFormat:
-    extension = "csv"
-
-    def write(self, records: list[dict[str, Any]], model: type[BaseModel], path: Path) -> None:
-        cols = columns(model)
-        for col in cols:
-            if col.kind == "struct":
-                raise TableValidationError(f"CSV cannot hold nested table {col.struct.__name__}")
-        with open(path, "w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f, lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
-            writer.writerow([col.name for col in cols])
-            for row_number, record in enumerate(records, start=1):
-                try:
-                    cells = [_encode_csv_cell(record[col.name]) for col in cols]
-                except KeyError as e:
-                    raise TableValidationError(
-                        f"CSV write to '{path}' row {row_number} is missing column {e}"
-                    ) from e
-                writer.writerow(cells)
-
-    def read(self, path: Path, model: type[BaseModel]) -> list[dict[str, Any]]:
-        cols = columns(model)
-        expected_header = [col.name for col in cols]
-        with open(path, encoding="utf-8", newline="") as f:
-            reader = csv.reader(f)
-            header = next(reader, [])
-            if header != expected_header:
-                raise TableValidationError(
-                    f"CSV header {header} does not match columns {expected_header}"
-                )
-            rows = []
-            for row_number, raw_row in enumerate(reader, start=1):
-                if len(raw_row) != len(cols):
-                    raise TableValidationError(
-                        f"CSV file '{path}' row {row_number} has {len(raw_row)} field(s), "
-                        f"expected {len(cols)}"
-                    )
-                record: dict[str, Any] = {}
-                for col, cell in zip(cols, raw_row, strict=True):
-                    record[col.name] = None if col.nullable and cell == "" else cell
-                rows.append(record)
-            return rows
 
 
 class JsonlFormat:
@@ -172,7 +117,6 @@ class ParquetFormat:
 
 
 FORMATS: dict[str, TableFormat] = {
-    "csv": CsvFormat(),
     "jsonl": JsonlFormat(),
     "parquet": ParquetFormat(),
 }

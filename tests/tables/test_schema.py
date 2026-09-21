@@ -245,7 +245,7 @@ def test_trait_preference_requires_null_multipliers() -> None:
         _preference_trait(mult_range=1.0)
 
 
-def test_trait_bias_from_csv_style_strings() -> None:
+def test_trait_bias_from_text_encoded_values() -> None:
     trait = _bias_trait(value="2.6", active="true", mult_range="1.0")
     assert trait.value == 2.6
     assert isinstance(trait.value, float)

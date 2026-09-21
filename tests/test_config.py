@@ -34,7 +34,7 @@ def test_config_builds_with_defaults() -> None:
     assert config.mandate.book_size_max == 2e9
     assert config.drift.bias_update_weeks == (18, 30)
     assert config.calendar.n_weeks == 52
-    assert config.output.format == "default"
+    assert config.output.format == "jsonl"
 
 
 def test_biases_params_keys_equal_bias_params_in_order() -> None:
@@ -92,6 +92,13 @@ def test_population_problem_in_yaml_raises_config_error(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump({"population": {"market_seeds": ["A", "A"]}}))
     with pytest.raises(ConfigError, match="market_seeds"):
+        load_config(path)
+
+
+@pytest.mark.parametrize("output", [{"format": "csv"}, {"tables": {"traits": "csv"}}])
+def test_unsupported_output_format_raises_config_error(tmp_path: Path, output: dict) -> None:
+    path = _write_yaml(tmp_path, {"output": output})
+    with pytest.raises(ConfigError, match="output"):
         load_config(path)
 
 

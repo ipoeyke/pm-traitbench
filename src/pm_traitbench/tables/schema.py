@@ -51,8 +51,8 @@ _RULE_ID_PATTERN = r"^r_\d{2,}$"
 def _coerce_numeric_str(value: Any) -> Any:
     """Parse a string as a float when possible, else leave it as a string.
 
-    CSV and parquet store mixed numeric/text columns as text; this recovers
-    numbers without misreading genuinely textual levels.
+    Parquet stores mixed numeric/text columns as text; this recovers numbers
+    without misreading textual levels.
     """
     if isinstance(value, str):
         parsed = parse_number(value)

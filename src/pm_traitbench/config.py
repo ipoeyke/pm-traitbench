@@ -403,10 +403,10 @@ class CalendarConfig(BaseModel):
 class OutputConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    format: Literal["default", "csv", "jsonl", "parquet"] = Field(
-        "default", json_schema_extra={"basis": "design", "note": "default output format"}
+    format: Literal["jsonl", "parquet"] = Field(
+        "jsonl", json_schema_extra={"basis": "design", "note": "default output format"}
     )
-    tables: dict[str, Literal["csv", "jsonl", "parquet"]] = Field(
+    tables: dict[str, Literal["jsonl", "parquet"]] = Field(
         default_factory=dict,
         json_schema_extra={"basis": "design", "note": "per-table format overrides"},
     )

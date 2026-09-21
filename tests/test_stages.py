@@ -68,13 +68,13 @@ def test_run_stage_existing_output_without_force_raises_and_preserves_bytes(
     store = DataStore(tmp_path, OutputConfig())
     config = Config()
     store.write(TRAITS, [_trait("pm_000", "t_00")])
-    original_bytes = (tmp_path / "traits.csv").read_bytes()
+    original_bytes = (tmp_path / "traits.jsonl").read_bytes()
     stage = Stage(number=1, name="fake", help="fake stage", run=_write_two_traits, writes=(TRAITS,))
 
     with pytest.raises(StageIOError, match="--force"):
         run_stage(stage, config, store)
 
-    assert (tmp_path / "traits.csv").read_bytes() == original_bytes
+    assert (tmp_path / "traits.jsonl").read_bytes() == original_bytes
 
 
 def test_run_stage_with_force_overwrites_existing_output(tmp_path: Path) -> None:

@@ -142,11 +142,11 @@ NON_STRUCT_ROWS = [
 ]
 
 
-def test_formats_keys_are_exactly_csv_jsonl_parquet() -> None:
-    assert set(FORMATS) == {"csv", "jsonl", "parquet"}
+def test_formats_keys_are_exactly_jsonl_parquet() -> None:
+    assert set(FORMATS) == {"jsonl", "parquet"}
 
 
-@pytest.mark.parametrize("format_name", ["csv", "jsonl", "parquet"])
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
 @pytest.mark.parametrize("row", NON_STRUCT_ROWS, ids=lambda r: f"{type(r).__name__}-{r!r}")
 def test_round_trip_non_struct_rows(
     tmp_path: Path, format_name: str, row: Trait | Rule | DriftEvent
@@ -167,42 +167,6 @@ def test_round_trip_persona(tmp_path: Path, format_name: str) -> None:
     fmt.write([to_record(row)], Persona, path)
     records = fmt.read(path, Persona)
     assert [Persona.model_validate(record) for record in records] == [row]
-
-
-def test_csv_rejects_struct_column(tmp_path: Path) -> None:
-    fmt = FORMATS["csv"]
-    path = tmp_path / "table.csv"
-    with pytest.raises(TableValidationError, match="Mandate"):
-        fmt.write([to_record(_persona())], Persona, path)
-
-
-def test_csv_header_mismatch_raises(tmp_path: Path) -> None:
-    fmt = FORMATS["csv"]
-    path = tmp_path / "table.csv"
-    path.write_text("wrong,header\n", encoding="utf-8", newline="")
-    with pytest.raises(TableValidationError):
-        fmt.read(path, Trait)
-
-
-def test_csv_read_ragged_row_raises_table_validation_error_naming_the_row(
-    tmp_path: Path,
-) -> None:
-    fmt = FORMATS["csv"]
-    path = tmp_path / "table.csv"
-    header = "pm_id,trait_id,kind,param,value,active,mult_range,mult_risk_off,mult_risk_on"
-    path.write_text(f"{header}\npm_001,t_01,bias,x,1.0,true,1.0\n", encoding="utf-8")
-    with pytest.raises(TableValidationError, match=r"row 1\b") as exc_info:
-        fmt.read(path, Trait)
-    assert str(path) in str(exc_info.value)
-
-
-def test_csv_write_missing_record_column_raises_table_validation_error(tmp_path: Path) -> None:
-    fmt = FORMATS["csv"]
-    path = tmp_path / "table.csv"
-    record = to_record(_bias_trait())
-    del record["value"]
-    with pytest.raises(TableValidationError, match=r"row 1\b"):
-        fmt.write([record], Trait, path)
 
 
 def test_jsonl_write_missing_record_column_raises_table_validation_error(tmp_path: Path) -> None:
@@ -234,17 +198,16 @@ def test_jsonl_read_malformed_line_raises_table_validation_error_naming_the_row(
         fmt.read(path, Trait)
 
 
-def test_csv_bytes_contain_no_carriage_return(tmp_path: Path) -> None:
-    fmt = FORMATS["csv"]
-    path = tmp_path / "table.csv"
+def test_jsonl_bytes_contain_no_carriage_return(tmp_path: Path) -> None:
+    fmt = FORMATS["jsonl"]
+    path = tmp_path / "table.jsonl"
     rows = [to_record(_bias_trait()), to_record(_preference_trait_with_special_chars())]
     fmt.write(rows, Trait, path)
     assert b"\r" not in path.read_bytes()
 
 
-@pytest.mark.parametrize("format_name", ["csv", "jsonl"])
-def test_two_writes_are_byte_identical(tmp_path: Path, format_name: str) -> None:
-    fmt = FORMATS[format_name]
+def test_two_jsonl_writes_are_byte_identical(tmp_path: Path) -> None:
+    fmt = FORMATS["jsonl"]
     rows = [to_record(_bias_trait()), to_record(_preference_trait_with_special_chars())]
     path_a = tmp_path / f"a.{fmt.extension}"
     path_b = tmp_path / f"b.{fmt.extension}"
@@ -272,21 +235,12 @@ def test_parquet_schema_kinds(tmp_path: Path) -> None:
     assert pa.types.is_struct(persona_schema.field("mandate").type)
 
 
-@pytest.mark.parametrize("format_name", ["csv", "jsonl", "parquet"])
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
 def test_zero_record_round_trip(tmp_path: Path, format_name: str) -> None:
     fmt = FORMATS[format_name]
     path = tmp_path / f"empty.{fmt.extension}"
     fmt.write([], Trait, path)
     assert fmt.read(path, Trait) == []
-
-
-def test_csv_writes_header_even_for_zero_records(tmp_path: Path) -> None:
-    fmt = FORMATS["csv"]
-    path = tmp_path / "empty.csv"
-    fmt.write([], Trait, path)
-    content = path.read_text(encoding="utf-8")
-    expected_header = "pm_id,trait_id,kind,param,value,active,mult_range,mult_risk_off,mult_risk_on"
-    assert content == expected_header + "\n"
 
 
 def test_jsonl_zero_records_gives_empty_file(tmp_path: Path) -> None:
