@@ -283,3 +283,18 @@ entries:
         action: cap
         templates:
           - "cap the book at {level} {unit}"
+
+  - param: roll_before_expiry
+    share: 0.7
+    variants:
+      - asset_class: commodities
+        field: days_to_expiry
+        op: "<="
+        unit: sessions
+        level_min: 3
+        level_max: 10
+        round_to: 1
+        action: roll
+        templates:
+          - "everything rolls {level} sessions before first notice"
+          - "I roll the contract {level} sessions ahead of expiry"

@@ -321,3 +321,19 @@ entries:
         templates:
           - "I run at most {level} sleeves"
           - "no more than {level} sleeves on at once"
+
+  - param: roll_before_expiry
+    share: 0.7
+    variants:
+      - asset_class: commodities
+        field: days_to_expiry
+        op: "<="
+        unit: sessions
+        level_min: 3
+        level_max: 10
+        round_to: 1
+        action: roll
+        templates:
+          - "everything rolls {level} sessions before first notice"
+          - "I roll the contract {level} sessions ahead of expiry"
+          - "no position gets closer than {level} sessions to first notice"
