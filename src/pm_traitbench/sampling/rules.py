@@ -103,7 +103,7 @@ def sample_rules(
         _build_rule(pm_id, "r_01", RuleSource.MANDATE, cap_entry.param, cap_variant, cap_level, rng)
     ]
 
-    entries = catalogue.rules.entries
+    entries = catalogue.rules.entries_for(asset_class)
     included = _choose_inclusion(entries, rng)
     included = _repair_inclusion(entries, included, config, rng)
     included_ordered = [entry for entry in entries if entry.param in included]

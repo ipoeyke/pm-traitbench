@@ -66,22 +66,24 @@ def check_sampling_config(config: Config, catalogue: Catalogue) -> None:
             f"biases), got {config.biases.min_active}"
         )
 
-    entries = catalogue.rules.entries
-    n_mandatory = sum(1 for entry in entries if entry.mandatory)
-    mandatory_has_discipline = any(entry.mandatory and entry.discipline for entry in entries)
-    min_required_max = n_mandatory + (0 if mandatory_has_discipline else 1)
-    if config.rules.n_self_rules_max < min_required_max:
-        raise ConfigError(
-            f"rules.n_self_rules_max must be at least {min_required_max} (the mandatory rule "
-            f"entries, plus a discipline rule when none of them is one), got "
-            f"{config.rules.n_self_rules_max}"
-        )
+    for asset_class in config.population.asset_classes:
+        entries = catalogue.rules.entries_for(asset_class)
+        n_mandatory = sum(1 for entry in entries if entry.mandatory)
+        mandatory_has_discipline = any(entry.mandatory and entry.discipline for entry in entries)
+        min_required_max = n_mandatory + (0 if mandatory_has_discipline else 1)
+        if config.rules.n_self_rules_max < min_required_max:
+            raise ConfigError(
+                f"rules.n_self_rules_max must be at least {min_required_max} for asset class "
+                f"'{asset_class}' (the mandatory rule entries, plus a discipline rule when none "
+                f"of them is one), got {config.rules.n_self_rules_max}"
+            )
 
-    if config.rules.n_self_rules_min > len(entries):
-        raise ConfigError(
-            f"rules.n_self_rules_min must not exceed the number of rule entries "
-            f"({len(entries)}), got {config.rules.n_self_rules_min}"
-        )
+        if config.rules.n_self_rules_min > len(entries):
+            raise ConfigError(
+                f"rules.n_self_rules_min must not exceed the number of applicable rule "
+                f"entries for asset class '{asset_class}' ({len(entries)}), got "
+                f"{config.rules.n_self_rules_min}"
+            )
 
 
 def sample_all(config: Config, catalogue: Catalogue) -> SampleResult:
