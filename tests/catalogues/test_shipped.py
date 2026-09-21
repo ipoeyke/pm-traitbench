@@ -50,6 +50,7 @@ _EXPECTED_RULE_PARAMS = {
     "min_holding_period",
     "exclusion",
     "max_positions",
+    "roll_before_expiry",
 }
 
 
