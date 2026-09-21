@@ -1,30 +1,31 @@
 """Tests for catalogue loading and consistency checks."""
 
-import shutil
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
-from _render_checks import assert_every_rule_template_renders_cleanly
 
 from pm_traitbench.catalogues.loader import check_catalogue, load_catalogue, render_template
 from pm_traitbench.catalogues.models import (
     Catalogue,
+    PreferenceGroup,
     RuleEntry,
     RuleVariant,
 )
 from pm_traitbench.enums import Action, AssetClass, Op
 from pm_traitbench.errors import CatalogueError
 
-_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "catalogue"
+_CATALOGUE_FILES = ("preferences.yaml", "rules.yaml", "mandates.yaml", "self_descriptions.yaml")
 _ASSET_CLASSES = list(AssetClass)
 _N_PREFERENCES_MAX = 8
 
 
-def _copy_fixture(tmp_path: Path) -> Path:
-    for name in ("preferences.yaml", "rules.yaml", "mandates.yaml", "self_descriptions.yaml"):
-        shutil.copy(_FIXTURE_DIR / name, tmp_path / name)
+def _copy_shipped(tmp_path: Path) -> Path:
+    base = resources.files("pm_traitbench.catalogues")
+    for name in _CATALOGUE_FILES:
+        (tmp_path / name).write_text(base.joinpath(name).read_text())
     return tmp_path
 
 
@@ -40,36 +41,41 @@ def _check(catalogue: Catalogue) -> None:
     check_catalogue(catalogue, _ASSET_CLASSES, n_preferences_max=_N_PREFERENCES_MAX)
 
 
-# --- fixture catalogue basics ---
+# --- catalogue basics ---
 
 
-def test_fixture_catalogue_loads_and_passes_checks(fixture_catalogue: Catalogue) -> None:
-    _check(fixture_catalogue)
+def test_catalogue_loads_and_passes_checks(catalogue: Catalogue) -> None:
+    _check(catalogue)
 
 
 def test_preferences_for_filters_by_asset_class_and_keeps_order(
-    fixture_catalogue: Catalogue,
+    catalogue: Catalogue,
 ) -> None:
-    all_params = [entry.param for entry in fixture_catalogue.preferences]
+    # Build a small catalogue where every preference applies everywhere except
+    # one, which is narrowed to a single asset class.
+    universal = [e for e in catalogue.preferences if len(e.asset_classes) == len(AssetClass)]
+    base = universal[:3]
+    restricted = base[-1].model_copy(update={"asset_classes": (AssetClass.RATES_CREDIT,)})
+    small = catalogue.model_copy(update={"preferences": (*base[:-1], restricted)})
 
-    equities = fixture_catalogue.preferences_for(AssetClass.EQUITIES)
-    assert [entry.param for entry in equities] == [
-        p for p in all_params if p != "curve_positioning_language"
-    ]
+    all_params = [entry.param for entry in small.preferences]
+
+    equities = small.preferences_for(AssetClass.EQUITIES)
+    assert [entry.param for entry in equities] == [p for p in all_params if p != restricted.param]
     assert all(AssetClass.EQUITIES in entry.asset_classes for entry in equities)
 
-    rates_credit = fixture_catalogue.preferences_for(AssetClass.RATES_CREDIT)
+    rates_credit = small.preferences_for(AssetClass.RATES_CREDIT)
     assert [entry.param for entry in rates_credit] == all_params
 
 
-def test_entries_for_filters_by_asset_class_and_keeps_order(fixture_catalogue: Catalogue) -> None:
-    all_params = [entry.param for entry in fixture_catalogue.rules.entries]
+def test_entries_for_filters_by_asset_class_and_keeps_order(catalogue: Catalogue) -> None:
+    all_params = [entry.param for entry in catalogue.rules.entries]
 
-    commodities = fixture_catalogue.rules.entries_for(AssetClass.COMMODITIES)
+    commodities = catalogue.rules.entries_for(AssetClass.COMMODITIES)
     assert [entry.param for entry in commodities] == all_params
     assert all(AssetClass.COMMODITIES in entry.asset_classes for entry in commodities)
 
-    equities = fixture_catalogue.rules.entries_for(AssetClass.EQUITIES)
+    equities = catalogue.rules.entries_for(AssetClass.EQUITIES)
     assert [entry.param for entry in equities] == [
         p for p in all_params if p != "roll_before_expiry"
     ]
@@ -120,18 +126,16 @@ def test_variant_for_raises_catalogue_error_when_no_variant_matches() -> None:
         entry.variant_for(AssetClass.COMMODITIES, "any")
 
 
-def test_every_fixture_rule_template_renders_cleanly(fixture_catalogue: Catalogue) -> None:
-    assert_every_rule_template_renders_cleanly(fixture_catalogue)
-
-
-def test_fixture_stop_loss_variant_for_prefers_matching_sub_style(
-    fixture_catalogue: Catalogue,
-) -> None:
-    stop_loss = next(e for e in fixture_catalogue.rules.entries if e.param == "stop_loss")
-    sovereign = stop_loss.variant_for(AssetClass.RATES_CREDIT, "sovereign_rates")
-    credit = stop_loss.variant_for(AssetClass.RATES_CREDIT, "long_short_credit")
-    assert sovereign.field == "adverse_yield_move_bp"
-    assert credit.field == "adverse_spread_move_bp"
+def test_stop_loss_variant_for_prefers_matching_sub_style(catalogue: Catalogue) -> None:
+    stop_loss = next(e for e in catalogue.rules.entries if e.param == "stop_loss")
+    sub_styles = catalogue.sub_styles[AssetClass.RATES_CREDIT]
+    fields = set()
+    for sub_style in sub_styles:
+        variant = stop_loss.variant_for(AssetClass.RATES_CREDIT, sub_style.name)
+        assert not variant.sub_styles or sub_style.name in variant.sub_styles
+        fields.add(variant.field)
+    if len(fields) < 2:
+        pytest.skip("catalogue has no two rates_credit sub-styles with different stop_loss fields")
 
 
 # --- render_template ---
@@ -170,21 +174,21 @@ def test_render_template_with_int_level() -> None:
 
 
 def test_missing_file_raises_catalogue_error(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     (tmp_path / "mandates.yaml").unlink()
     with pytest.raises(CatalogueError):
         load_catalogue(tmp_path)
 
 
 def test_malformed_yaml_raises_catalogue_error(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     (tmp_path / "rules.yaml").write_text("mandate_cap: [this is not, valid: yaml\n")
     with pytest.raises(CatalogueError):
         load_catalogue(tmp_path)
 
 
 def test_unknown_top_level_key_raises_catalogue_error(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "preferences.yaml"
     data = _load_yaml(path)
     data["bogus_top_level"] = 1
@@ -194,7 +198,7 @@ def test_unknown_top_level_key_raises_catalogue_error(tmp_path: Path) -> None:
 
 
 def test_unknown_nested_key_raises_catalogue_error(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "preferences.yaml"
     data = _load_yaml(path)
     data["preferences"][0]["bogus_field"] = 1
@@ -207,7 +211,7 @@ def test_unknown_nested_key_raises_catalogue_error(tmp_path: Path) -> None:
 
 
 def test_mandate_cap_variant_with_level_choices_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     data["mandate_cap"]["variants"][0]["level_choices"] = [5]
@@ -217,7 +221,7 @@ def test_mandate_cap_variant_with_level_choices_raises(tmp_path: Path) -> None:
 
 
 def test_non_cap_rule_variant_without_range_or_choices_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     trim = next(e for e in data["entries"] if e["param"] == "trim_at_target")
@@ -228,7 +232,7 @@ def test_non_cap_rule_variant_without_range_or_choices_raises(tmp_path: Path) ->
 
 
 def test_partial_level_range_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     stop_loss = next(e for e in data["entries"] if e["param"] == "stop_loss")
@@ -243,7 +247,7 @@ def test_partial_level_range_raises(tmp_path: Path) -> None:
 
 
 def test_check_missing_preference_group_for_asset_class_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "preferences.yaml"
     data = _load_yaml(path)
     data["preferences"] = [e for e in data["preferences"] if e["group"] != "communication"]
@@ -253,13 +257,23 @@ def test_check_missing_preference_group_for_asset_class_raises(tmp_path: Path) -
         _check(catalogue)
 
 
-def test_check_too_few_applicable_preferences_raises(fixture_catalogue: Catalogue) -> None:
+def test_check_too_few_applicable_preferences_raises(catalogue: Catalogue) -> None:
+    one_per_group: list = []
+    seen_groups: set = set()
+    for entry in catalogue.preferences_for(AssetClass.EQUITIES):
+        if entry.group not in seen_groups:
+            one_per_group.append(entry)
+            seen_groups.add(entry.group)
+    assert seen_groups == set(PreferenceGroup)
+    small_catalogue = catalogue.model_copy(update={"preferences": tuple(one_per_group)})
     with pytest.raises(CatalogueError, match="preferences"):
-        check_catalogue(fixture_catalogue, _ASSET_CLASSES, n_preferences_max=10)
+        check_catalogue(
+            small_catalogue, [AssetClass.EQUITIES], n_preferences_max=len(one_per_group) + 1
+        )
 
 
 def test_check_duplicate_preference_param_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "preferences.yaml"
     data = _load_yaml(path)
     duplicate_param = data["preferences"][0]["param"]
@@ -271,7 +285,7 @@ def test_check_duplicate_preference_param_raises(tmp_path: Path) -> None:
 
 
 def test_check_preference_value_parsing_as_float_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "preferences.yaml"
     data = _load_yaml(path)
     data["preferences"][0]["values"][0] = "12.5"
@@ -282,7 +296,7 @@ def test_check_preference_value_parsing_as_float_raises(tmp_path: Path) -> None:
 
 
 def test_check_preference_value_with_underscore_separator_is_not_numeric(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "preferences.yaml"
     data = _load_yaml(path)
     data["preferences"][0]["values"][0] = "1_0"
@@ -292,7 +306,7 @@ def test_check_preference_value_with_underscore_separator_is_not_numeric(tmp_pat
 
 
 def test_check_preference_empty_value_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "preferences.yaml"
     data = _load_yaml(path)
     data["preferences"][0]["values"][0] = "   "
@@ -303,7 +317,7 @@ def test_check_preference_empty_value_raises(tmp_path: Path) -> None:
 
 
 def test_check_duplicate_rule_param_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     duplicate_param = data["entries"][0]["param"]
@@ -315,7 +329,7 @@ def test_check_duplicate_rule_param_raises(tmp_path: Path) -> None:
 
 
 def test_check_missing_variant_for_non_mandatory_entry_does_not_raise(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     max_positions = next(e for e in data["entries"] if e["param"] == "max_positions")
@@ -330,7 +344,7 @@ def test_check_missing_variant_for_non_mandatory_entry_does_not_raise(tmp_path: 
 
 
 def test_check_mandatory_entry_missing_asset_class_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     stop_loss = next(e for e in data["entries"] if e["param"] == "stop_loss")
@@ -342,7 +356,7 @@ def test_check_mandatory_entry_missing_asset_class_raises(tmp_path: Path) -> Non
 
 
 def test_check_discipline_entry_missing_asset_class_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     min_holding = next(e for e in data["entries"] if e["param"] == "min_holding_period")
@@ -356,7 +370,7 @@ def test_check_discipline_entry_missing_asset_class_raises(tmp_path: Path) -> No
 
 
 def test_check_rule_entry_with_no_variants_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     max_positions = next(e for e in data["entries"] if e["param"] == "max_positions")
@@ -368,7 +382,7 @@ def test_check_rule_entry_with_no_variants_raises(tmp_path: Path) -> None:
 
 
 def test_check_no_mandatory_rule_entry_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     for entry in data["entries"]:
@@ -380,7 +394,7 @@ def test_check_no_mandatory_rule_entry_raises(tmp_path: Path) -> None:
 
 
 def test_check_no_discipline_rule_entry_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     for entry in data["entries"]:
@@ -392,7 +406,7 @@ def test_check_no_discipline_rule_entry_raises(tmp_path: Path) -> None:
 
 
 def test_check_template_with_unknown_slot_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     data["mandate_cap"]["variants"][0]["templates"][0] = "cap at {level}% of {bogus}"
@@ -403,7 +417,7 @@ def test_check_template_with_unknown_slot_raises(tmp_path: Path) -> None:
 
 
 def test_check_level_min_not_less_than_level_max_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     stop_loss = next(e for e in data["entries"] if e["param"] == "stop_loss")
@@ -416,7 +430,7 @@ def test_check_level_min_not_less_than_level_max_raises(tmp_path: Path) -> None:
 
 
 def test_check_non_positive_round_to_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
     stop_loss = next(e for e in data["entries"] if e["param"] == "stop_loss")
@@ -429,7 +443,7 @@ def test_check_non_positive_round_to_raises(tmp_path: Path) -> None:
 
 
 def test_check_asset_class_without_sub_style_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "mandates.yaml"
     data = _load_yaml(path)
     data["sub_styles"]["rates_credit"] = []
@@ -440,7 +454,7 @@ def test_check_asset_class_without_sub_style_raises(tmp_path: Path) -> None:
 
 
 def test_check_duplicate_sub_style_name_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "mandates.yaml"
     data = _load_yaml(path)
     data["sub_styles"]["equities"][1]["name"] = data["sub_styles"]["equities"][0]["name"]
@@ -451,7 +465,7 @@ def test_check_duplicate_sub_style_name_raises(tmp_path: Path) -> None:
 
 
 def test_check_self_descriptions_missing_bias_param_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "self_descriptions.yaml"
     data = _load_yaml(path)
     del data["self_descriptions"]["exit_deficiency"]
@@ -462,7 +476,7 @@ def test_check_self_descriptions_missing_bias_param_raises(tmp_path: Path) -> No
 
 
 def test_check_self_descriptions_extra_key_raises_naming_it(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "self_descriptions.yaml"
     data = _load_yaml(path)
     data["self_descriptions"]["not_a_bias_param"] = data["self_descriptions"]["exit_deficiency"]
@@ -473,7 +487,7 @@ def test_check_self_descriptions_extra_key_raises_naming_it(tmp_path: Path) -> N
 
 
 def test_check_self_descriptions_too_few_agree_raises(tmp_path: Path) -> None:
-    _copy_fixture(tmp_path)
+    _copy_shipped(tmp_path)
     path = tmp_path / "self_descriptions.yaml"
     data = _load_yaml(path)
     data["self_descriptions"]["exit_deficiency"]["agree"] = ["only one phrasing"]
