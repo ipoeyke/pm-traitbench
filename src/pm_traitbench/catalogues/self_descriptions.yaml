@@ -1,0 +1,73 @@
+self_descriptions:
+  loss_aversion_lambda:
+    agree:
+      - "i feel losses more than gains"
+      - "i hold losers longer than winners"
+      - "cutting a loss feels harder than profit"
+    contradict:
+      - "gains and losses feel the same to me"
+      - "a dollar up or down feels the same"
+      - "losing and winning trades affect me equally"
+  disposition_ratio:
+    agree:
+      - "i take profits early"
+      - "i sell winners faster than losers"
+      - "i ride a loser hoping it recovers"
+    contradict:
+      - "i let winners run"
+      - "i exit winners and losers the same way"
+      - "i cut losses as fast as gains"
+  anchoring_rho:
+    agree:
+      - "my target stays tied to my entry price"
+      - "i judge a price against where i bought"
+      - "my entry price shapes how i see it"
+    contradict:
+      - "i reprice my view fresh every session"
+      - "my entry price barely affects my target"
+      - "i judge each price on today's information alone"
+  extrapolation_theta:
+    agree:
+      - "a strong recent run makes me expect more"
+      - "i raise my forecast after good sessions"
+      - "a short winning streak shifts my whole outlook"
+    contradict:
+      - "a recent run does not change my forecast"
+      - "i treat a short streak as noise"
+      - "my forecast ignores the last few sessions"
+  herding_weight:
+    agree:
+      - "i feel safer holding what other desks hold"
+      - "seeing peers in the same trade reassures me"
+      - "knowing others agree makes me size up"
+    contradict:
+      - "what other desks hold does not affect me"
+      - "i ignore consensus positioning when i size"
+      - "my sizing has nothing to do with peers"
+  overconfidence_coverage:
+    agree:
+      - "my price targets come with a narrow range"
+      - "i rarely widen my range even under uncertainty"
+      - "i trust my read enough to stay narrow"
+    contradict:
+      - "i keep a wide range around any target"
+      - "i assume i could be badly wrong"
+      - "i size for being wrong fairly often"
+  conviction_size_miscalibration:
+    agree:
+      - "my biggest positions are not my best ideas"
+      - "position size and conviction do not always match"
+      - "my smallest positions sometimes carry my most conviction"
+    contradict:
+      - "i size a position to match my conviction"
+      - "my largest positions are my highest conviction ideas"
+      - "size and conviction move together for me"
+  exit_deficiency:
+    agree:
+      - "i struggle to close a position once decided"
+      - "i delay selling even after my case breaks"
+      - "closing a trade takes me longer than needed"
+    contradict:
+      - "i exit exactly when my case is met"
+      - "i close a position the moment it breaks"
+      - "i act immediately once my exit signal fires"

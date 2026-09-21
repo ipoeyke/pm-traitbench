@@ -1,0 +1,235 @@
+preferences:
+  # communication (all asset classes)
+  - param: response_format
+    group: communication
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "short bullets"
+      - "one prose paragraph"
+      - "a table with columns"
+      - "a memo with headers"
+  - param: pushback_style
+    group: communication
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "push back hard when the data disagrees"
+      - "flag disagreement once and move on"
+      - "note disagreement without pushing back"
+      - "present the read without commentary"
+  - param: register
+    group: communication
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "blunt trading-desk tone"
+      - "formal committee tone"
+      - "casual conversational tone"
+      - "neutral analyst tone"
+  - param: number_language
+    group: communication
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "quote moves in basis points"
+      - "quote moves in percent"
+      - "quote moves in both basis points and percent"
+  - param: answer_ordering
+    group: communication
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "conclusion first, then reasoning"
+      - "reasoning first, then conclusion"
+      - "risk first, then the trade idea"
+  - param: hedging_language
+    group: communication
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "state views plainly, no qualifiers"
+      - "flag uncertainty once, then commit to a view"
+      - "give an explicit confidence level on every call"
+  - param: length_on_routine_questions
+    group: communication
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "one sentence"
+      - "two to three sentences"
+      - "up to a short page"
+
+  # information (all asset classes, plus two asset-specific)
+  - param: positioning_context
+    group: information
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "mention street positioning on every idea"
+      - "mention street positioning only when it is extreme"
+      - "leave street positioning out unless I ask"
+  - param: carry_display
+    group: information
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "show carry per day"
+      - "show carry per period held"
+      - "omit carry unless asked"
+  - param: macro_commentary
+    group: information
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "no macro commentary unless I ask"
+      - "one line of macro context per answer"
+      - "full macro backdrop on every idea"
+  - param: calendar_citation
+    group: information
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "cite the next event date on the calendar"
+      - "mention only same-week calendar events"
+      - "leave calendar events out unless asked"
+  - param: source_attribution
+    group: information
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "name the source for every data point"
+      - "name the source only for third-party data"
+      - "skip source names unless asked"
+  - param: scenario_framing
+    group: information
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "frame outcomes as a base case and a tail case"
+      - "frame outcomes as a single base case"
+      - "frame outcomes as a range with no labels"
+  - param: peer_comparison
+    group: information
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "compare positioning to consensus"
+      - "compare positioning to a named peer set"
+      - "skip peer comparison unless asked"
+  - param: rating_agency_view
+    group: information
+    asset_classes: [rates_credit]
+    values:
+      - "cite the rating agency view alongside the internal view"
+      - "mention the rating agency view only if it changed"
+      - "leave the rating agency view out unless asked"
+  - param: inventory_data_mention
+    group: information
+    asset_classes: [commodities]
+    values:
+      - "cite inventory data alongside price moves"
+      - "mention inventory data only on release days"
+      - "leave inventory data out unless asked"
+
+  # workflow (all asset classes, plus four asset-specific)
+  - param: pre_mortem_before_sizing
+    group: workflow
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "ask for a pre-mortem before final sizing"
+      - "skip the pre-mortem and size directly"
+      - "offer a pre-mortem only if requested"
+  - param: weekly_exposure_recap
+    group: workflow
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "send a weekly exposure recap"
+      - "send an exposure recap only on request"
+      - "skip the weekly recap"
+  - param: end_of_day_summary
+    group: workflow
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "send a short end of day summary"
+      - "send a detailed end of day summary"
+      - "skip the end of day summary"
+  - param: thesis_reminder_on_review
+    group: workflow
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "restate the original thesis at every review"
+      - "restate the thesis only if it has drifted"
+      - "skip the thesis restatement"
+  - param: decision_journal_prompt
+    group: workflow
+    asset_classes: [equities, rates_credit, commodities, multi_asset]
+    values:
+      - "prompt for a journal entry after each decision"
+      - "prompt for a journal entry once a week"
+      - "skip the journal prompt"
+  - param: earnings_week_heads_up
+    group: workflow
+    asset_classes: [equities]
+    values:
+      - "flag names reporting in the coming week"
+      - "flag only same-day earnings"
+      - "skip the earnings heads up"
+  - param: refi_window_reminder
+    group: workflow
+    asset_classes: [rates_credit]
+    values:
+      - "flag issuers approaching a refinancing window"
+      - "flag only refinancing windows inside two weeks"
+      - "skip the refinancing reminder"
+  - param: roll_reminder
+    group: workflow
+    asset_classes: [commodities]
+    values:
+      - "flag the contract roll date ahead of time"
+      - "flag the roll only on the trading day"
+      - "skip the roll reminder"
+  - param: rebalance_recap
+    group: workflow
+    asset_classes: [multi_asset]
+    values:
+      - "send a recap after every rebalance"
+      - "send a recap only for large rebalances"
+      - "skip the rebalance recap"
+
+  # expression
+  - param: hedge_instrument
+    group: expression
+    asset_classes: [equities, rates_credit, multi_asset]
+    values:
+      - "hedge with index futures"
+      - "hedge with options"
+      - "hedge with a basket of single names"
+  - param: duration_expression
+    group: expression
+    asset_classes: [rates_credit]
+    values:
+      - "steepeners over outright duration"
+      - "outright duration over curve trades"
+      - "butterflies over outright duration"
+  - param: futures_vs_etf
+    group: expression
+    asset_classes: [equities, commodities, multi_asset]
+    values:
+      - "express the view with futures"
+      - "express the view with an ETF"
+      - "express the view with the underlying instrument"
+  - param: curve_trade_expression
+    group: expression
+    asset_classes: [commodities]
+    values:
+      - "express curve views as calendar spreads"
+      - "express curve views as spread ratios"
+      - "express curve views as butterfly spreads"
+  - param: pair_vs_outright
+    group: expression
+    asset_classes: [equities]
+    values:
+      - "express the view as a pair trade"
+      - "express the view as an outright position"
+      - "express the view as a basket versus the index"
+  - param: fx_hedge_expression
+    group: expression
+    asset_classes: [multi_asset]
+    values:
+      - "hedge fx exposure with forwards"
+      - "hedge fx exposure with options"
+      - "hedge fx exposure with currency futures"
+  - param: credit_index_vs_single_name
+    group: expression
+    asset_classes: [rates_credit]
+    values:
+      - "express the view with a credit index"
+      - "express the view with single-name bonds"
+      - "express the view with credit default swaps"

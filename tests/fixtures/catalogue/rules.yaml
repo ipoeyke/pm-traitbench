@@ -1,0 +1,285 @@
+mandate_cap:
+  param: max_risk_pct
+  share: 1.0
+  mandatory: true
+  variants:
+    - asset_class: equities
+      field: size_pct_book
+      op: "<="
+      unit: pct
+      action: cap
+      templates:
+        - "single position at most {level}% of book"
+    - asset_class: rates_credit
+      field: size_pct_book
+      op: "<="
+      unit: pct
+      action: cap
+      templates:
+        - "single position at most {level}% of book"
+    - asset_class: commodities
+      field: size_pct_book
+      op: "<="
+      unit: pct
+      action: cap
+      templates:
+        - "single position at most {level}% of book"
+    - asset_class: multi_asset
+      field: size_pct_book
+      op: "<="
+      unit: pct
+      action: cap
+      templates:
+        - "single position at most {level}% of book"
+
+entries:
+  - param: stop_loss
+    share: 1.0
+    mandatory: true
+    variants:
+      - asset_class: equities
+        field: pnl_from_entry
+        op: "<="
+        unit: pct
+        level_min: -20
+        level_max: -10
+        round_to: 1
+        action: exit
+        templates:
+          - "exit if position pnl falls to {level}% from entry"
+      - asset_class: rates_credit
+        sub_styles: [sovereign_rates]
+        field: adverse_yield_move_bp
+        op: ">="
+        unit: bp
+        level_min: 15
+        level_max: 30
+        round_to: 5
+        action: exit
+        templates:
+          - "exit if the adverse yield move reaches {level}{unit}"
+      - asset_class: rates_credit
+        sub_styles: [long_short_credit]
+        field: adverse_spread_move_bp
+        op: ">="
+        unit: bp
+        level_min: 25
+        level_max: 50
+        round_to: 5
+        action: exit
+        templates:
+          - "exit if the adverse spread move reaches {level}{unit}"
+      - asset_class: commodities
+        field: pnl_from_entry
+        op: "<="
+        unit: pct
+        level_min: -15
+        level_max: -8
+        round_to: 1
+        action: exit
+        templates:
+          - "exit if position pnl falls to {level}% from entry"
+      - asset_class: multi_asset
+        field: sleeve_drawdown
+        op: "<="
+        unit: pct
+        level_min: -6
+        level_max: -3
+        round_to: 0.5
+        action: exit
+        templates:
+          - "exit the sleeve if drawdown reaches {level}%"
+
+  - param: trim_at_target
+    share: 0.7
+    variants:
+      - asset_class: equities
+        field: target_hit
+        op: "=="
+        unit: null
+        level_choices: [1]
+        action: trim_half
+        templates:
+          - "trim half of the position when the target is hit"
+      - asset_class: rates_credit
+        field: target_hit
+        op: "=="
+        unit: null
+        level_choices: [1]
+        action: trim_half
+        templates:
+          - "trim half of the position when the target is hit"
+      - asset_class: commodities
+        field: target_hit
+        op: "=="
+        unit: null
+        level_choices: [1]
+        action: trim_half
+        templates:
+          - "trim half of the position when the target is hit"
+      - asset_class: multi_asset
+        field: target_hit
+        op: "=="
+        unit: null
+        level_choices: [1]
+        action: trim_half
+        templates:
+          - "trim half of the position when the target is hit"
+
+  - param: no_add_before_trigger
+    share: 0.6
+    discipline: true
+    variants:
+      - asset_class: equities
+        field: triggers_fired
+        op: "=="
+        unit: null
+        level_choices: [0]
+        action: no_add
+        templates:
+          - "no add before a trigger has fired"
+      - asset_class: rates_credit
+        field: triggers_fired
+        op: "=="
+        unit: null
+        level_choices: [0]
+        action: no_add
+        templates:
+          - "no add before a trigger has fired"
+      - asset_class: commodities
+        field: triggers_fired
+        op: "=="
+        unit: null
+        level_choices: [0]
+        action: no_add
+        templates:
+          - "no add before a trigger has fired"
+      - asset_class: multi_asset
+        field: triggers_fired
+        op: "=="
+        unit: null
+        level_choices: [0]
+        action: no_add
+        templates:
+          - "no add before a trigger has fired"
+
+  - param: min_holding_period
+    share: 0.4
+    discipline: true
+    variants:
+      - asset_class: equities
+        field: sessions_held
+        op: ">="
+        unit: sessions
+        level_min: 5
+        level_max: 20
+        round_to: 5
+        action: hold
+        templates:
+          - "hold for at least {level} {unit} before exiting"
+      - asset_class: rates_credit
+        field: sessions_held
+        op: ">="
+        unit: sessions
+        level_min: 10
+        level_max: 30
+        round_to: 5
+        action: hold
+        templates:
+          - "hold for at least {level} {unit} before exiting"
+      - asset_class: commodities
+        field: sessions_held
+        op: ">="
+        unit: sessions
+        level_min: 5
+        level_max: 15
+        round_to: 5
+        action: hold
+        templates:
+          - "hold for at least {level} {unit} before exiting"
+      - asset_class: multi_asset
+        field: sessions_held
+        op: ">="
+        unit: sessions
+        level_choices: [20]
+        action: hold
+        templates:
+          - "hold for at least {level} {unit} before exiting"
+
+  - param: exclusion
+    share: 0.4
+    variants:
+      - asset_class: equities
+        field: sector
+        op: "!="
+        unit: null
+        level_choices: [energy, financials, utilities, real_estate]
+        action: exclude
+        templates:
+          - "exclude the {level} sector"
+      - asset_class: rates_credit
+        field: rating_band
+        op: "!="
+        unit: null
+        level_choices: [ccc_and_below, single_b, subordinated_financials]
+        action: exclude
+        templates:
+          - "exclude the {level} rating band"
+      - asset_class: commodities
+        field: commodity_group
+        op: "!="
+        unit: null
+        level_choices: [agriculture, energy, precious_metals]
+        action: exclude
+        templates:
+          - "exclude the {level} commodity group"
+      - asset_class: multi_asset
+        field: sleeve
+        op: "!="
+        unit: null
+        level_choices: [emerging_markets, commodities_sleeve, fx_sleeve]
+        action: exclude
+        templates:
+          - "no allocation to {level}"
+
+  - param: max_positions
+    share: 0.5
+    variants:
+      - asset_class: equities
+        field: n_positions
+        op: "<="
+        unit: positions
+        level_min: 15
+        level_max: 40
+        round_to: 5
+        action: cap
+        templates:
+          - "cap the book at {level} {unit}"
+      - asset_class: rates_credit
+        field: n_positions
+        op: "<="
+        unit: positions
+        level_min: 10
+        level_max: 25
+        round_to: 5
+        action: cap
+        templates:
+          - "cap the book at {level} {unit}"
+      - asset_class: commodities
+        field: n_positions
+        op: "<="
+        unit: positions
+        level_min: 8
+        level_max: 20
+        round_to: 1
+        action: cap
+        templates:
+          - "cap the book at {level} {unit}"
+      - asset_class: multi_asset
+        field: n_positions
+        op: "<="
+        unit: positions
+        level_choices: [4, 5, 6]
+        action: cap
+        templates:
+          - "cap the book at {level} {unit}"
