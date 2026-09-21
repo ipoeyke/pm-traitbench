@@ -141,7 +141,9 @@ def _default_correlation() -> tuple[tuple[float, ...], ...]:
         ("loss_aversion_lambda", "herding_weight"): -0.08,
         ("extrapolation_theta", "herding_weight"): 0.05,
         ("exit_deficiency", "disposition_ratio"): 0.30,
-        ("conviction_size_miscalibration", "overconfidence_coverage"): -0.30,
+        # Product of the two pairs above: exit deficiency relates to loss aversion
+        # only through disposition, so their partial correlation is zero.
+        ("exit_deficiency", "loss_aversion_lambda"): 0.126,
     }
     for (name_a, name_b), value in pairs.items():
         i, j = index[name_a], index[name_b]
@@ -167,12 +169,42 @@ class PopulationConfig(BaseModel):
         default=("A", "B", "C"),
         json_schema_extra={"basis": "design", "note": "three parallel market seeds per cell"},
     )
+    pilot_market_seed_count: int = Field(
+        1,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": "the pilot uses only this many of the leading market seeds",
+        },
+    )
     pilot_per_cell: int = Field(
-        1, ge=0, json_schema_extra={"basis": "design", "note": "small pilot batch per cell"}
+        2, ge=0, json_schema_extra={"basis": "design", "note": "small pilot batch per cell"}
     )
     full_per_cell: int = Field(
         3, ge=0, json_schema_extra={"basis": "design", "note": "full batch size per cell"}
     )
+
+    @model_validator(mode="after")
+    def _check_grid(self) -> "PopulationConfig":
+        # A repeated entry would silently double every cell it belongs to.
+        for name, values in (
+            ("asset_classes", self.asset_classes),
+            ("market_seeds", self.market_seeds),
+        ):
+            if not values:
+                raise ValueError(f"{name} must not be empty")
+            if len(set(values)) != len(values):
+                raise ValueError(f"{name} must not repeat an entry: {list(values)}")
+        if any(not seed.strip() for seed in self.market_seeds):
+            raise ValueError("market_seeds must not contain a blank name")
+        if self.pilot_market_seed_count > len(self.market_seeds):
+            raise ValueError(
+                f"pilot_market_seed_count is {self.pilot_market_seed_count} but only "
+                f"{len(self.market_seeds)} market_seeds are configured"
+            )
+        if self.pilot_per_cell == 0 and self.full_per_cell == 0:
+            raise ValueError("pilot_per_cell and full_per_cell cannot both be 0")
+        return self
 
 
 class BiasesConfig(BaseModel):
@@ -213,7 +245,10 @@ class BiasesConfig(BaseModel):
         default_factory=_default_correlation,
         json_schema_extra={
             "basis": "sourced",
-            "note": "Yee and Koh 2026 bias correlation structure, two pairs guessed.",
+            "note": (
+                "Yee and Koh 2026 bias correlation structure; the two exit deficiency "
+                "pairs are guesses."
+            ),
         },
     )
 
@@ -381,10 +416,10 @@ class CalendarConfig(BaseModel):
 class OutputConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    format: Literal["default", "csv", "jsonl", "parquet"] = Field(
-        "default", json_schema_extra={"basis": "design", "note": "default output format"}
+    format: Literal["jsonl", "parquet"] = Field(
+        "jsonl", json_schema_extra={"basis": "design", "note": "default output format"}
     )
-    tables: dict[str, Literal["csv", "jsonl", "parquet"]] = Field(
+    tables: dict[str, Literal["jsonl", "parquet"]] = Field(
         default_factory=dict,
         json_schema_extra={"basis": "design", "note": "per-table format overrides"},
     )

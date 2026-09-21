@@ -1,10 +1,9 @@
-"""Table specifications: model, storage key and struct-nesting for each table."""
+"""Table specifications: the row model and storage key for each table."""
 
 from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from pm_traitbench.tables.introspect import columns
 from pm_traitbench.tables.schema import DriftEvent, Persona, Rule, Trait
 
 
@@ -15,11 +14,6 @@ class TableSpec:
     name: str
     model: type[BaseModel]
     key: tuple[str, ...]
-
-    @property
-    def nested(self) -> bool:
-        """Whether any column holds a nested model, ruling out CSV storage."""
-        return any(col.kind == "struct" for col in columns(self.model))
 
 
 PERSONAS = TableSpec("personas", Persona, ("pm_id",))

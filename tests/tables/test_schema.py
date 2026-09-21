@@ -214,9 +214,9 @@ def test_drift_event_dormant_valid() -> None:
 # --- Trait bias/preference invariants ---
 
 
-@pytest.mark.parametrize("text", ["not-a-number", "inf", "nan", "1_0", " 5 ", "1e999"])
-def test_trait_bias_rejects_text_that_is_not_a_finite_plain_number(text: str) -> None:
-    with pytest.raises(ValidationError, match="finite number"):
+@pytest.mark.parametrize("text", ["2.6", "not-a-number"])
+def test_trait_bias_rejects_a_text_value(text: str) -> None:
+    with pytest.raises(ValidationError, match="float value"):
         _bias_trait(value=text)
 
 
@@ -245,51 +245,25 @@ def test_trait_preference_requires_null_multipliers() -> None:
         _preference_trait(mult_range=1.0)
 
 
-def test_trait_bias_from_csv_style_strings() -> None:
-    trait = _bias_trait(value="2.6", active="true", mult_range="1.0")
-    assert trait.value == 2.6
-    assert isinstance(trait.value, float)
-    assert trait.active is True
-    assert trait.mult_range == 1.0
-    assert isinstance(trait.mult_range, float)
-
-
 def test_trait_preference_value_stays_str_when_numeric_looking() -> None:
     trait = _preference_trait(value="123")
     assert trait.value == "123"
     assert isinstance(trait.value, str)
 
 
-# --- Rule.level coercion and scope invariants ---
+# --- Rule.level typing and scope invariants ---
 
 
-def test_rule_level_numeric_string_becomes_float() -> None:
-    rule = _pm_rule(level="-15")
+def test_rule_level_number_stays_float() -> None:
+    rule = _pm_rule(level=-15.0)
     assert rule.level == -15.0
     assert isinstance(rule.level, float)
 
 
-def test_rule_level_non_numeric_string_stays_str() -> None:
-    rule = _pm_rule(level="energy")
-    assert rule.level == "energy"
-    assert isinstance(rule.level, str)
-
-
-def test_rule_level_underscore_separated_digits_stays_str() -> None:
-    rule = _pm_rule(level="1_0")
-    assert rule.level == "1_0"
-    assert isinstance(rule.level, str)
-
-
-def test_rule_level_nan_spelling_stays_str() -> None:
-    rule = _pm_rule(level="nan")
-    assert rule.level == "nan"
-    assert isinstance(rule.level, str)
-
-
-def test_rule_level_whitespace_padded_digits_stays_str() -> None:
-    rule = _pm_rule(level=" 5 ")
-    assert rule.level == " 5 "
+@pytest.mark.parametrize("text", ["energy", "-15", "1_0", "nan", " 5 "])
+def test_rule_level_text_is_never_read_as_a_number(text: str) -> None:
+    rule = _pm_rule(level=text)
+    assert rule.level == text
     assert isinstance(rule.level, str)
 
 
@@ -343,12 +317,10 @@ def test_drift_event_accepts_alias_input() -> None:
     assert by_alias == by_name
 
 
-def test_drift_event_level_string_coercion() -> None:
-    event = _update_event(from_value="-3", to_value="market")
-    assert event.from_value == -3.0
+def test_drift_event_endpoints_keep_the_type_they_were_given() -> None:
+    event = _update_event(from_value=-3.0, to_value="-3")
     assert isinstance(event.from_value, float)
-    assert event.to_value == "market"
-    assert isinstance(event.to_value, str)
+    assert event.to_value == "-3"
 
 
 # --- id patterns ---

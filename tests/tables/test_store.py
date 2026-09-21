@@ -16,7 +16,7 @@ from pm_traitbench.enums import (
     Split,
     Typicality,
 )
-from pm_traitbench.errors import ConfigError, StageIOError, TableValidationError
+from pm_traitbench.errors import StageIOError, TableValidationError
 from pm_traitbench.tables.formats import FORMATS
 from pm_traitbench.tables.schema import (
     DriftEvent,
@@ -95,12 +95,11 @@ def _key_of(spec: TableSpec, row) -> tuple:
     return tuple(getattr(row, field) for field in spec.key)
 
 
-def test_default_resolution_personas_jsonl_traits_csv(tmp_path: Path) -> None:
+def test_default_format_is_jsonl_for_every_table(tmp_path: Path) -> None:
     store = DataStore(tmp_path, OutputConfig())
-    assert store.format_name(PERSONAS) == "jsonl"
-    assert store.format_name(TRAITS) == "csv"
-    assert store.path(PERSONAS) == tmp_path / "personas.jsonl"
-    assert store.path(TRAITS) == tmp_path / "traits.csv"
+    for spec in (PERSONAS, TRAITS, RULES, DRIFT_EVENTS):
+        assert store.format_name(spec) == "jsonl"
+        assert store.path(spec) == tmp_path / f"{spec.name}.jsonl"
 
 
 def test_global_format_parquet_applies_to_all_tables(tmp_path: Path) -> None:
@@ -115,16 +114,10 @@ def test_per_table_override_wins_over_global_format(tmp_path: Path) -> None:
     assert store.format_name(RULES) == "parquet"
 
 
-def test_csv_for_nested_table_raises_config_error(tmp_path: Path) -> None:
-    store = DataStore(tmp_path, OutputConfig(tables={"personas": "csv"}))
-    with pytest.raises(ConfigError, match="personas"):
-        store.format_name(PERSONAS)
-
-
 def test_write_returns_path_and_file_exists(tmp_path: Path) -> None:
     store = DataStore(tmp_path, OutputConfig())
     path = store.write(TRAITS, [_trait("pm_001", "t_01")])
-    assert path == tmp_path / "traits.csv"
+    assert path == tmp_path / "traits.jsonl"
     assert path.exists()
     assert store.exists(TRAITS) is True
 
@@ -133,7 +126,7 @@ def test_write_creates_missing_data_dir(tmp_path: Path) -> None:
     data_dir = tmp_path / "nested" / "data"
     store = DataStore(data_dir, OutputConfig())
     store.write(TRAITS, [_trait("pm_001", "t_01")])
-    assert (data_dir / "traits.csv").exists()
+    assert (data_dir / "traits.jsonl").exists()
 
 
 def test_write_sorts_rows_by_key(tmp_path: Path) -> None:
@@ -161,11 +154,11 @@ def test_write_wrong_model_instance_raises(tmp_path: Path) -> None:
         store.write(TRAITS, [_persona("pm_001")])
 
 
-def test_write_config_error_before_mkdir_leaves_no_directory(tmp_path: Path) -> None:
+def test_rejected_write_leaves_no_directory(tmp_path: Path) -> None:
     data_dir = tmp_path / "nested" / "data"
-    store = DataStore(data_dir, OutputConfig(tables={"personas": "csv"}))
-    with pytest.raises(ConfigError):
-        store.write(PERSONAS, [_persona("pm_001")])
+    store = DataStore(data_dir, OutputConfig())
+    with pytest.raises(TableValidationError):
+        store.write(TRAITS, [_persona("pm_001")])
     assert not data_dir.exists()
 
 
@@ -180,8 +173,8 @@ def test_write_replace_failure_removes_tmp_file(
     monkeypatch.setattr("pm_traitbench.tables.store.os.replace", _boom)
     with pytest.raises(OSError, match="boom"):
         store.write(TRAITS, [_trait("pm_001", "t_01")])
-    assert not (tmp_path / "traits.csv.tmp").exists()
-    assert not (tmp_path / "traits.csv").exists()
+    assert not (tmp_path / "traits.jsonl.tmp").exists()
+    assert not (tmp_path / "traits.jsonl").exists()
 
 
 def test_write_failure_midway_removes_tmp_and_preserves_existing_target(
@@ -189,22 +182,22 @@ def test_write_failure_midway_removes_tmp_and_preserves_existing_target(
 ) -> None:
     store = DataStore(tmp_path, OutputConfig())
     store.write(TRAITS, [_trait("pm_001", "t_01")])
-    target = tmp_path / "traits.csv"
+    target = tmp_path / "traits.jsonl"
     original_bytes = target.read_bytes()
 
-    csv_format = FORMATS["csv"]
+    jsonl_format = FORMATS["jsonl"]
 
     def _write_then_raise(records, model, path) -> None:
         path.write_text("partial", encoding="utf-8")
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(csv_format, "write", _write_then_raise)
+    monkeypatch.setattr(jsonl_format, "write", _write_then_raise)
 
     with pytest.raises(RuntimeError, match="boom"):
         store.write(TRAITS, [_trait("pm_002", "t_01")])
 
     assert target.read_bytes() == original_bytes
-    assert not (tmp_path / "traits.csv.tmp").exists()
+    assert not (tmp_path / "traits.jsonl.tmp").exists()
     assert list(tmp_path.glob("*.tmp")) == []
 
 
@@ -217,39 +210,33 @@ def test_read_missing_table_raises_stage_io_error(tmp_path: Path) -> None:
 def test_read_missing_table_mentions_other_extension_present(tmp_path: Path) -> None:
     store_parquet = DataStore(tmp_path, OutputConfig(tables={"traits": "parquet"}))
     store_parquet.write(TRAITS, [_trait("pm_001", "t_01")])
-    store_csv = DataStore(tmp_path, OutputConfig(tables={"traits": "csv"}))
+    store_jsonl = DataStore(tmp_path, OutputConfig(tables={"traits": "jsonl"}))
     with pytest.raises(StageIOError, match="traits.parquet"):
-        store_csv.read(TRAITS)
+        store_jsonl.read(TRAITS)
 
 
-def test_read_corrupted_csv_cell_raises_table_validation_error(tmp_path: Path) -> None:
+def _corrupt_active_field(path: Path, row_number: int) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[row_number - 1])
+    record["active"] = "maybe"
+    lines[row_number - 1] = json.dumps(record)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_read_corrupted_field_raises_table_validation_error(tmp_path: Path) -> None:
     store = DataStore(tmp_path, OutputConfig())
     store.write(TRAITS, [_trait("pm_001", "t_01")])
-    path = tmp_path / "traits.csv"
-    lines = path.read_text(encoding="utf-8").splitlines()
-    header = lines[0].split(",")
-    active_index = header.index("active")
-    cells = lines[1].split(",")
-    cells[active_index] = "maybe"
-    lines[1] = ",".join(cells)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _corrupt_active_field(tmp_path / "traits.jsonl", row_number=1)
 
     with pytest.raises(TableValidationError, match=r"row 1\b") as exc_info:
         store.read(TRAITS)
     assert "active" in str(exc_info.value)
 
 
-def test_read_corrupted_csv_cell_on_the_second_row_names_row_two(tmp_path: Path) -> None:
+def test_read_corrupted_field_on_the_second_row_names_row_two(tmp_path: Path) -> None:
     store = DataStore(tmp_path, OutputConfig())
     store.write(TRAITS, [_trait("pm_001", "t_01"), _trait("pm_002", "t_01")])
-    path = tmp_path / "traits.csv"
-    lines = path.read_text(encoding="utf-8").splitlines()
-    header = lines[0].split(",")
-    active_index = header.index("active")
-    cells = lines[2].split(",")
-    cells[active_index] = "maybe"
-    lines[2] = ",".join(cells)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _corrupt_active_field(tmp_path / "traits.jsonl", row_number=2)
 
     with pytest.raises(TableValidationError, match=r"row 2\b") as exc_info:
         store.read(TRAITS)
@@ -266,9 +253,8 @@ def test_read_duplicate_key_raises(tmp_path: Path) -> None:
         store_jsonl.read(TRAITS)
 
 
-@pytest.mark.parametrize("format_name", ["csv", "jsonl"])
-def test_write_twice_gives_identical_bytes(tmp_path: Path, format_name: str) -> None:
-    store = DataStore(tmp_path, OutputConfig(tables={"traits": format_name}))
+def test_write_twice_gives_identical_bytes(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
     rows = [_trait("pm_001", "t_01"), _trait("pm_002", "t_01")]
     path_a = store.write(TRAITS, rows)
     first_bytes = path_a.read_bytes()
@@ -277,18 +263,12 @@ def test_write_twice_gives_identical_bytes(tmp_path: Path, format_name: str) -> 
     assert first_bytes == second_bytes
 
 
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
 @pytest.mark.parametrize(
-    ("spec", "formats"),
-    [
-        (PERSONAS, ["jsonl", "parquet"]),
-        (TRAITS, ["csv", "jsonl", "parquet"]),
-        (RULES, ["csv", "jsonl", "parquet"]),
-        (DRIFT_EVENTS, ["csv", "jsonl", "parquet"]),
-    ],
-    ids=["personas", "traits", "rules", "drift_events"],
+    "spec", [PERSONAS, TRAITS, RULES, DRIFT_EVENTS], ids=lambda spec: spec.name
 )
-def test_round_trip_equality_for_legal_formats(
-    tmp_path: Path, spec: TableSpec, formats: list[str]
+def test_round_trip_equality_for_every_format(
+    tmp_path: Path, spec: TableSpec, format_name: str
 ) -> None:
     if spec is PERSONAS:
         rows = [_persona("pm_002"), _persona("pm_001")]
@@ -302,11 +282,9 @@ def test_round_trip_equality_for_legal_formats(
             _drift_event("pm_001", datetime.date(2026, 3, 2), "t_01"),
         ]
     expected = sorted(rows, key=lambda row: _key_of(spec, row))
-    for format_name in formats:
-        table_dir = tmp_path / format_name
-        store = DataStore(table_dir, OutputConfig(tables={spec.name: format_name}))
-        store.write(spec, rows)
-        assert store.read(spec) == expected
+    store = DataStore(tmp_path, OutputConfig(tables={spec.name: format_name}))
+    store.write(spec, rows)
+    assert store.read(spec) == expected
 
 
 def test_write_run_metadata_has_expected_keys(tmp_path: Path) -> None:

@@ -16,7 +16,7 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from pm_traitbench.config import Config, OutputConfig
-from pm_traitbench.errors import ConfigError, StageIOError, TableValidationError
+from pm_traitbench.errors import StageIOError, TableValidationError
 from pm_traitbench.tables.formats import FORMATS
 from pm_traitbench.tables.schema import to_record
 from pm_traitbench.tables.specs import TableSpec
@@ -60,15 +60,8 @@ class DataStore:
         self._written: set[str] = set()
 
     def format_name(self, spec: TableSpec) -> str:
-        """Resolve the format name for a table: per-table, then global, then default."""
-        resolved = self._output.tables.get(spec.name)
-        if resolved is None and self._output.format != "default":
-            resolved = self._output.format
-        if resolved is None:
-            resolved = "jsonl" if spec.nested else "csv"
-        if resolved == "csv" and spec.nested:
-            raise ConfigError(f"table '{spec.name}' is nested and cannot use the csv format")
-        return resolved
+        """Resolve the format name for a table: its own override, else the global format."""
+        return self._output.tables.get(spec.name, self._output.format)
 
     def path(self, spec: TableSpec) -> Path:
         extension = FORMATS[self.format_name(spec)].extension
@@ -88,8 +81,6 @@ class DataStore:
         _check_duplicate_keys(spec, rows)
         keyed = sorted(((_row_key(spec, row), row) for row in rows), key=lambda item: item[0])
 
-        # Resolve the format and target path (may raise ConfigError) before
-        # creating anything on disk.
         target = self.path(spec)
         tmp_path = target.with_name(target.name + ".tmp")
         fmt = FORMATS[self.format_name(spec)]

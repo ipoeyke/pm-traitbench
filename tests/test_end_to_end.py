@@ -18,17 +18,17 @@ def test_sample_writes_default_files_and_run_metadata(tmp_path: Path) -> None:
     result = main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(tmp_path)])
     assert result == 0
     assert (tmp_path / "personas.jsonl").exists()
-    assert (tmp_path / "traits.csv").exists()
-    assert (tmp_path / "rules.csv").exists()
-    assert (tmp_path / "drift_events.csv").exists()
+    assert (tmp_path / "traits.jsonl").exists()
+    assert (tmp_path / "rules.jsonl").exists()
+    assert (tmp_path / "drift_events.jsonl").exists()
     assert (tmp_path / "run_metadata" / "sample.json").exists()
 
 
-def test_sample_output_reads_back_and_validates_with_twelve_personas(tmp_path: Path) -> None:
+def test_sample_output_reads_back_and_validates_with_eight_personas(tmp_path: Path) -> None:
     assert main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(tmp_path)]) == 0
     store = DataStore(tmp_path, OutputConfig())
     personas = store.read(PERSONAS)
-    assert len(personas) == 12
+    assert len(personas) == 8
     for spec in _TABLES:
         store.read(spec)  # validates without raising
 

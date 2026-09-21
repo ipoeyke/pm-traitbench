@@ -130,16 +130,16 @@ preferences:
     group: workflow
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "send a weekly exposure recap"
-      - "send an exposure recap only on request"
-      - "skip the weekly recap"
+      - "include an exposure recap in my first session of each week"
+      - "give an exposure recap only when I ask for one"
+      - "no exposure recap unless the book changes materially"
   - param: end_of_day_summary
     group: workflow
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
-      - "send a short end of day summary"
-      - "send a detailed end of day summary"
-      - "skip the end of day summary"
+      - "when I wrap up for the day, give a short summary of the day"
+      - "when I wrap up for the day, give a detailed summary of the day"
+      - "no summary when I wrap up for the day"
   - param: thesis_reminder_on_review
     group: workflow
     asset_classes: [equities, rates_credit, commodities, multi_asset]
@@ -152,7 +152,7 @@ preferences:
     asset_classes: [equities, rates_credit, commodities, multi_asset]
     values:
       - "prompt for a journal entry after each decision"
-      - "prompt for a journal entry once a week"
+      - "prompt for a journal entry in my first session of each week"
       - "skip the journal prompt"
   - param: earnings_week_heads_up
     group: workflow
@@ -179,9 +179,9 @@ preferences:
     group: workflow
     asset_classes: [multi_asset]
     values:
-      - "send a recap after every rebalance"
-      - "send a recap only for large rebalances"
-      - "skip the rebalance recap"
+      - "recap the new weights whenever I report a rebalance"
+      - "recap the new weights only when I report a large rebalance"
+      - "no recap when I report a rebalance"
 
   # expression
   - param: hedge_instrument

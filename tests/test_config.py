@@ -28,13 +28,14 @@ def _write_yaml(tmp_path: Path, data: dict) -> Path:
 def test_config_builds_with_defaults() -> None:
     config = Config()
     assert config.seed.root == 20260105
-    assert config.population.pilot_per_cell == 1
+    assert config.population.pilot_per_cell == 2
+    assert config.population.pilot_market_seed_count == 1
     assert config.population.full_per_cell == 3
     assert config.mandate.book_size_min == 50e6
     assert config.mandate.book_size_max == 2e9
     assert config.drift.bias_update_weeks == (18, 30)
     assert config.calendar.n_weeks == 52
-    assert config.output.format == "default"
+    assert config.output.format == "jsonl"
 
 
 def test_biases_params_keys_equal_bias_params_in_order() -> None:
@@ -68,6 +69,40 @@ def test_yaml_override_of_one_bias_entry_field_keeps_others(tmp_path: Path) -> N
         if name == "herding_weight":
             continue
         assert config.biases.params[name] == default[name]
+
+
+@pytest.mark.parametrize(
+    ("population", "message"),
+    [
+        ({"asset_classes": ["equities", "equities"]}, "asset_classes"),
+        ({"asset_classes": []}, "asset_classes"),
+        ({"market_seeds": ["A", "A"]}, "market_seeds"),
+        ({"market_seeds": []}, "market_seeds"),
+        ({"market_seeds": ["A", " "]}, "market_seeds"),
+        ({"pilot_market_seed_count": 4}, "pilot_market_seed_count"),
+        ({"pilot_market_seed_count": 0}, "pilot_market_seed_count"),
+        ({"pilot_per_cell": 0, "full_per_cell": 0}, "per_cell"),
+    ],
+)
+def test_population_that_would_skew_or_empty_the_grid_is_rejected(
+    population: dict, message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        Config.model_validate({"population": population})
+
+
+def test_population_problem_in_yaml_raises_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"population": {"market_seeds": ["A", "A"]}}))
+    with pytest.raises(ConfigError, match="market_seeds"):
+        load_config(path)
+
+
+@pytest.mark.parametrize("output", [{"format": "csv"}, {"tables": {"traits": "csv"}}])
+def test_unsupported_output_format_raises_config_error(tmp_path: Path, output: dict) -> None:
+    path = _write_yaml(tmp_path, {"output": output})
+    with pytest.raises(ConfigError, match="output"):
+        load_config(path)
 
 
 def test_unknown_top_level_key_raises_config_error_naming_key(tmp_path: Path) -> None:
@@ -186,7 +221,7 @@ _EXPECTED_CORRELATION_PAIRS: dict[tuple[str, str], float] = {
     ("loss_aversion_lambda", "herding_weight"): -0.08,
     ("extrapolation_theta", "herding_weight"): 0.05,
     ("exit_deficiency", "disposition_ratio"): 0.30,
-    ("conviction_size_miscalibration", "overconfidence_coverage"): -0.30,
+    ("exit_deficiency", "loss_aversion_lambda"): 0.126,
 }
 
 
@@ -201,6 +236,22 @@ def test_correlation_pairs_match_binding_defaults() -> None:
     for i in range(n):
         for j in range(n):
             assert matrix[i][j] == pytest.approx(expected[i][j])
+
+
+def test_exit_deficiency_is_independent_of_loss_aversion_given_disposition() -> None:
+    matrix = Config().biases.correlation
+    exit_d, loss, disp = (
+        BIAS_PARAMS.index(name)
+        for name in ("exit_deficiency", "loss_aversion_lambda", "disposition_ratio")
+    )
+    partial_numerator = matrix[exit_d][loss] - matrix[exit_d][disp] * matrix[disp][loss]
+    assert partial_numerator == pytest.approx(0.0, abs=1e-12)
+
+
+def test_conviction_size_miscalibration_is_uncorrelated_with_every_other_bias() -> None:
+    matrix = Config().biases.correlation
+    row = BIAS_PARAMS.index("conviction_size_miscalibration")
+    assert all(matrix[row][j] == 0.0 for j in range(len(BIAS_PARAMS)) if j != row)
 
 
 _EXPECTED_BIAS_PARAMS: dict[str, tuple] = {

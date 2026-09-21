@@ -54,7 +54,7 @@ def test_main_no_subcommand_prints_help_and_returns_0(
 def test_main_runs_fake_stage_and_writes_table(tmp_path: Path) -> None:
     result = main(["fake", "--data-dir", str(tmp_path)], stages=_fake_stages())
     assert result == 0
-    assert (tmp_path / "traits.csv").exists()
+    assert (tmp_path / "traits.jsonl").exists()
 
 
 def test_main_second_run_without_force_returns_1(
