@@ -186,7 +186,7 @@ _EXPECTED_CORRELATION_PAIRS: dict[tuple[str, str], float] = {
     ("loss_aversion_lambda", "herding_weight"): -0.08,
     ("extrapolation_theta", "herding_weight"): 0.05,
     ("exit_deficiency", "disposition_ratio"): 0.30,
-    ("conviction_size_miscalibration", "overconfidence_coverage"): -0.30,
+    ("exit_deficiency", "loss_aversion_lambda"): 0.126,
 }
 
 
@@ -201,6 +201,22 @@ def test_correlation_pairs_match_binding_defaults() -> None:
     for i in range(n):
         for j in range(n):
             assert matrix[i][j] == pytest.approx(expected[i][j])
+
+
+def test_exit_deficiency_is_independent_of_loss_aversion_given_disposition() -> None:
+    matrix = Config().biases.correlation
+    exit_d, loss, disp = (
+        BIAS_PARAMS.index(name)
+        for name in ("exit_deficiency", "loss_aversion_lambda", "disposition_ratio")
+    )
+    partial_numerator = matrix[exit_d][loss] - matrix[exit_d][disp] * matrix[disp][loss]
+    assert partial_numerator == pytest.approx(0.0, abs=1e-12)
+
+
+def test_conviction_size_miscalibration_is_uncorrelated_with_every_other_bias() -> None:
+    matrix = Config().biases.correlation
+    row = BIAS_PARAMS.index("conviction_size_miscalibration")
+    assert all(matrix[row][j] == 0.0 for j in range(len(BIAS_PARAMS)) if j != row)
 
 
 _EXPECTED_BIAS_PARAMS: dict[str, tuple] = {
