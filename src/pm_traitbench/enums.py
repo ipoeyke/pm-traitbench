@@ -57,6 +57,7 @@ class Action(StrEnum):
     TARGET = "target"
     SIGNPOST = "signpost"
     HOLD = "hold"
+    ROLL = "roll"
 
 
 class DriftEventType(StrEnum):

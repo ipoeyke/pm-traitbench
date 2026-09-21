@@ -62,6 +62,19 @@ def test_preferences_for_filters_by_asset_class_and_keeps_order(
     assert [entry.param for entry in rates_credit] == all_params
 
 
+def test_entries_for_filters_by_asset_class_and_keeps_order(fixture_catalogue: Catalogue) -> None:
+    all_params = [entry.param for entry in fixture_catalogue.rules.entries]
+
+    commodities = fixture_catalogue.rules.entries_for(AssetClass.COMMODITIES)
+    assert [entry.param for entry in commodities] == all_params
+    assert all(AssetClass.COMMODITIES in entry.asset_classes for entry in commodities)
+
+    equities = fixture_catalogue.rules.entries_for(AssetClass.EQUITIES)
+    assert [entry.param for entry in equities] == [
+        p for p in all_params if p != "roll_before_expiry"
+    ]
+
+
 def test_variant_for_prefers_specific_variant_and_falls_back_to_generic() -> None:
     specific = RuleVariant(
         asset_class=AssetClass.EQUITIES,
@@ -301,7 +314,7 @@ def test_check_duplicate_rule_param_raises(tmp_path: Path) -> None:
         _check(catalogue)
 
 
-def test_check_missing_rule_variant_for_asset_class_raises(tmp_path: Path) -> None:
+def test_check_missing_variant_for_non_mandatory_entry_does_not_raise(tmp_path: Path) -> None:
     _copy_fixture(tmp_path)
     path = tmp_path / "rules.yaml"
     data = _load_yaml(path)
@@ -309,6 +322,45 @@ def test_check_missing_rule_variant_for_asset_class_raises(tmp_path: Path) -> No
     max_positions["variants"] = [
         v for v in max_positions["variants"] if v["asset_class"] != "multi_asset"
     ]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    _check(catalogue)
+    multi_asset_params = {e.param for e in catalogue.rules.entries_for(AssetClass.MULTI_ASSET)}
+    assert "max_positions" not in multi_asset_params
+
+
+def test_check_mandatory_entry_missing_asset_class_raises(tmp_path: Path) -> None:
+    _copy_fixture(tmp_path)
+    path = tmp_path / "rules.yaml"
+    data = _load_yaml(path)
+    stop_loss = next(e for e in data["entries"] if e["param"] == "stop_loss")
+    stop_loss["variants"] = [v for v in stop_loss["variants"] if v["asset_class"] != "multi_asset"]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="stop_loss.*multi_asset"):
+        _check(catalogue)
+
+
+def test_check_discipline_entry_missing_asset_class_raises(tmp_path: Path) -> None:
+    _copy_fixture(tmp_path)
+    path = tmp_path / "rules.yaml"
+    data = _load_yaml(path)
+    min_holding = next(e for e in data["entries"] if e["param"] == "min_holding_period")
+    min_holding["variants"] = [
+        v for v in min_holding["variants"] if v["asset_class"] != "commodities"
+    ]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="min_holding_period.*commodities"):
+        _check(catalogue)
+
+
+def test_check_rule_entry_with_no_variants_raises(tmp_path: Path) -> None:
+    _copy_fixture(tmp_path)
+    path = tmp_path / "rules.yaml"
+    data = _load_yaml(path)
+    max_positions = next(e for e in data["entries"] if e["param"] == "max_positions")
+    max_positions["variants"] = []
     _dump_yaml(path, data)
     catalogue = load_catalogue(tmp_path)
     with pytest.raises(CatalogueError, match="max_positions"):

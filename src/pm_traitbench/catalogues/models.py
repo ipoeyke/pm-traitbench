@@ -62,7 +62,12 @@ class RuleVariant(BaseModel):
 
 
 class RuleEntry(BaseModel):
-    """A rule parameter: its adoption share and per-asset-class variants."""
+    """A rule parameter with its variants per asset class.
+
+    ``share`` is the chance a PM draws this rule, not the realised share of PMs
+    holding it: repair then forces a discipline rule where none was drawn and
+    expands or contracts the set to the configured rule count.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -71,6 +76,15 @@ class RuleEntry(BaseModel):
     mandatory: bool = False
     discipline: bool = False
     variants: tuple[RuleVariant, ...]
+
+    @property
+    def asset_classes(self) -> tuple[AssetClass, ...]:
+        """Asset classes this entry has at least one variant for, in variant order."""
+        seen: list[AssetClass] = []
+        for variant in self.variants:
+            if variant.asset_class not in seen:
+                seen.append(variant.asset_class)
+        return tuple(seen)
 
     def variant_for(self, asset_class: AssetClass, sub_style: str) -> RuleVariant:
         """Return the first variant for an asset class, preferring one naming the sub-style."""
@@ -98,6 +112,10 @@ class RuleCatalogue(BaseModel):
         if self.mandate_cap.param != "max_risk_pct":
             raise ValueError("mandate_cap must have param 'max_risk_pct'")
         return self
+
+    def entries_for(self, asset_class: AssetClass) -> tuple[RuleEntry, ...]:
+        """Return rule entries applicable to an asset class, in catalogue order."""
+        return tuple(entry for entry in self.entries if asset_class in entry.asset_classes)
 
     @model_validator(mode="after")
     def _check_level_shapes(self) -> "RuleCatalogue":

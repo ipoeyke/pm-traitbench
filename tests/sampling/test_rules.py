@@ -150,3 +150,57 @@ def test_trim_at_target_is_included_more_often_than_min_holding_period(
         trim_count += "trim_at_target" in params
         min_hold_count += "min_holding_period" in params
     assert trim_count > min_hold_count
+
+
+_SUB_STYLE_BY_ASSET_CLASS = {
+    AssetClass.EQUITIES: "equity_long_short",
+    AssetClass.RATES_CREDIT: "sovereign_rates",
+    AssetClass.COMMODITIES: "commodity_futures_directional",
+    AssetClass.MULTI_ASSET: "global_macro",
+}
+
+
+def test_only_a_commodities_pm_ever_receives_roll_before_expiry(fixture_catalogue: Catalogue):
+    config = Config()
+    seen_on_commodities = False
+    for asset_class, sub_style in _SUB_STYLE_BY_ASSET_CLASS.items():
+        mandate = _mandate(asset_class, sub_style)
+        for i in range(300):
+            rules = _draw(config, fixture_catalogue, mandate, i)
+            has_roll = any(r.param == "roll_before_expiry" for r in rules[1:])
+            if has_roll:
+                assert asset_class == AssetClass.COMMODITIES
+                seen_on_commodities = True
+    assert seen_on_commodities
+
+
+def test_roll_before_expiry_level_and_text_are_well_formed(fixture_catalogue: Catalogue):
+    config = Config()
+    mandate = _mandate(AssetClass.COMMODITIES, "commodity_futures_directional")
+    seen = False
+    for i in range(300):
+        rules = _draw(config, fixture_catalogue, mandate, i)
+        for r in rules[1:]:
+            if r.param == "roll_before_expiry":
+                seen = True
+                assert 3 <= r.level <= 10
+                assert r.level == round(r.level)
+                assert "{" not in r.text and "}" not in r.text
+    assert seen
+
+
+def test_non_applicable_entries_consume_no_draws_for_an_equities_pm(fixture_catalogue: Catalogue):
+    config = Config()
+    mandate = _mandate(AssetClass.EQUITIES, "equity_long_short")
+    without_roll_entries = tuple(
+        entry for entry in fixture_catalogue.rules.entries if entry.param != "roll_before_expiry"
+    )
+    catalogue_without_roll = fixture_catalogue.model_copy(
+        update={
+            "rules": fixture_catalogue.rules.model_copy(update={"entries": without_roll_entries})
+        }
+    )
+    for i in range(100):
+        with_roll = _draw(config, fixture_catalogue, mandate, i)
+        without_roll = _draw(config, catalogue_without_roll, mandate, i)
+        assert with_roll == without_roll

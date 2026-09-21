@@ -154,7 +154,9 @@ def _check_rule_coverage(catalogue: Catalogue, asset_classes: Sequence[AssetClas
         seen_params.add(entry.param)
 
     for entry in _all_rule_entries(catalogue):
-        for asset_class in asset_classes:
+        if not entry.variants:
+            raise CatalogueError(f"rules: param '{entry.param}' has no variants")
+        for asset_class in entry.asset_classes:
             for sub_style in catalogue.sub_styles.get(asset_class, ()):
                 variant = entry.variant_for(asset_class, sub_style.name)
                 if not variant.templates:
@@ -162,6 +164,21 @@ def _check_rule_coverage(catalogue: Catalogue, asset_classes: Sequence[AssetClas
                         f"rules: param '{entry.param}' variant for asset class "
                         f"'{asset_class}' has no templates"
                     )
+
+    for asset_class in asset_classes:
+        if asset_class not in catalogue.rules.mandate_cap.asset_classes:
+            raise CatalogueError(
+                f"rules: param '{catalogue.rules.mandate_cap.param}' has no variant for "
+                f"asset class '{asset_class}'"
+            )
+    for entry in catalogue.rules.entries:
+        if not (entry.mandatory or entry.discipline):
+            continue
+        for asset_class in asset_classes:
+            if asset_class not in entry.asset_classes:
+                raise CatalogueError(
+                    f"rules: param '{entry.param}' has no variant for asset class '{asset_class}'"
+                )
 
 
 def _check_rule_tags(catalogue: Catalogue) -> None:
