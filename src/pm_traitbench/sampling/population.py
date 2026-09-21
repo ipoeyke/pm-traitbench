@@ -25,24 +25,21 @@ class PmSlot:
 def build_population(config: Config) -> list[PmSlot]:
     """Enumerate every PM slot: all pilot slots first, then all full slots.
 
+    Both splits fill the same grid of asset class, market seed, typicality
+    and drift, so the pilot exercises drift as well as static behaviour.
     Within each split, replicate is the outermost loop so raising a
     per-cell count only appends slots and leaves existing indices unchanged.
     """
     pop = config.population
     cells: list[tuple[Split, AssetClass, str, Typicality, bool]] = []
 
-    for _ in range(pop.pilot_per_cell):
-        for asset_class in pop.asset_classes:
-            for market_seed in pop.market_seeds:
-                for typicality in _TYPICALITIES:
-                    cells.append((Split.PILOT, asset_class, market_seed, typicality, False))
-
-    for _ in range(pop.full_per_cell):
-        for asset_class in pop.asset_classes:
-            for market_seed in pop.market_seeds:
-                for typicality in _TYPICALITIES:
-                    for drift in _DRIFT_VALUES:
-                        cells.append((Split.FULL, asset_class, market_seed, typicality, drift))
+    for split, per_cell in ((Split.PILOT, pop.pilot_per_cell), (Split.FULL, pop.full_per_cell)):
+        for _ in range(per_cell):
+            for asset_class in pop.asset_classes:
+                for market_seed in pop.market_seeds:
+                    for typicality in _TYPICALITIES:
+                        for drift in _DRIFT_VALUES:
+                            cells.append((split, asset_class, market_seed, typicality, drift))
 
     width = max(3, len(str(len(cells))))
     return [

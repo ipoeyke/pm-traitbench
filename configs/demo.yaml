@@ -1,4 +1,4 @@
-# Small population for smoke runs: 4 pilot and 8 full PMs.
+# Small population for smoke runs: 8 pilot and 8 full PMs.
 population:
   asset_classes: [equities, rates_credit]
   market_seeds: [A]
