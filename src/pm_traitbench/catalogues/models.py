@@ -66,7 +66,7 @@ class RuleEntry(BaseModel):
 
     ``share`` is the chance a PM draws this rule, not the realised share of PMs
     holding it: repair then forces a discipline rule where none was drawn and
-    trims or pads the set to the configured rule count.
+    expands or contracts the set to the configured rule count.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
