@@ -38,7 +38,8 @@ def run_stage(stage: Stage, config: Config, store: DataStore, *, force: bool = F
 
     stage.run(config, store)
 
-    unwritten = [spec.name for spec in stage.writes if not store.exists(spec)]
+    # Existence is not enough: under force an older file would pass for a fresh one.
+    unwritten = [spec.name for spec in stage.writes if not store.was_written(spec)]
     if unwritten:
         raise StageIOError(
             f"stage '{stage.name}' did not write expected table(s): {', '.join(unwritten)}"

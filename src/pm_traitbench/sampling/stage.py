@@ -146,7 +146,6 @@ def run(config: Config, store: DataStore) -> None:
     """Load and check the catalogue, sample the population, then write the four tables."""
     catalogue = load_catalogue()
     check_catalogue(catalogue, config.population.asset_classes, config.preferences.n_max)
-    check_sampling_config(config, catalogue)
     result = sample_all(config, catalogue)
     store.write(PERSONAS, result.personas)
     store.write(TRAITS, result.traits)
