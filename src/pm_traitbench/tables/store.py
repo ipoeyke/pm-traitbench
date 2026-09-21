@@ -57,6 +57,7 @@ class DataStore:
     def __init__(self, data_dir: Path, output: OutputConfig) -> None:
         self._data_dir = data_dir
         self._output = output
+        self._written: set[str] = set()
 
     def format_name(self, spec: TableSpec) -> str:
         """Resolve the format name for a table: per-table, then global, then default."""
@@ -101,7 +102,12 @@ class DataStore:
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
+        self._written.add(spec.name)
         return target
+
+    def was_written(self, spec: TableSpec) -> bool:
+        """Whether this store instance has written the table, as opposed to finding it on disk."""
+        return spec.name in self._written
 
     def read(self, spec: TableSpec) -> list[BaseModel]:
         fmt_name = self.format_name(spec)

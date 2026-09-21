@@ -346,6 +346,13 @@ class DriftConfig(BaseModel):
             raise ValueError("week range must have first <= last")
         return value
 
+    @model_validator(mode="after")
+    def _check_revive_follows_dormant(self) -> "DriftConfig":
+        # A revive drawn from an overlapping range could predate its dormant event.
+        if self.revive_weeks[0] <= self.dormant_weeks[1]:
+            raise ValueError("revive_weeks must start after dormant_weeks ends")
+        return self
+
     @field_validator("bias_update_remaining")
     @classmethod
     def _check_remaining_range(cls, value: tuple[float, float]) -> tuple[float, float]:
