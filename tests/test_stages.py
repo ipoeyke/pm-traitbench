@@ -118,3 +118,25 @@ def test_run_stage_raising_leaves_no_metadata(tmp_path: Path) -> None:
         run_stage(stage, config, store)
     assert not (tmp_path / "run_metadata" / "fake.json").exists()
     assert not store.exists(TRAITS)
+
+
+def test_run_stage_with_force_rejects_a_stage_that_skips_a_table_and_keeps_the_old_file(
+    tmp_path: Path,
+) -> None:
+    config = Config()
+    store = DataStore(tmp_path, config.output)
+    writer = Stage(number=1, name="fake", help="h", run=_write_two_traits, writes=(TRAITS,))
+    run_stage(writer, config, store)
+    before = store.path(TRAITS).read_bytes()
+    metadata = tmp_path / "run_metadata" / "fake.json"
+    metadata_before = metadata.read_bytes()
+
+    def _writes_nothing(config: Config, store: DataStore) -> None:
+        return None
+
+    skipper = Stage(number=1, name="fake", help="h", run=_writes_nothing, writes=(TRAITS,))
+    with pytest.raises(StageIOError, match="did not write"):
+        run_stage(skipper, config, DataStore(tmp_path, config.output), force=True)
+
+    assert store.path(TRAITS).read_bytes() == before
+    assert metadata.read_bytes() == metadata_before

@@ -329,3 +329,12 @@ def test_write_run_metadata_has_expected_keys(tmp_path: Path) -> None:
     git_commit = data["git_commit"]
     assert git_commit is None or (isinstance(git_commit, str) and len(git_commit) == 40)
     datetime.datetime.fromisoformat(data["created_at"])
+
+
+def test_store_records_which_tables_it_wrote(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    assert not store.was_written(TRAITS)
+    store.write(TRAITS, [])
+    assert store.was_written(TRAITS)
+    assert not store.was_written(RULES)
+    assert not DataStore(tmp_path, OutputConfig()).was_written(TRAITS)
