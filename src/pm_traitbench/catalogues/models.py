@@ -62,7 +62,15 @@ class RuleVariant(BaseModel):
 
 
 class RuleEntry(BaseModel):
-    """A rule parameter: its adoption share and per-asset-class variants."""
+    """A rule parameter with its variants per asset class.
+
+    ``share`` is the probability that a PM draws this rule, before repair. It is
+    not the realised share of PMs holding it, because repair changes the set:
+    a PM that drew no discipline rule is given one, which lifts discipline rules
+    above their share; a set above the configured maximum is trimmed at random,
+    which pulls other optional rules below theirs; a set below the minimum is
+    padded at random, which is rarer and works the other way.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
