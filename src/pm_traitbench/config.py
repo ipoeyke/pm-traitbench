@@ -176,6 +176,23 @@ class PopulationConfig(BaseModel):
         3, ge=0, json_schema_extra={"basis": "design", "note": "full batch size per cell"}
     )
 
+    @model_validator(mode="after")
+    def _check_grid(self) -> "PopulationConfig":
+        # A repeated entry would silently double every cell it belongs to.
+        for name, values in (
+            ("asset_classes", self.asset_classes),
+            ("market_seeds", self.market_seeds),
+        ):
+            if not values:
+                raise ValueError(f"{name} must not be empty")
+            if len(set(values)) != len(values):
+                raise ValueError(f"{name} must not repeat an entry: {list(values)}")
+        if any(not seed.strip() for seed in self.market_seeds):
+            raise ValueError("market_seeds must not contain a blank name")
+        if self.pilot_per_cell == 0 and self.full_per_cell == 0:
+            raise ValueError("pilot_per_cell and full_per_cell cannot both be 0")
+        return self
+
 
 class BiasesConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")

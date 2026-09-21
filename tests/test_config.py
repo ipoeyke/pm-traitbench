@@ -70,6 +70,31 @@ def test_yaml_override_of_one_bias_entry_field_keeps_others(tmp_path: Path) -> N
         assert config.biases.params[name] == default[name]
 
 
+@pytest.mark.parametrize(
+    ("population", "message"),
+    [
+        ({"asset_classes": ["equities", "equities"]}, "asset_classes"),
+        ({"asset_classes": []}, "asset_classes"),
+        ({"market_seeds": ["A", "A"]}, "market_seeds"),
+        ({"market_seeds": []}, "market_seeds"),
+        ({"market_seeds": ["A", " "]}, "market_seeds"),
+        ({"pilot_per_cell": 0, "full_per_cell": 0}, "per_cell"),
+    ],
+)
+def test_population_that_would_skew_or_empty_the_grid_is_rejected(
+    population: dict, message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        Config.model_validate({"population": population})
+
+
+def test_population_problem_in_yaml_raises_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"population": {"market_seeds": ["A", "A"]}}))
+    with pytest.raises(ConfigError, match="market_seeds"):
+        load_config(path)
+
+
 def test_unknown_top_level_key_raises_config_error_naming_key(tmp_path: Path) -> None:
     path = _write_yaml(tmp_path, {"bogus_top_level": 1})
     with pytest.raises(ConfigError, match="bogus_top_level"):

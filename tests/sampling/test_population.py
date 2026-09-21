@@ -99,9 +99,10 @@ def test_restricted_config_gives_expected_counts():
     assert len(full) == 8
 
 
-def test_zero_counts_give_empty_population():
-    config = _config(pilot_per_cell=0, full_per_cell=0)
-    assert build_population(config) == []
+def test_one_split_may_be_empty():
+    slots = build_population(_config(pilot_per_cell=0))
+    assert slots
+    assert all(s.split == Split.FULL for s in slots)
 
 
 def test_large_population_widens_ids_to_four_digits():
