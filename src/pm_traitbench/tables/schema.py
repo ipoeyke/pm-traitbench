@@ -6,7 +6,7 @@ Re-exports pm_traitbench.enums so table code has a single import path.
 import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pm_traitbench.enums import (
     Action,
@@ -20,7 +20,6 @@ from pm_traitbench.enums import (
     Split,
     Typicality,
 )
-from pm_traitbench.numeric import parse_number
 
 __all__ = [
     "AssetClass",
@@ -46,18 +45,6 @@ __all__ = [
 _PM_ID_PATTERN = r"^pm_\d{3,}$"
 _TRAIT_ID_PATTERN = r"^t_\d{2,}$"
 _RULE_ID_PATTERN = r"^r_\d{2,}$"
-
-
-def _coerce_numeric_str(value: Any) -> Any:
-    """Parse a string as a float when possible, else leave it as a string.
-
-    Parquet stores mixed numeric/text columns as text; this recovers numbers
-    without misreading textual levels.
-    """
-    if isinstance(value, str):
-        parsed = parse_number(value)
-        return value if parsed is None else parsed
-    return value
 
 
 class Mandate(BaseModel):
@@ -112,16 +99,6 @@ class Trait(BaseModel):
     mult_risk_off: float | None = Field(description="Multiplier applied in a risk-off regime.")
     mult_risk_on: float | None = Field(description="Multiplier applied in a risk-on regime.")
 
-    @field_validator("value", mode="before")
-    @classmethod
-    def _coerce_bias_value(cls, value: Any, info: ValidationInfo) -> Any:
-        if info.data.get("kind") == Kind.BIAS and isinstance(value, str):
-            parsed = parse_number(value)
-            if parsed is None:
-                raise ValueError(f"bias value must be a finite number, got {value!r}")
-            return parsed
-        return value
-
     @model_validator(mode="after")
     def _check_kind_invariants(self) -> "Trait":
         multipliers = (self.mult_range, self.mult_risk_off, self.mult_risk_on)
@@ -165,11 +142,6 @@ class Rule(BaseModel):
     action: Action = Field(description="Action taken when the rule's condition triggers.")
     text: str = Field(description="Human-readable statement of the rule.")
 
-    @field_validator("level", mode="before")
-    @classmethod
-    def _coerce_level(cls, value: Any) -> Any:
-        return _coerce_numeric_str(value)
-
     @model_validator(mode="after")
     def _check_scope(self) -> "Rule":
         if self.scope == RuleScope.PM and self.trade_idea_id is not None:
@@ -196,11 +168,6 @@ class DriftEvent(BaseModel):
     to_value: float | str | None = Field(
         alias="to", description="Trait value after the event; null for dormant and revive."
     )
-
-    @field_validator("from_value", "to_value", mode="before")
-    @classmethod
-    def _coerce_endpoint(cls, value: Any) -> Any:
-        return _coerce_numeric_str(value)
 
     @model_validator(mode="after")
     def _check_event(self) -> "DriftEvent":

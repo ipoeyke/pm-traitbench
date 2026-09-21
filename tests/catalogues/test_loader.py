@@ -284,22 +284,11 @@ def test_check_duplicate_preference_param_raises(tmp_path: Path) -> None:
         _check(catalogue)
 
 
-def test_check_preference_value_parsing_as_float_raises(tmp_path: Path) -> None:
+def test_check_preference_value_that_looks_like_a_number_is_allowed(tmp_path: Path) -> None:
     _copy_shipped(tmp_path)
     path = tmp_path / "preferences.yaml"
     data = _load_yaml(path)
     data["preferences"][0]["values"][0] = "12.5"
-    _dump_yaml(path, data)
-    catalogue = load_catalogue(tmp_path)
-    with pytest.raises(CatalogueError, match=data["preferences"][0]["param"]):
-        _check(catalogue)
-
-
-def test_check_preference_value_with_underscore_separator_is_not_numeric(tmp_path: Path) -> None:
-    _copy_shipped(tmp_path)
-    path = tmp_path / "preferences.yaml"
-    data = _load_yaml(path)
-    data["preferences"][0]["values"][0] = "1_0"
     _dump_yaml(path, data)
     catalogue = load_catalogue(tmp_path)
     _check(catalogue)

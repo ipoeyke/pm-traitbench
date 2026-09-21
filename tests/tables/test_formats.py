@@ -160,6 +160,17 @@ def test_round_trip_non_struct_rows(
 
 
 @pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
+def test_text_that_looks_like_a_number_round_trips_as_text(
+    tmp_path: Path, format_name: str
+) -> None:
+    fmt = FORMATS[format_name]
+    row = _preference_trait_with_special_chars().model_copy(update={"value": "12.5"})
+    path = tmp_path / f"table.{fmt.extension}"
+    fmt.write([to_record(row)], Trait, path)
+    assert [Trait.model_validate(record) for record in fmt.read(path, Trait)] == [row]
+
+
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
 def test_round_trip_persona(tmp_path: Path, format_name: str) -> None:
     fmt = FORMATS[format_name]
     row = _persona()
@@ -222,7 +233,9 @@ def test_parquet_schema_kinds(tmp_path: Path) -> None:
     trait_path = tmp_path / "trait.parquet"
     fmt.write([to_record(_bias_trait())], Trait, trait_path)
     trait_schema = pq.read_schema(trait_path)
-    assert trait_schema.field("value").type == pa.string()
+    assert "value" not in trait_schema.names
+    assert trait_schema.field("value_num").type == pa.float64()
+    assert trait_schema.field("value_text").type == pa.string()
 
     event_path = tmp_path / "event.parquet"
     fmt.write([to_record(_update_event())], DriftEvent, event_path)
@@ -233,6 +246,47 @@ def test_parquet_schema_kinds(tmp_path: Path) -> None:
     fmt.write([to_record(_persona())], Persona, persona_path)
     persona_schema = pq.read_schema(persona_path)
     assert pa.types.is_struct(persona_schema.field("mandate").type)
+
+
+def test_parquet_fills_exactly_one_side_of_a_number_or_text_column(tmp_path: Path) -> None:
+    fmt = FORMATS["parquet"]
+    path = tmp_path / "trait.parquet"
+    rows = [to_record(_bias_trait()), to_record(_preference_trait_with_special_chars())]
+    fmt.write(rows, Trait, path)
+    stored = pq.read_table(path).to_pylist()
+    assert [(row["value_num"] is None, row["value_text"] is None) for row in stored] == [
+        (False, True),
+        (True, False),
+    ]
+
+
+def test_parquet_drift_endpoints_use_aliased_column_pairs(tmp_path: Path) -> None:
+    fmt = FORMATS["parquet"]
+    path = tmp_path / "event.parquet"
+    fmt.write([to_record(_dormant_event())], DriftEvent, path)
+    assert pq.read_schema(path).names[-4:] == ["from_num", "from_text", "to_num", "to_text"]
+    assert fmt.read(path, DriftEvent)[0]["from"] is None
+
+
+def test_parquet_read_rejects_a_row_with_both_sides_filled(tmp_path: Path) -> None:
+    fmt = FORMATS["parquet"]
+    path = tmp_path / "trait.parquet"
+    fmt.write([to_record(_bias_trait())], Trait, path)
+    table = pq.read_table(path)
+    index = table.schema.get_field_index("value_text")
+    table = table.set_column(index, table.schema.field(index), pa.array(["x"], pa.string()))
+    pq.write_table(table, path)
+    with pytest.raises(TableValidationError, match=r"row 1: column 'value'"):
+        fmt.read(path, Trait)
+
+
+def test_parquet_read_of_a_file_missing_a_column_raises(tmp_path: Path) -> None:
+    fmt = FORMATS["parquet"]
+    path = tmp_path / "trait.parquet"
+    fmt.write([to_record(_bias_trait())], Trait, path)
+    pq.write_table(pq.read_table(path).drop_columns(["value_num"]), path)
+    with pytest.raises(TableValidationError, match="value_num"):
+        fmt.read(path, Trait)
 
 
 @pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
