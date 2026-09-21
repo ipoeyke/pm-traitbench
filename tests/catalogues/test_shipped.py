@@ -129,6 +129,15 @@ def test_every_preference_has_2_to_4_values() -> None:
         assert 2 <= len(entry.values) <= 4, entry.param
 
 
+def test_no_preference_asks_the_copilot_to_start_a_conversation() -> None:
+    # The copilot only ever replies, so a value needs a moment inside a session to act on.
+    push_verbs = ("send ", "notify ", "ping ", "alert me", "message me", "email ")
+    catalogue = load_catalogue()
+    for entry in catalogue.preferences:
+        for value in entry.values:
+            assert not any(verb in value.lower() for verb in push_verbs), (entry.param, value)
+
+
 def test_mandate_sub_style_table_matches_exactly() -> None:
     catalogue = load_catalogue()
     for asset_class, expected in _EXPECTED_SUB_STYLES.items():
