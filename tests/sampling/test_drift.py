@@ -62,14 +62,14 @@ def _draw(config: Config, catalogue: Catalogue, timeline: Timeline, traits: list
     return sample_drift("pm_001", traits, config, catalogue, timeline, rng)
 
 
-def test_exactly_one_bias_update_event_always(fixture_catalogue: Catalogue):
+def test_exactly_one_bias_update_event_always(catalogue: Catalogue):
     config = Config()
     timeline = config.timeline()
-    traits = _full_traits(config, fixture_catalogue)
+    traits = _full_traits(config, catalogue)
     bias_trait_ids = {t.trait_id for t in traits if t.kind == Kind.BIAS}
     bias_update_dates = timeline.weekdays_in_weeks(*config.drift.bias_update_weeks)
     for i in range(_N):
-        events = _draw(config, fixture_catalogue, timeline, traits, i)
+        events = _draw(config, catalogue, timeline, traits, i)
         updates = [
             e for e in events if e.event == DriftEventType.UPDATE and e.trait_id in bias_trait_ids
         ]
@@ -79,7 +79,7 @@ def test_exactly_one_bias_update_event_always(fixture_catalogue: Catalogue):
 
 @pytest.mark.parametrize("param", BIAS_PARAMS)
 def test_bias_update_moves_the_value_toward_neutral_by_the_configured_fraction(
-    param: str, fixture_catalogue: Catalogue
+    param: str, catalogue: Catalogue
 ):
     config = Config()
     timeline = config.timeline()
@@ -90,7 +90,7 @@ def test_bias_update_moves_the_value_toward_neutral_by_the_configured_fraction(
     low, high = sorted((neutral, from_value))
     remaining_lo, remaining_hi = config.drift.bias_update_remaining
     for i in range(50):
-        events = _draw(config, fixture_catalogue, timeline, traits, i)
+        events = _draw(config, catalogue, timeline, traits, i)
         update = next(e for e in events if e.trait_id == "t_01")
         assert update.from_value == from_value
         to_value = update.to_value
@@ -99,18 +99,18 @@ def test_bias_update_moves_the_value_toward_neutral_by_the_configured_fraction(
         assert remaining_lo - 1e-4 <= ratio <= remaining_hi + 1e-4
 
 
-def test_preference_update_present_in_roughly_half_of_seeds(fixture_catalogue: Catalogue):
+def test_preference_update_present_in_roughly_half_of_seeds(catalogue: Catalogue):
     config = Config()
     timeline = config.timeline()
-    traits = _full_traits(config, fixture_catalogue)
+    traits = _full_traits(config, catalogue)
     by_id = {t.trait_id: t for t in traits}
     pref_trait_ids = {t.trait_id for t in traits if t.kind == Kind.PREFERENCE}
-    by_param = {entry.param: entry for entry in fixture_catalogue.preferences}
+    by_param = {entry.param: entry for entry in catalogue.preferences}
     pref_update_dates = timeline.weekdays_in_weeks(*config.drift.preference_update_weeks)
 
     seen = 0
     for i in range(_N):
-        events = _draw(config, fixture_catalogue, timeline, traits, i)
+        events = _draw(config, catalogue, timeline, traits, i)
         pref_updates = [e for e in events if e.trait_id in pref_trait_ids]
         assert len(pref_updates) <= 1
         if not pref_updates:
@@ -128,17 +128,17 @@ def test_preference_update_present_in_roughly_half_of_seeds(fixture_catalogue: C
     assert 0.4 <= share <= 0.6
 
 
-def test_dormant_and_revive_appear_together_on_the_same_other_trait(fixture_catalogue: Catalogue):
+def test_dormant_and_revive_appear_together_on_the_same_other_trait(catalogue: Catalogue):
     config = Config()
     timeline = config.timeline()
-    traits = _full_traits(config, fixture_catalogue)
+    traits = _full_traits(config, catalogue)
     bias_trait_ids = {t.trait_id for t in traits if t.kind == Kind.BIAS}
     dormant_dates = timeline.weekdays_in_weeks(*config.drift.dormant_weeks)
     revive_dates = timeline.weekdays_in_weeks(*config.drift.revive_weeks)
 
     seen_dormant = False
     for i in range(_N):
-        events = _draw(config, fixture_catalogue, timeline, traits, i)
+        events = _draw(config, catalogue, timeline, traits, i)
         dormant = [e for e in events if e.event == DriftEventType.DORMANT]
         revive = [e for e in events if e.event == DriftEventType.REVIVE]
         assert len(dormant) == len(revive)
@@ -162,42 +162,42 @@ def test_dormant_and_revive_appear_together_on_the_same_other_trait(fixture_cata
     assert seen_dormant
 
 
-def test_single_active_bias_never_produces_a_dormant_event(fixture_catalogue: Catalogue):
+def test_single_active_bias_never_produces_a_dormant_event(catalogue: Catalogue):
     config = Config()
     timeline = config.timeline()
     param = BIAS_PARAMS[0]
     traits = [_bias_trait(1, param, config.biases.params[param].active.median_value())]
     for i in range(_N):
-        events = _draw(config, fixture_catalogue, timeline, traits, i)
+        events = _draw(config, catalogue, timeline, traits, i)
         assert not any(e.event in (DriftEventType.DORMANT, DriftEventType.REVIVE) for e in events)
 
 
-def test_no_preference_traits_never_produces_a_preference_update(fixture_catalogue: Catalogue):
+def test_no_preference_traits_never_produces_a_preference_update(catalogue: Catalogue):
     config = Config()
     timeline = config.timeline()
     traits = _all_active_bias_traits(config)
     bias_trait_ids = {t.trait_id for t in traits}
     for i in range(100):
-        events = _draw(config, fixture_catalogue, timeline, traits, i)
+        events = _draw(config, catalogue, timeline, traits, i)
         assert all(e.trait_id in bias_trait_ids for e in events)
 
 
-def test_preference_with_unknown_catalogue_param_skips_the_branch(fixture_catalogue: Catalogue):
+def test_preference_with_unknown_catalogue_param_skips_the_branch(catalogue: Catalogue):
     config = Config.model_validate({"drift": {"p_preference_update": 1.0}})
     timeline = config.timeline()
     bias_traits = _all_active_bias_traits(config)
     pref_trait = _pref_trait(len(bias_traits) + 1, "not_a_real_param", "only value")
     traits = bias_traits + [pref_trait]
     for i in range(50):
-        events = _draw(config, fixture_catalogue, timeline, traits, i)
+        events = _draw(config, catalogue, timeline, traits, i)
         assert all(e.trait_id != pref_trait.trait_id for e in events)
 
 
-def test_preference_with_a_single_catalogue_value_skips_the_branch(fixture_catalogue: Catalogue):
-    entry = fixture_catalogue.preferences[0]
+def test_preference_with_a_single_catalogue_value_skips_the_branch(catalogue: Catalogue):
+    entry = catalogue.preferences[0]
     narrowed = entry.model_copy(update={"values": (entry.values[0],)})
-    others = tuple(e for e in fixture_catalogue.preferences if e.param != entry.param)
-    catalogue = fixture_catalogue.model_copy(update={"preferences": (narrowed, *others)})
+    others = tuple(e for e in catalogue.preferences if e.param != entry.param)
+    catalogue = catalogue.model_copy(update={"preferences": (narrowed, *others)})
 
     config = Config.model_validate({"drift": {"p_preference_update": 1.0}})
     timeline = config.timeline()
@@ -209,27 +209,27 @@ def test_preference_with_a_single_catalogue_value_skips_the_branch(fixture_catal
         assert all(e.trait_id != pref_trait.trait_id for e in events)
 
 
-def test_events_are_sorted_by_date_then_trait_id_then_event(fixture_catalogue: Catalogue):
+def test_events_are_sorted_by_date_then_trait_id_then_event(catalogue: Catalogue):
     config = Config()
     timeline = config.timeline()
-    traits = _full_traits(config, fixture_catalogue)
+    traits = _full_traits(config, catalogue)
     for i in range(50):
-        events = _draw(config, fixture_catalogue, timeline, traits, i)
+        events = _draw(config, catalogue, timeline, traits, i)
         keys = [(e.date, e.trait_id, e.event.value) for e in events]
         assert keys == sorted(keys)
 
 
-def test_deterministic_for_a_given_stream(fixture_catalogue: Catalogue):
+def test_deterministic_for_a_given_stream(catalogue: Catalogue):
     config = Config()
     timeline = config.timeline()
-    traits = _full_traits(config, fixture_catalogue)
-    first = _draw(config, fixture_catalogue, timeline, traits, 5)
-    second = _draw(config, fixture_catalogue, timeline, traits, 5)
+    traits = _full_traits(config, catalogue)
+    first = _draw(config, catalogue, timeline, traits, 5)
+    second = _draw(config, catalogue, timeline, traits, 5)
     assert first == second
 
 
 def test_mixed_active_and_inactive_biases_only_touch_active_trait_ids(
-    fixture_catalogue: Catalogue,
+    catalogue: Catalogue,
 ):
     config = Config()
     timeline = config.timeline()
@@ -243,7 +243,7 @@ def test_mixed_active_and_inactive_biases_only_touch_active_trait_ids(
     inactive_ids = {t.trait_id for t in traits if not t.active}
     seen_dormant = False
     for i in range(_N):
-        events = _draw(config, fixture_catalogue, timeline, traits, i)
+        events = _draw(config, catalogue, timeline, traits, i)
         for event in events:
             assert event.trait_id in active_ids
             assert event.trait_id not in inactive_ids
@@ -251,7 +251,7 @@ def test_mixed_active_and_inactive_biases_only_touch_active_trait_ids(
     assert seen_dormant
 
 
-def test_no_active_bias_trait_raises_sampling_error(fixture_catalogue: Catalogue):
+def test_no_active_bias_trait_raises_sampling_error(catalogue: Catalogue):
     config = Config()
     timeline = config.timeline()
     param = BIAS_PARAMS[0]
@@ -259,4 +259,4 @@ def test_no_active_bias_trait_raises_sampling_error(fixture_catalogue: Catalogue
     traits = [_bias_trait(1, param, neutral, active=False)]
     rng = stream(1, "t", 0, "drift")
     with pytest.raises(SamplingError):
-        sample_drift("pm_001", traits, config, fixture_catalogue, timeline, rng)
+        sample_drift("pm_001", traits, config, catalogue, timeline, rng)
