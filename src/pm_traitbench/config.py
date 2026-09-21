@@ -141,7 +141,9 @@ def _default_correlation() -> tuple[tuple[float, ...], ...]:
         ("loss_aversion_lambda", "herding_weight"): -0.08,
         ("extrapolation_theta", "herding_weight"): 0.05,
         ("exit_deficiency", "disposition_ratio"): 0.30,
-        ("conviction_size_miscalibration", "overconfidence_coverage"): -0.30,
+        # Product of the two pairs above: exit deficiency relates to loss aversion
+        # only through disposition, so their partial correlation is zero.
+        ("exit_deficiency", "loss_aversion_lambda"): 0.126,
     }
     for (name_a, name_b), value in pairs.items():
         i, j = index[name_a], index[name_b]
@@ -213,7 +215,10 @@ class BiasesConfig(BaseModel):
         default_factory=_default_correlation,
         json_schema_extra={
             "basis": "sourced",
-            "note": "Yee and Koh 2026 bias correlation structure, two pairs guessed.",
+            "note": (
+                "Yee and Koh 2026 bias correlation structure; the two exit deficiency "
+                "pairs are guesses."
+            ),
         },
     )
 
