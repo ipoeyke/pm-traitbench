@@ -27,10 +27,8 @@ _TWO_SIDED_EVENTS = (
     EventType.MACRO_PRINT,
 )
 
-# Root seed 7 keeps every sampled type's pooled count within 10% of per_year
-# over the long horizon below; date draws are seed-independent, so the root
-# alone determines the counts.
-_LONG_ROOT = 7
+# An ordinary root, not tuned to pass; verified locally for roots 0-19.
+_LONG_ROOT = 0
 
 
 def _long_config() -> Config:
@@ -56,18 +54,35 @@ def _long_sample():
     return config, axis, instruments, result
 
 
-def test_per_type_mean_counts_within_10_percent_of_per_year() -> None:
+def _row_count(rows: list[CalendarEvent], event: EventType, target_key: str) -> int:
+    if target_key == "macro":
+        return sum(1 for row in rows if row.event == event and row.instrument_id is None)
+    return sum(1 for row in rows if row.event == event and row.instrument_id == target_key)
+
+
+def test_grid_counts_are_exact_and_poisson_counts_are_within_tolerance() -> None:
     config, axis, instruments, result = _long_sample()
     years = (axis.n_days - axis.n_burn) / 260
 
     for event, spec in config.market.events.items():
         if event == EventType.MACRO_PRINT:
-            n_targets = 1
+            targets = ["macro"]
         else:
-            n_targets = sum(1 for i in instruments if EVENT_TARGETS[event](i))
-        expected = spec.per_year * n_targets * years
-        actual = result.drawn[event]
-        assert abs(actual - expected) / expected <= 0.10, (event, expected, actual)
+            targets = [i.instrument_id for i in instruments if EVENT_TARGETS[event](i)]
+
+        if spec.placement == "grid":
+            expected = round(spec.per_year * years)
+            for target in targets:
+                actual = _row_count(result.rows, event, target)
+                # Grid placement is deterministic; jitter can clip at most one
+                # point off each horizon edge into a dropped duplicate.
+                assert expected - 2 <= actual <= expected
+        else:
+            # A pooled Poisson count's spread shrinks slowly with its mean, so
+            # a flat percentage band fails most roots at this per-issuer rate.
+            mu = spec.per_year * len(targets) * years
+            actual = result.drawn[event]
+            assert abs(actual - mu) <= 4 * mu**0.5
 
 
 def test_earnings_exact_count_per_equity_with_unique_dates() -> None:
@@ -192,18 +207,21 @@ def test_generated_rows_contract_expiry_and_positioning_report() -> None:
     commodities = [i for i in instruments if i.family == Family.COMMODITIES]
     horizon_dates = axis.dates[axis.horizon]
     horizon_fridays = [day for day in horizon_dates if day.weekday() == 4]
+    horizon_set = set(horizon_dates)
+    months = {(day.year, day.month) for day in horizon_dates}
+    expected_expiries = {third_friday(year, month) for year, month in months} & horizon_set
 
     expiry_rows = [row for row in rows if row.event == EventType.CONTRACT_EXPIRY]
     positioning_rows = [row for row in rows if row.event == EventType.POSITIONING_REPORT]
 
-    expiry_dates = sorted({row.date for row in expiry_rows})
-    for expiry_date in expiry_dates:
-        assert expiry_date.weekday() == 4
-        assert 15 <= expiry_date.day <= 21
-        instrument_ids = {row.instrument_id for row in expiry_rows if row.date == expiry_date}
-        assert instrument_ids == {c.instrument_id for c in commodities}
+    for commodity in commodities:
+        commodity_rows = [
+            row for row in expiry_rows if row.instrument_id == commodity.instrument_id
+        ]
+        assert {row.date for row in commodity_rows} == expected_expiries
+        assert all(row.affected == "commodities" for row in commodity_rows)
 
-    assert len(expiry_rows) == len(expiry_dates) * len(commodities)
+    assert len(expiry_rows) == len(expected_expiries) * len(commodities)
     assert {row.date for row in positioning_rows} == set(horizon_fridays)
     assert len(positioning_rows) == len(horizon_fridays)
     assert all(row.instrument_id is None and row.affected == "all" for row in positioning_rows)
