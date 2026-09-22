@@ -4,3 +4,10 @@ population:
   market_seeds: [A]
   pilot_per_cell: 1
   full_per_cell: 1
+
+# Small market universe to keep the market stage cheap in a smoke run.
+market:
+  universe:
+    n_equities: 20
+    n_sectors: 5
+    n_credit_issuers: 12
