@@ -3,6 +3,7 @@ import pytest
 from pm_traitbench.errors import (
     CatalogueError,
     ConfigError,
+    MarketCheckError,
     PmTraitbenchError,
     SamplingError,
     StageIOError,
@@ -18,6 +19,7 @@ from pm_traitbench.errors import (
         (TableValidationError, 1),
         (StageIOError, 1),
         (SamplingError, 1),
+        (MarketCheckError, 1),
     ],
 )
 def test_subclass_is_pm_traitbench_error_with_exit_code(

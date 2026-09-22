@@ -70,3 +70,106 @@ class Regime(StrEnum):
     RANGE = "range"
     RISK_OFF = "risk_off"
     RISK_ON = "risk_on"
+
+
+class Family(StrEnum):
+    EQUITIES = "equities"
+    RATES = "rates"
+    CREDIT = "credit"
+    COMMODITIES = "commodities"
+    FX = "fx"
+
+
+class InstrumentKind(StrEnum):
+    EQUITY = "equity"
+    CREDIT_ISSUER = "credit_issuer"
+    SOVEREIGN_CURVE = "sovereign_curve"
+    COMMODITY = "commodity"
+    FX_PAIR = "fx_pair"
+
+
+class EventType(StrEnum):
+    EARNINGS = "earnings"
+    RATING_DOWNGRADE = "rating_downgrade"
+    RATING_UPGRADE = "rating_upgrade"
+    CB_MEETING = "cb_meeting"
+    INVENTORY_REPORT = "inventory_report"
+    CROP_REPORT = "crop_report"
+    MACRO_PRINT = "macro_print"
+    CONTRACT_EXPIRY = "contract_expiry"
+    POSITIONING_REPORT = "positioning_report"
+    CONSENSUS_FLIP = "consensus_flip"
+
+
+class StreetView(StrEnum):
+    UNDERWEIGHT = "underweight"
+    NEUTRAL = "neutral"
+    OVERWEIGHT = "overweight"
+
+
+class Positioning(StrEnum):
+    CROWDED_SHORT = "crowded_short"
+    NEUTRAL = "neutral"
+    CROWDED_LONG = "crowded_long"
+
+
+class Tenor(StrEnum):
+    Y2 = "2Y"
+    Y5 = "5Y"
+    Y10 = "10Y"
+    Y30 = "30Y"
+    M1 = "M1"
+    M2 = "M2"
+    M3 = "M3"
+    M4 = "M4"
+    M5 = "M5"
+    M6 = "M6"
+    M7 = "M7"
+    M8 = "M8"
+    M9 = "M9"
+    M10 = "M10"
+    M11 = "M11"
+    M12 = "M12"
+
+
+class CommodityGroup(StrEnum):
+    ENERGY = "energy"
+    INDUSTRIAL_METALS = "industrial_metals"
+    PRECIOUS = "precious"
+    AGRICULTURE = "agriculture"
+
+
+class RatingBand(StrEnum):
+    AA = "AA"
+    A = "A"
+    BBB = "BBB"
+    BB = "BB"
+    B = "B"
+
+
+class ExpiryRule(StrEnum):
+    MONTHLY_THIRD_FRIDAY = "monthly_third_friday"
+
+
+SOVEREIGN_TENORS: tuple[Tenor, ...] = (Tenor.Y2, Tenor.Y5, Tenor.Y10, Tenor.Y30)
+FUTURES_TENORS: tuple[Tenor, ...] = (
+    Tenor.M1,
+    Tenor.M2,
+    Tenor.M3,
+    Tenor.M4,
+    Tenor.M5,
+    Tenor.M6,
+    Tenor.M7,
+    Tenor.M8,
+    Tenor.M9,
+    Tenor.M10,
+    Tenor.M11,
+    Tenor.M12,
+)
+NULL_SURPRISE_EVENTS: frozenset[EventType] = frozenset(
+    {EventType.CONTRACT_EXPIRY, EventType.POSITIONING_REPORT, EventType.CONSENSUS_FLIP}
+)
+MARKET_WIDE_EVENTS: frozenset[EventType] = frozenset(
+    {EventType.MACRO_PRINT, EventType.POSITIONING_REPORT}
+)
+HY_BANDS: frozenset[RatingBand] = frozenset({RatingBand.BB, RatingBand.B})
