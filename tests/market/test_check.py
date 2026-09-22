@@ -9,7 +9,7 @@ import pytest
 from pm_traitbench.config import Config, RegimeParams
 from pm_traitbench.enums import EventType, Family, InstrumentKind, Regime
 from pm_traitbench.errors import MarketCheckError
-from pm_traitbench.market.axis import build_axis
+from pm_traitbench.market.axis import SimAxis, build_axis
 from pm_traitbench.market.check import (
     CheckReport,
     check_market,
@@ -17,7 +17,7 @@ from pm_traitbench.market.check import (
     implied_moments,
     round_level_test_count,
 )
-from pm_traitbench.market.drivers import draw_shocks
+from pm_traitbench.market.drivers import DriverShocks, draw_shocks
 from pm_traitbench.market.generate import SeedMarket, generate_seed
 from pm_traitbench.market.universe import build_universe
 from pm_traitbench.rng import stream
@@ -25,8 +25,8 @@ from pm_traitbench.tables.schema import Instrument
 
 
 @pytest.fixture(scope="module")
-def universe() -> tuple[Config, tuple, object]:
-    """The default config, full default universe and driver shocks, shared across seeds."""
+def universe() -> tuple[Config, tuple[Instrument, ...], SimAxis, DriverShocks]:
+    """The default config, full default universe, axis and driver shocks, shared across seeds."""
     config = Config()
     axis = build_axis(config.timeline(), config.market.burn_in_days)
     instruments = tuple(build_universe(config, stream(config.seed.root, "market", "universe")))
@@ -104,6 +104,54 @@ def test_dropped_positioning_report_row_raises_naming_the_count_metric(universe,
     assert "count:positioning_report" in str(excinfo.value)
 
 
+def test_duplicated_and_missing_expiry_with_same_total_raises(universe, markets) -> None:
+    # Same total row count for the commodity, but one month's expiry is duplicated
+    # onto another month's date, leaving that other month uncovered: a stale
+    # total-count check would pass this; the per-date check must not.
+    config, instruments, _, _ = universe
+    market = markets["A"]
+    commodity = next(i for i in instruments if i.family == Family.COMMODITIES)
+    calendar = list(market.calendar)
+    expiry_indices = [
+        i
+        for i, row in enumerate(calendar)
+        if row.event == EventType.CONTRACT_EXPIRY and row.instrument_id == commodity.instrument_id
+    ]
+    assert len(expiry_indices) >= 2
+    first_date = calendar[expiry_indices[0]].date
+    calendar[expiry_indices[1]] = calendar[expiry_indices[1]].model_copy(
+        update={"date": first_date}
+    )
+    modified = dataclasses.replace(market, calendar=calendar)
+
+    with pytest.raises(MarketCheckError) as excinfo:
+        check_market(modified, instruments, config)
+    assert f"count:contract_expiry:{commodity.instrument_id}" in str(excinfo.value)
+
+
+def test_duplicated_and_missing_positioning_report_with_same_total_raises(
+    universe, markets
+) -> None:
+    # Same total positioning_report row count, but one Friday's report is
+    # duplicated onto another Friday's date, leaving that other Friday uncovered.
+    config, instruments, _, _ = universe
+    market = markets["A"]
+    calendar = list(market.calendar)
+    report_indices = [
+        i for i, row in enumerate(calendar) if row.event == EventType.POSITIONING_REPORT
+    ]
+    assert len(report_indices) >= 2
+    first_date = calendar[report_indices[0]].date
+    calendar[report_indices[1]] = calendar[report_indices[1]].model_copy(
+        update={"date": first_date}
+    )
+    modified = dataclasses.replace(market, calendar=calendar)
+
+    with pytest.raises(MarketCheckError) as excinfo:
+        check_market(modified, instruments, config)
+    assert "count:positioning_report" in str(excinfo.value)
+
+
 class TestRoundLevelTestCount:
     """Unit tests for the per-instrument round-level crossing counter."""
 
@@ -127,6 +175,19 @@ class TestRoundLevelTestCount:
         # 9.3 -> 9.7 stay strictly between the level-9 and level-10 bands.
         series = np.array([9.3, 9.7])
         assert round_level_test_count(series, 1.0, 0.02) == 0
+
+    def test_a_nearest_level_of_zero_is_replaced_by_one_step(self) -> None:
+        # Both closes round to a raw nearest level of 0 (a yield near the floor).
+        # With the fix, the level is the step (1.0) and the wide band [0.3, 1.7]
+        # correctly puts 0.4 inside it; a zero-width band at 0 could never do so.
+        series = np.array([0.1, 0.4])
+        assert round_level_test_count(series, 1.0, 0.7) == 1
+
+    def test_log_grid_path_counts_a_crossing(self) -> None:
+        # step=None uses the price-dependent grid: log_grid_step(78) is 5.0, and
+        # 75 is a grid level strictly between the two outside-band closes.
+        series = np.array([72.0, 78.0])
+        assert round_level_test_count(series, None, 0.02) == 1
 
 
 def test_implied_moments_equities_matches_the_hand_formula() -> None:

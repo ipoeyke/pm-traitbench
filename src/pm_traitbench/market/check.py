@@ -12,6 +12,7 @@ deterministic.
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 import numpy as np
@@ -34,17 +35,15 @@ from pm_traitbench.market.processes.common import ProcessOutput, log_grid_step, 
 from pm_traitbench.tables.schema import Instrument
 
 _IG_BANDS = set(RatingBand) - HY_BANDS
-# macro_print and positioning_report are market-wide, with no single instrument
-# family; reported under equities by convention.
-_MARKET_WIDE_FAMILY = Family.EQUITIES
-_EVENT_FAMILY: dict[EventType, Family] = {
+# macro_print has no single target instrument; its count metric carries no family.
+_EVENT_FAMILY: dict[EventType, Family | None] = {
     EventType.EARNINGS: Family.EQUITIES,
     EventType.RATING_DOWNGRADE: Family.CREDIT,
     EventType.RATING_UPGRADE: Family.CREDIT,
     EventType.CB_MEETING: Family.RATES,
     EventType.INVENTORY_REPORT: Family.COMMODITIES,
     EventType.CROP_REPORT: Family.COMMODITIES,
-    EventType.MACRO_PRINT: _MARKET_WIDE_FAMILY,
+    EventType.MACRO_PRINT: None,
 }
 
 
@@ -54,7 +53,7 @@ class CheckMetric:
 
     seed: str
     regime: Regime | None
-    family: Family
+    family: Family | None
     metric: str
     target: float
     realised: float
@@ -76,7 +75,7 @@ class CheckReport:
                 {
                     "seed": metric.seed,
                     "regime": metric.regime.value if metric.regime is not None else None,
-                    "family": metric.family.value,
+                    "family": metric.family.value if metric.family is not None else None,
                     "metric": metric.metric,
                     "target": metric.target,
                     "realised": metric.realised,
@@ -302,7 +301,9 @@ def _round_level_metrics(
     ]
 
 
-def _count_metric(seed: str, family: Family, name: str, target: int, realised: int) -> CheckMetric:
+def _count_metric(
+    seed: str, family: Family | None, name: str, target: int, realised: int
+) -> CheckMetric:
     return CheckMetric(
         seed=seed,
         regime=None,
@@ -312,6 +313,30 @@ def _count_metric(seed: str, family: Family, name: str, target: int, realised: i
         realised=float(realised),
         tolerance=0.0,
         passed=target == realised,
+    )
+
+
+def _date_mismatch_metric(
+    seed: str, family: Family | None, name: str, expected: Sequence[date], actual: Sequence[date]
+) -> CheckMetric:
+    """A count metric that fails on any missing, duplicate or extra date: `target`
+    is 0 mismatches, `realised` is the actual mismatch count between the expected
+    and actual date multisets.
+    """
+    expected_counts = Counter(expected)
+    actual_counts = Counter(actual)
+    mismatch = sum((actual_counts - expected_counts).values()) + sum(
+        (expected_counts - actual_counts).values()
+    )
+    return CheckMetric(
+        seed=seed,
+        regime=None,
+        family=family,
+        metric=f"count:{name}",
+        target=0.0,
+        realised=float(mismatch),
+        tolerance=0.0,
+        passed=mismatch == 0,
     )
 
 
@@ -343,28 +368,30 @@ def _count_metrics(market: SeedMarket, instruments: Sequence[Instrument]) -> lis
     horizon_dates = market.axis.dates[market.axis.horizon]
     horizon_set = set(horizon_dates)
     months = {(day.year, day.month) for day in horizon_dates}
-    expected_expiries = sum(1 for year, month in months if third_friday(year, month) in horizon_set)
-    expiry_counts = Counter(
-        row.instrument_id for row in calendar if row.event == EventType.CONTRACT_EXPIRY
-    )
+    month_expiries = {(year, month): third_friday(year, month) for year, month in months}
+    expected_expiries = sorted(day for day in month_expiries.values() if day in horizon_set)
+    expiry_dates: dict[str, list[date]] = {}
+    for row in calendar:
+        if row.event == EventType.CONTRACT_EXPIRY:
+            expiry_dates.setdefault(row.instrument_id, []).append(row.date)
     for instrument in instruments:
         if instrument.family != Family.COMMODITIES:
             continue
         metrics.append(
-            _count_metric(
+            _date_mismatch_metric(
                 market.seed,
                 Family.COMMODITIES,
                 f"contract_expiry:{instrument.instrument_id}",
                 expected_expiries,
-                expiry_counts[instrument.instrument_id],
+                expiry_dates.get(instrument.instrument_id, []),
             )
         )
 
-    expected_reports = sum(1 for day in horizon_dates if day.weekday() == 4)
-    actual_reports = sum(1 for row in calendar if row.event == EventType.POSITIONING_REPORT)
+    expected_reports = sorted(day for day in horizon_dates if day.weekday() == 4)
+    actual_reports = [row.date for row in calendar if row.event == EventType.POSITIONING_REPORT]
     metrics.append(
-        _count_metric(
-            market.seed, _MARKET_WIDE_FAMILY, "positioning_report", expected_reports, actual_reports
+        _date_mismatch_metric(
+            market.seed, None, "positioning_report", expected_reports, actual_reports
         )
     )
     return metrics
@@ -373,10 +400,12 @@ def _count_metrics(market: SeedMarket, instruments: Sequence[Instrument]) -> lis
 def _check_error(misses: Sequence[CheckMetric]) -> MarketCheckError:
     first = misses[0]
     regime = first.regime.value if first.regime is not None else "none"
+    family = first.family.value if first.family is not None else "none"
+    count = "1 miss" if len(misses) == 1 else f"{len(misses)} misses"
     return MarketCheckError(
-        f"market check failed for seed {first.seed}, regime {regime}, family {first.family.value}, "
+        f"market check failed for seed {first.seed}, regime {regime}, family {family}, "
         f"metric {first.metric}: target {first.target:.4f}, realised {first.realised:.4f} "
-        f"({len(misses)} misses)"
+        f"({count})"
     )
 
 
