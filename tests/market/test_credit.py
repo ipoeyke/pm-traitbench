@@ -10,7 +10,7 @@ from pm_traitbench.config import Config
 from pm_traitbench.enums import HY_BANDS, Family, Regime, Tenor
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.market.calendar import EventJumps
-from pm_traitbench.market.processes.common import ProcessInputs
+from pm_traitbench.market.processes.common import ProcessInputs, ProcessOutput
 from pm_traitbench.market.processes.credit import simulate
 from pm_traitbench.market.processes.rates import simulate as simulate_rates
 from pm_traitbench.market.regimes import constant_path
@@ -28,7 +28,7 @@ def _axis():
 
 
 def _short_axis():
-    """A half-year axis, short enough that the factor's asymmetric drift stays small."""
+    """A half-year axis, short enough that undamped logF variance never breaks the linear mark."""
     return build_axis(Timeline(date(2026, 1, 5), 26), 0)
 
 
@@ -77,7 +77,9 @@ def _simulate(config, instruments, axis, path, z, jumps):
     rates_inputs = _inputs(config, instruments, axis, path, z, jumps)
     rates = simulate_rates(rates_inputs)
     credit_inputs = _inputs(config, instruments, axis, path, z, jumps)
-    return simulate(credit_inputs, rates), rates
+    # The linear duration mark diverges over decades, which the one-year horizon never reaches.
+    with np.errstate(over="ignore", invalid="ignore"):
+        return simulate(credit_inputs, rates), rates
 
 
 def _log_index(output, issuers):
@@ -192,6 +194,18 @@ def test_hy_index_vol_exceeds_ig_index_vol() -> None:
     ig_vol = np.diff(_log_index(output, _ig(instruments))).std()
     hy_vol = np.diff(_log_index(output, _hy(instruments))).std()
     assert hy_vol > ig_vol
+
+
+def test_simulate_raises_if_an_issuers_currency_has_no_curve() -> None:
+    config = Config()
+    axis = _short_axis()
+    instruments = _universe(config)
+    path = constant_path(Regime.RANGE, axis.n_days, config)
+    z = _z_for(path, _driver_shock(axis.n_days))
+    credit_inputs = _inputs(config, instruments, axis, path, z, _zero_jumps(axis))
+
+    with pytest.raises(ValueError):
+        simulate(credit_inputs, ProcessOutput())
 
 
 def test_price_falls_when_spread_and_five_year_yield_both_rise() -> None:

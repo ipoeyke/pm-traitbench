@@ -87,15 +87,9 @@ def test_every_curve_has_all_four_tenors_and_none_breach_the_floor() -> None:
         assert np.all(series >= floor)
 
 
-def test_floor_actually_binds_for_a_curve_starting_near_zero() -> None:
+def test_floor_binds_for_a_curve_starting_near_zero() -> None:
     config = Config()
-    unfloored = config.model_copy(
-        update={
-            "market": config.market.model_copy(
-                update={"levels": config.market.levels.model_copy(update={"yield_floor_pct": -1e6})}
-            )
-        }
-    )
+    unfloored = _no_floor_config()
     axis = _axis()
     instruments = _universe(config)
     path = constant_path(Regime.RISK_OFF, axis.n_days, config)
