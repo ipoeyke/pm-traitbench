@@ -64,6 +64,11 @@ def _poisson_days(rng: np.random.Generator, per_year: float, horizon_days: int) 
     return np.sort(rng.choice(horizon_days, count, replace=False))
 
 
+def _row_sort_key(row: CalendarEvent) -> tuple[date, str, EventType]:
+    """Sort rows by date, then instrument (market-wide rows first), then event type."""
+    return (row.date, row.instrument_id or "", row.event)
+
+
 def _surprises(rng: np.random.Generator, event: EventType, k: int) -> np.ndarray:
     """Draw k surprises: magnitude first, then sign for two-sided event types."""
     magnitude = rng.beta(2, 2, size=k)
@@ -132,7 +137,7 @@ def sample_events(
                 )
             drawn[event] += len(day_indices)
 
-    rows.sort(key=lambda row: (row.date, row.instrument_id or "", row.event))
+    rows.sort(key=_row_sort_key)
     return SampledEvents(rows=rows, drawn=drawn)
 
 
@@ -182,7 +187,7 @@ def generated_rows(
                 )
             )
 
-    rows.sort(key=lambda row: (row.date, row.instrument_id or "", row.event))
+    rows.sort(key=_row_sort_key)
     return rows
 
 
@@ -215,6 +220,9 @@ def build_jumps(rows: Sequence[CalendarEvent], axis: SimAxis, config: Config) ->
             arr = by_instrument.setdefault(row.instrument_id, np.zeros(axis.n_days))
             arr[day_index] += value
 
+    macro.flags.writeable = False
+    for arr in by_instrument.values():
+        arr.flags.writeable = False
     return EventJumps(by_instrument=by_instrument, macro=macro)
 
 
