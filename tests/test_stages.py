@@ -120,6 +120,40 @@ def test_run_stage_raising_leaves_no_metadata(tmp_path: Path) -> None:
     assert not store.exists(TRAITS)
 
 
+def test_run_stage_passes_run_return_value_as_metadata_extra(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+
+    def _run(config: Config, store: DataStore) -> dict:
+        store.write(TRAITS, [_trait("pm_001", "t_01")])
+        return {"check": {"ok": True}}
+
+    stage = Stage(number=1, name="fake", help="fake stage", run=_run, writes=(TRAITS,))
+
+    run_stage(stage, config, store)
+
+    metadata = json.loads((tmp_path / "run_metadata" / "fake.json").read_text())
+    assert metadata["check"] == {"ok": True}
+
+
+def test_run_stage_with_none_return_keeps_metadata_shape(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    stage = Stage(number=1, name="fake", help="fake stage", run=_write_two_traits, writes=(TRAITS,))
+
+    run_stage(stage, config, store)
+
+    metadata = json.loads((tmp_path / "run_metadata" / "fake.json").read_text())
+    assert set(metadata.keys()) == {
+        "stage",
+        "created_at",
+        "package_version",
+        "git_commit",
+        "root_seed",
+        "config",
+    }
+
+
 def test_run_stage_with_force_rejects_a_stage_that_skips_a_table_and_keeps_the_old_file(
     tmp_path: Path,
 ) -> None:
