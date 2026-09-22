@@ -70,9 +70,9 @@ def simulate(inputs: ProcessInputs) -> ProcessOutput:
         prev = spot[:, t - 1]
         front_det = prev * (1 + slope / 12)
         gap = round_log_gap(front_det, log_grid_step(front_det))
-        idio = np.sqrt(share) * group_shock[:, t] + np.sqrt(1 - share) * t_noise[:, t]
+        non_driver = np.sqrt(share) * group_shock[:, t] + np.sqrt(1 - share) * t_noise[:, t]
         r_t = (
-            sigma[:, t] * (corr * inputs.z[t] + np.sqrt(1 - corr**2) * idio)
+            sigma[:, t] * (corr * inputs.z[t] + np.sqrt(1 - corr**2) * non_driver)
             - kappa[t] * gap
             + jump[:, t]
         )

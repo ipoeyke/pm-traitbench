@@ -11,7 +11,7 @@ from pm_traitbench.enums import Family, Regime
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.market.calendar import EventJumps
 from pm_traitbench.market.constants import FX_PAIRS, USD_PAIR
-from pm_traitbench.market.processes.common import ProcessInputs
+from pm_traitbench.market.processes.common import ProcessInputs, round_log_gap
 from pm_traitbench.market.processes.fx import simulate
 from pm_traitbench.market.regimes import constant_path
 from pm_traitbench.market.universe import build_universe
@@ -67,6 +67,25 @@ def _config_with_pairs(pairs):
     return config.model_copy(update={"market": market})
 
 
+def _pinned_pull_config():
+    """Negligible vol and three off-grid starts, isolating the round-level pull's sign."""
+    config = Config()
+    fx_cfg = config.market.families.fx
+    currency_vol = dict.fromkeys(fx_cfg.currency_vol, 1e-9)
+    families = config.market.families.model_copy(
+        update={"fx": fx_cfg.model_copy(update={"currency_vol": currency_vol})}
+    )
+    fx_start = {
+        **config.market.levels.fx_start,
+        "EURUSD": 1.086,
+        "USDJPY": 150.3,
+        "USDCHF": 0.884,
+    }
+    levels = config.market.levels.model_copy(update={"fx_start": fx_start})
+    market = config.market.model_copy(update={"families": families, "levels": levels})
+    return config.model_copy(update={"market": market})
+
+
 def _currency_log_value(output, ccy):
     """A currency's own log value against USD, signed by its anchor pair's convention."""
     anchor = USD_PAIR[ccy]
@@ -116,9 +135,9 @@ def test_cross_pairs_are_consistent_with_their_usd_pairs_on_every_day() -> None:
     usdjpy = output.prices["FX-USDJPY"]
     audusd = output.prices["FX-AUDUSD"]
 
-    assert np.allclose(output.prices["FX-EURGBP"], eurusd / gbpusd, rtol=1e-12)
-    assert np.allclose(output.prices["FX-EURJPY"], eurusd * usdjpy, rtol=1e-12)
-    assert np.allclose(output.prices["FX-AUDJPY"], audusd * usdjpy, rtol=1e-12)
+    assert np.allclose(output.prices["FX-EURGBP"], eurusd / gbpusd, rtol=1e-12, atol=0)
+    assert np.allclose(output.prices["FX-EURJPY"], eurusd * usdjpy, rtol=1e-12, atol=0)
+    assert np.allclose(output.prices["FX-AUDJPY"], audusd * usdjpy, rtol=1e-12, atol=0)
 
 
 def test_cross_consistency_holds_for_a_pair_subset_without_jpy() -> None:
@@ -139,6 +158,7 @@ def test_cross_consistency_holds_for_a_pair_subset_without_jpy() -> None:
         output.prices["FX-EURGBP"],
         output.prices["FX-EURUSD"] / output.prices["FX-GBPUSD"],
         rtol=1e-12,
+        atol=0,
     )
 
 
@@ -191,6 +211,18 @@ def test_aud_correlates_positively_and_jpy_negatively_with_the_driver() -> None:
     assert np.corrcoef(jpy_returns, z[1:])[0, 1] < 0
 
 
-# The round-level pull's effect on mean |gap| is not checked directly: the 0.01 grid
-# step is close to a day's currency vol, so its effect on a single 20-year draw is
-# smaller than the draw-to-draw sampling noise.
+def test_the_range_pull_moves_each_usd_pair_closer_to_its_nearest_level() -> None:
+    config = _pinned_pull_config()
+    axis = _axis()
+    instruments = _universe(config)
+    path = constant_path(Regime.RANGE, axis.n_days, config)
+    z = np.zeros(axis.n_days)
+    output = simulate(_inputs(config, instruments, axis, path, z, _zero_jumps(axis)))
+
+    # EURUSD pins the XXXUSD anchor sign; USDJPY and USDCHF pin the USDXXX anchor sign,
+    # one on the JPY grid and one on a major-pair grid.
+    for pair, step in (("EURUSD", 0.01), ("USDJPY", 1.0), ("USDCHF", 0.01)):
+        price = output.prices[f"FX-{pair}"]
+        start_gap = abs(round_log_gap(price[0], step))
+        end_gap = abs(round_log_gap(price[-1], step))
+        assert end_gap < start_gap
