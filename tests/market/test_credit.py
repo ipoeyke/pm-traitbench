@@ -132,6 +132,19 @@ def test_widening_steps_average_larger_than_tightening_steps() -> None:
     assert np.mean(np.abs(widen)) > np.mean(np.abs(tighten))
 
 
+def test_centred_shock_leaves_no_drift_under_a_driftless_regime() -> None:
+    config = Config()
+    axis = _axis()
+    instruments = _universe(config)
+    path = constant_path(Regime.RANGE, axis.n_days, config)
+    z = _z_for(path, _driver_shock(axis.n_days))
+    output, _ = _simulate(config, instruments, axis, path, z, _zero_jumps(axis))
+
+    steps = np.diff(_log_index(output, _ig(instruments)))
+    standard_error = steps.std() / np.sqrt(len(steps))
+    assert abs(steps.mean()) < 4 * standard_error
+
+
 @pytest.mark.parametrize("regime", list(Regime))
 def test_ig_index_vol_matches_the_model_implied_target(regime: Regime) -> None:
     config = Config()
@@ -148,9 +161,8 @@ def test_ig_index_vol_matches_the_model_implied_target(regime: Regime) -> None:
     credit_cfg = config.market.families.credit
     mult = config.market.regimes.vol_multiplier[regime]
     a = credit_cfg.asymmetry
-    target = mult * np.sqrt(
-        credit_cfg.factor_vol**2 * (a**2 + a**-2) / 2 + credit_cfg.issuer_vol**2 / len(ig)
-    )
+    k_sq = (a**2 + a**-2) / 2 - (a - 1 / a) ** 2 / (2 * np.pi)
+    target = mult * np.sqrt(credit_cfg.factor_vol**2 * k_sq + credit_cfg.issuer_vol**2 / len(ig))
 
     assert abs(realised_vol - target) / target < 0.10
 

@@ -30,6 +30,9 @@ def simulate(inputs: ProcessInputs, rates: ProcessOutput) -> ProcessOutput:
     sigma_issuer = daily_vol(credit_cfg.issuer_vol, inputs.path)
     c = credit_cfg.driver_corr
     a = credit_cfg.asymmetry
+    # Mean of the asymmetrically scaled standard-normal shock; subtracting it
+    # keeps the skew from the asymmetry without adding a drift to the factor.
+    m = (a - 1 / a) / np.sqrt(2 * np.pi)
 
     base_spread = np.array([market.levels.credit_base_spread_bp[i.rating_band] for i in issuers])
     hy_mult = np.array(
@@ -63,7 +66,7 @@ def simulate(inputs: ProcessInputs, rates: ProcessOutput) -> ProcessOutput:
     for t in range(1, n_days):
         shock = c * inputs.z[t] + np.sqrt(1 - c**2) * e_factor[t]
         widen = a if shock > 0 else 1 / a
-        log_factor[t] = log_factor[t - 1] + sigma_factor[t] * shock * widen
+        log_factor[t] = log_factor[t - 1] + sigma_factor[t] * (shock * widen - m)
 
         prev_spread = spreads[:, t - 1]
         level = np.maximum(nearest_level(prev_spread, 10.0), 10.0)
