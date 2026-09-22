@@ -1,12 +1,21 @@
 """Tests for the market instrument universe: identities, ids and deterministic order."""
 
 import re
+from fractions import Fraction
 
 from pm_traitbench.config import Config
 from pm_traitbench.enums import HY_BANDS, CommodityGroup, Family, InstrumentKind, RatingBand
-from pm_traitbench.market.constants import COMMODITIES, FX_PAIRS
+from pm_traitbench.market.constants import COMMODITIES, FX_PAIRS, sector_label
 from pm_traitbench.market.universe import build_universe
 from pm_traitbench.rng import stream
+
+_CREDIT_BAND_ORDER = (
+    RatingBand.AA,
+    RatingBand.A,
+    RatingBand.BBB,
+    RatingBand.BB,
+    RatingBand.B,
+)
 
 _EQ_ID = re.compile(r"^EQ-\d{4}$")
 _CR_ID = re.compile(r"^CR-(IG|HY)-\d{3}$")
@@ -66,6 +75,76 @@ def test_credit_band_counts_match_largest_remainder() -> None:
     assert counts[RatingBand.BBB] == 14
     assert counts[RatingBand.BB] == 10
     assert counts[RatingBand.B] == 5
+
+
+def _exact_credit_band_counts(n: int, shares: dict[RatingBand, Fraction]) -> dict[RatingBand, int]:
+    """Reimplement the largest-remainder split in exact fractions, immune to float noise."""
+    raw = {band: n * shares[band] for band in _CREDIT_BAND_ORDER}
+    floors = {band: int(raw[band]) for band in _CREDIT_BAND_ORDER}
+    remainder = n - sum(floors.values())
+    ranked = sorted(
+        _CREDIT_BAND_ORDER,
+        key=lambda band: (-(raw[band] - floors[band]), _CREDIT_BAND_ORDER.index(band)),
+    )
+    counts = dict(floors)
+    for band in ranked[:remainder]:
+        counts[band] += 1
+    return counts
+
+
+def test_credit_band_counts_break_exact_remainder_ties_by_band_order() -> None:
+    # 45 x (.35, .15, .15, .20, .15) floors to 15, 6, 6, 9, 6 (sum 42); AA, A,
+    # BBB and B tie at a remainder of exactly 0.75, so the 3 spare seats go to
+    # the first three of the tied bands in band order: AA, A, BBB. A float
+    # rounding of 0.35 * 45 previously broke this exact tie by accident.
+    shares = {
+        RatingBand.AA: Fraction(35, 100),
+        RatingBand.A: Fraction(15, 100),
+        RatingBand.BBB: Fraction(15, 100),
+        RatingBand.BB: Fraction(20, 100),
+        RatingBand.B: Fraction(15, 100),
+    }
+    n = 45
+    expected = _exact_credit_band_counts(n, shares)
+    assert sum(expected.values()) == n
+
+    config = Config.model_validate(
+        {
+            "market": {
+                "universe": {
+                    "n_credit_issuers": n,
+                    "credit_band_shares": {
+                        band.value: float(share) for band, share in shares.items()
+                    },
+                }
+            }
+        }
+    )
+    instruments = _build(config)
+    counts = {band: 0 for band in RatingBand}
+    for instrument in instruments:
+        if instrument.kind == InstrumentKind.CREDIT_ISSUER:
+            counts[instrument.rating_band] += 1
+    assert counts == expected
+
+
+def test_credit_currency_is_one_of_the_configured_curves() -> None:
+    config = Config()
+    instruments = _build(config)
+    curves = set(config.market.universe.curves)
+    credit = [i for i in instruments if i.kind == InstrumentKind.CREDIT_ISSUER]
+    assert credit
+    for instrument in credit:
+        assert instrument.currency in curves
+
+
+def test_equity_sectors_cycle_through_sector_labels() -> None:
+    config = Config()
+    instruments = _build(config)
+    equities = [i for i in instruments if i.kind == InstrumentKind.EQUITY]
+    n_sectors = config.market.universe.n_sectors
+    expected = [sector_label((i % n_sectors) + 1) for i in range(len(equities))]
+    assert [instrument.sector for instrument in equities] == expected
 
 
 def test_ig_ids_only_on_investment_grade_bands() -> None:

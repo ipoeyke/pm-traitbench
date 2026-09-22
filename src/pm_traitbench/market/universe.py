@@ -28,9 +28,12 @@ def _credit_band_counts(n: int, shares: dict[RatingBand, float]) -> dict[RatingB
     raw = {band: n * shares[band] for band in _CREDIT_BAND_ORDER}
     counts = {band: math.floor(raw[band]) for band in _CREDIT_BAND_ORDER}
     remainder = n - sum(counts.values())
+    # Round the remainder before ranking: float noise (e.g. 45 * 0.35 != 15.75
+    # exactly) can otherwise separate what should be an exact tie, letting it
+    # override the band-order tie-break.
     ranked = sorted(
         _CREDIT_BAND_ORDER,
-        key=lambda band: (-(raw[band] - counts[band]), _CREDIT_BAND_ORDER.index(band)),
+        key=lambda band: (-round(raw[band] - counts[band], 9), _CREDIT_BAND_ORDER.index(band)),
     )
     for band in ranked[:remainder]:
         counts[band] += 1
