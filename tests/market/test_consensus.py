@@ -159,6 +159,9 @@ def test_flip_day_formula_and_flip_rows_never_in_burn_in() -> None:
         assert row.surprise is None
         assert row.affected == "equities"
 
+    for row, d in zip(sorted(flip_rows, key=lambda r: r.date), flip_days, strict=True):
+        assert row.date == axis.dates[axis.n_burn + d]
+
     for t in flip_days:
         axis_t = axis.n_burn + t
         prev = score[axis_t - 1]
@@ -283,3 +286,41 @@ def test_rows_cover_every_instrument_and_day_and_seeds_differ_only_by_flip_place
             np.testing.assert_array_equal(
                 result_a.street_score[instrument_id], result_b.street_score[instrument_id]
             )
+
+
+def test_event_day_updates_score_and_flip_wins_over_same_day_event() -> None:
+    config = _trending_equity_config(burn_in_days=5)
+    axis = build_axis(config.timeline(), config.market.burn_in_days)
+    instrument = _equity()
+    output = ProcessOutput(prices={"EQ-0001": _log_linear_prices(axis.n_days, rate=0.01)})
+    threshold = config.market.consensus.view_threshold
+    revision_weekday = config.market.consensus.revision_weekday
+    horizon_days = axis.n_days - axis.n_burn
+
+    non_revision_days = [
+        t for t in range(horizon_days) if axis.dates[axis.n_burn + t].weekday() != revision_weekday
+    ]
+    event_day = non_revision_days[0]
+    event_axis_idx = axis.n_burn + event_day
+    event_days = {"EQ-0001": {event_axis_idx}}
+
+    result = build_consensus(
+        [instrument], axis, output, event_days, config.market, _rng_for(_ROOT), "A"
+    )
+    score = result.street_score["EQ-0001"]
+    assert score[event_axis_idx] != score[event_axis_idx - 1]
+
+    revision_day = next(
+        t for t in range(horizon_days) if axis.dates[axis.n_burn + t].weekday() == revision_weekday
+    )
+    revision_axis_idx = axis.n_burn + revision_day
+    coincident_event_days = {"EQ-0001": {revision_axis_idx}}
+    flipped_rng_for = _scripted_flip_rng_for(_ROOT, [revision_day])
+
+    flipped_result = build_consensus(
+        [instrument], axis, output, coincident_event_days, config.market, flipped_rng_for, "A"
+    )
+    flipped_score = flipped_result.street_score["EQ-0001"]
+    prev = flipped_score[revision_axis_idx - 1]
+    expected_sign = 1.0 if prev >= 0 else -1.0
+    assert flipped_score[revision_axis_idx] == -expected_sign * 2 * threshold
