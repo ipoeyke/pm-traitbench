@@ -64,7 +64,7 @@ def _poisson_days(rng: np.random.Generator, per_year: float, horizon_days: int) 
     return np.sort(rng.choice(horizon_days, count, replace=False))
 
 
-def _row_sort_key(row: CalendarEvent) -> tuple[date, str, EventType]:
+def row_sort_key(row: CalendarEvent) -> tuple[date, str, EventType]:
     """Sort rows by date, then instrument (market-wide rows first), then event type."""
     return (row.date, row.instrument_id or "", row.event)
 
@@ -137,7 +137,7 @@ def sample_events(
                 )
             drawn[event] += len(day_indices)
 
-    rows.sort(key=_row_sort_key)
+    rows.sort(key=row_sort_key)
     return SampledEvents(rows=rows, drawn=drawn)
 
 
@@ -187,7 +187,7 @@ def generated_rows(
                 )
             )
 
-    rows.sort(key=_row_sort_key)
+    rows.sort(key=row_sort_key)
     return rows
 
 

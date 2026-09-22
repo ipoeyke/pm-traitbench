@@ -15,6 +15,7 @@ from pm_traitbench.market.calendar import (
     build_jumps,
     event_day_indices,
     generated_rows,
+    row_sort_key,
     sample_events,
 )
 from pm_traitbench.market.consensus import ConsensusResult, build_consensus
@@ -64,10 +65,6 @@ def market_rng(root_seed: int) -> RngFor:
     return lambda *keys: stream(root_seed, "market", *keys)
 
 
-def _calendar_sort_key(row: CalendarEvent) -> tuple:
-    return (row.date, row.instrument_id or "", row.event)
-
-
 def generate_seed(
     config: Config,
     seed: str,
@@ -113,7 +110,7 @@ def generate_seed(
     event_days = event_day_indices(sampled.rows, axis)
     consensus = build_consensus(instruments, axis, output, event_days, config.market, rng_for, seed)
 
-    calendar = sorted([*sampled.rows, *generated, *consensus.flips], key=_calendar_sort_key)
+    calendar = sorted([*sampled.rows, *generated, *consensus.flips], key=row_sort_key)
 
     return SeedMarket(
         seed=seed,
@@ -132,7 +129,7 @@ def to_rows(market: SeedMarket) -> MarketRows:
     """Convert one seed's simulated state into row-model tables, horizon days only."""
     axis = market.axis
     seed = market.seed
-    horizon_offsets = [(t, day) for t, day in enumerate(axis.dates) if t >= axis.n_burn]
+    horizon_offsets = [(t, axis.dates[t]) for t in range(axis.n_burn, axis.n_days)]
 
     prices = []
     for instrument_id, series in market.output.prices.items():

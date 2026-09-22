@@ -32,6 +32,7 @@ _ROOT = 0
 _Z_SEED = 7
 _GROUP_SEED = 11
 _DEFAULT_ORDER = (Regime.RANGE, Regime.RISK_OFF, Regime.RISK_ON)
+_OTHER_ORDER = (Regime.RISK_ON, Regime.RANGE, Regime.RISK_OFF)
 
 
 def _demo_config() -> Config:
@@ -44,33 +45,36 @@ def _demo_config() -> Config:
     return config.model_copy(update={"market": market})
 
 
-def _zero_jump_zero_flip_config(order: tuple[Regime, Regime, Regime]) -> Config:
-    """Two seeds sharing one regime order, with every seed-specific draw made inert."""
+def _zero_jump_zero_flip_config(seeds: dict[str, tuple[Regime, Regime, Regime]]) -> Config:
+    """Seeds A and B with the given regime orders, every seed-specific draw made inert."""
     config = _demo_config()
     events = {
         event: spec.model_copy(update={"jump_size": 0.0})
         for event, spec in config.market.events.items()
     }
     consensus = config.market.consensus.model_copy(update={"flips_per_instrument_year": 0.0})
-    seeds = {"A": order, "B": order}
     market = config.market.model_copy(
         update={"events": events, "consensus": consensus, "seeds": seeds}
     )
-    population = config.population.model_copy(update={"market_seeds": ("A", "B")})
+    population = config.population.model_copy(update={"market_seeds": tuple(seeds)})
     return config.model_copy(update={"market": market, "population": population})
 
 
-def _generate(config: Config, seed: str):
+def _market_inputs(config: Config):
+    """The axis, universe and driver shocks shared by every seed generated from `config`."""
     axis = build_axis(config.timeline(), config.market.burn_in_days)
     instruments = build_universe(config, stream(config.seed.root, "market", "universe"))
     shocks = draw_shocks(config.seed.root, axis.n_days)
+    return axis, instruments, shocks
+
+
+def _generate(config: Config, seed: str):
+    axis, instruments, shocks = _market_inputs(config)
     return axis, instruments, generate_seed(config, seed, instruments, shocks, axis)
 
 
 def _generate_pair(config: Config, seed_a: str, seed_b: str):
-    axis = build_axis(config.timeline(), config.market.burn_in_days)
-    instruments = build_universe(config, stream(config.seed.root, "market", "universe"))
-    shocks = draw_shocks(config.seed.root, axis.n_days)
+    axis, instruments, shocks = _market_inputs(config)
     market_a = generate_seed(config, seed_a, instruments, shocks, axis)
     market_b = generate_seed(config, seed_b, instruments, shocks, axis)
     return axis, instruments, market_a, market_b
@@ -111,7 +115,7 @@ def test_row_counts_and_dates_fall_within_the_horizon() -> None:
 
 
 def test_seeds_with_the_same_regime_order_and_no_seed_specific_draws_match() -> None:
-    config = _zero_jump_zero_flip_config(_DEFAULT_ORDER)
+    config = _zero_jump_zero_flip_config({"A": _DEFAULT_ORDER, "B": _DEFAULT_ORDER})
     _, _, market_a, market_b = _generate_pair(config, "A", "B")
     rows_a, rows_b = to_rows(market_a), to_rows(market_b)
 
@@ -124,7 +128,9 @@ def test_seeds_with_the_same_regime_order_and_no_seed_specific_draws_match() -> 
 
 
 def test_seeds_with_different_regime_orders_differ_in_prices() -> None:
-    config = _demo_config()
+    # Same zero-jump, zero-flip config as the equality test above, so regime order
+    # is the only thing that can make the two seeds' prices differ.
+    config = _zero_jump_zero_flip_config({"A": _DEFAULT_ORDER, "B": _OTHER_ORDER})
     _, _, market_a, market_b = _generate_pair(config, "A", "B")
     rows_a, rows_b = to_rows(market_a), to_rows(market_b)
 
@@ -135,9 +141,7 @@ def test_seeds_with_different_regime_orders_differ_in_prices() -> None:
 
 def test_generate_seed_is_deterministic_across_calls() -> None:
     config = _demo_config()
-    axis = build_axis(config.timeline(), config.market.burn_in_days)
-    instruments = build_universe(config, stream(config.seed.root, "market", "universe"))
-    shocks = draw_shocks(config.seed.root, axis.n_days)
+    axis, instruments, shocks = _market_inputs(config)
 
     rows_1 = to_rows(generate_seed(config, "A", instruments, shocks, axis))
     rows_2 = to_rows(generate_seed(config, "A", instruments, shocks, axis))
