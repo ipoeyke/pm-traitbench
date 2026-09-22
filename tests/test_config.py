@@ -408,33 +408,42 @@ def test_market_defaults_spot_check() -> None:
 
 
 def test_market_seed_with_repeated_regime_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="must list each regime exactly once"):
         Config.model_validate({"market": {"seeds": {"A": ["range", "range", "risk_on"]}}})
 
 
 def test_market_seed_with_two_regimes_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"seeds\.A\.2"):
         Config.model_validate({"market": {"seeds": {"A": ["range", "risk_on"]}}})
 
 
 def test_population_market_seed_not_in_market_seeds_raises() -> None:
-    with pytest.raises(ValidationError, match="D"):
+    with pytest.raises(
+        ValidationError,
+        match=r"market\.seeds missing seed\(s\) used by population\.market_seeds: \['D'\]",
+    ):
         Config.model_validate({"population": {"market_seeds": ["A", "B", "D"]}})
 
 
 @pytest.mark.parametrize(
-    "boundary_weeks",
-    [(30, 16), (0, 16), (16, 52)],
+    ("boundary_weeks", "match"),
+    [
+        ((30, 16), "boundary_weeks must be strictly increasing"),
+        ((0, 16), r"market\.boundary_weeks must fall within 1\.\.51"),
+        ((16, 52), r"market\.boundary_weeks must fall within 1\.\.51"),
+    ],
 )
-def test_market_boundary_weeks_out_of_range_raises(boundary_weeks: tuple[int, int]) -> None:
-    with pytest.raises(ValidationError):
+def test_market_boundary_weeks_out_of_range_raises(
+    boundary_weeks: tuple[int, int], match: str
+) -> None:
+    with pytest.raises(ValidationError, match=match):
         Config.model_validate(
             {"market": {"boundary_weeks": boundary_weeks}, "calendar": {"n_weeks": 52}}
         )
 
 
 def test_credit_band_shares_not_summing_to_one_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="credit_band_shares must sum to 1"):
         Config.model_validate(
             {
                 "market": {
@@ -452,28 +461,38 @@ def test_credit_band_shares_not_summing_to_one_raises() -> None:
         )
 
 
+def _full_commodities_count(energy: int) -> dict:
+    return {"energy": energy, "industrial_metals": 4, "precious": 3, "agriculture": 7}
+
+
 def test_commodities_count_over_table_size_raises() -> None:
-    with pytest.raises(ValidationError):
-        Config.model_validate({"market": {"universe": {"commodities": {"energy": 7}}}})
+    with pytest.raises(ValidationError, match=r"commodities\[energy\] must be between 0 and 6"):
+        Config.model_validate({"market": {"universe": {"commodities": _full_commodities_count(7)}}})
 
 
 def test_unknown_fx_pair_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=r"fx_pairs has unknown pair\(s\): \['NOKUSD'\]"):
         Config.model_validate({"market": {"universe": {"fx_pairs": ["EURUSD", "NOKUSD"]}}})
 
 
 def test_vol_tolerance_not_positive_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError, match=r"(?s)check\.vol_tolerance.*Input should be greater than 0"
+    ):
         Config.model_validate({"market": {"check": {"vol_tolerance": 0}}})
 
 
 def test_corr_tolerance_se_negative_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError, match=r"(?s)check\.corr_tolerance_se.*Input should be greater than 0"
+    ):
         Config.model_validate({"market": {"check": {"corr_tolerance_se": -1}}})
 
 
 def test_grid_event_with_excessive_jitter_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError, match="jitter_days is too large to keep jittered grid dates unique"
+    ):
         EventSpec(
             per_year=4,
             jump_size=0.05,
@@ -486,13 +505,15 @@ def test_grid_event_with_excessive_jitter_raises() -> None:
 
 def test_events_missing_macro_print_raises() -> None:
     events = {k: v for k, v in Config().market.events.items() if k != EventType.MACRO_PRINT}
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="events keys must be exactly"):
         MarketConfig(events=events)
 
 
 def test_market_problem_in_yaml_raises_config_error(tmp_path: Path) -> None:
-    path = _write_yaml(tmp_path, {"market": {"universe": {"commodities": {"energy": 7}}}})
-    with pytest.raises(ConfigError, match="commodities"):
+    path = _write_yaml(
+        tmp_path, {"market": {"universe": {"commodities": _full_commodities_count(7)}}}
+    )
+    with pytest.raises(ConfigError, match=r"commodities\[energy\] must be between 0 and 6"):
         load_config(path)
 
 

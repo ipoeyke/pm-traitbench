@@ -1101,8 +1101,9 @@ def _default_market_events() -> dict[EventType, EventSpec]:
             placement="grid",
             basis="sourced",
             note=(
-                "Eight scheduled FOMC meetings a year; jump size follows Gurkaynak, "
-                "Sack and Swanson 2005 on policy-surprise magnitude."
+                "Eight scheduled FOMC meetings a year; jump size is in basis points on "
+                "the curve level, following Gurkaynak, Sack and Swanson 2005 on "
+                "policy-surprise magnitude."
             ),
         ),
         EventType.INVENTORY_REPORT: EventSpec(
