@@ -9,6 +9,7 @@ from pm_traitbench import pipeline
 from pm_traitbench.cli import main
 from pm_traitbench.config import load_config
 from pm_traitbench.errors import MarketCheckError, StageIOError
+from pm_traitbench.market.check import check_market as real_check_market
 from pm_traitbench.market.stage import MARKET_STAGE
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.specs import MARKET_TABLES
@@ -92,6 +93,31 @@ def test_cli_returns_1_and_writes_no_market_files_when_check_fails(
 
     for spec in MARKET_TABLES:
         assert not (tmp_path / f"{spec.name}.jsonl").exists()
+
+
+def test_cli_returns_1_and_writes_nothing_when_a_later_seed_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seed A's check passing must not let seed B's failure leave a partial write."""
+    demo_text = _DEMO_CONFIG.read_text(encoding="utf-8")
+    two_seed_text = demo_text.replace("market_seeds: [A]", "market_seeds: [A, B]")
+    assert two_seed_text != demo_text
+    config_path = tmp_path / "two_seed_config.yaml"
+    config_path.write_text(two_seed_text, encoding="utf-8")
+
+    def _fail_only_on_b(market, instruments, config):
+        if market.seed == "B":
+            raise MarketCheckError("rigged failure on seed B")
+        return real_check_market(market, instruments, config)
+
+    monkeypatch.setattr("pm_traitbench.market.stage.check_market", _fail_only_on_b)
+
+    data_dir = tmp_path / "data"
+    result = main(["market", "--config", str(config_path), "--data-dir", str(data_dir)])
+
+    assert result == 1
+    assert not (data_dir / "market").exists()
+    assert not (data_dir / "run_metadata" / "market.json").exists()
 
 
 def test_pipeline_stage_names_are_sample_then_market() -> None:
