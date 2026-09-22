@@ -3,6 +3,7 @@
 import functools
 
 import numpy as np
+import pytest
 
 from pm_traitbench.config import Config
 from pm_traitbench.enums import EventType, Family, InstrumentKind
@@ -74,9 +75,7 @@ def test_grid_counts_are_exact_and_poisson_counts_are_within_tolerance() -> None
             expected = round(spec.per_year * years)
             for target in targets:
                 actual = _row_count(result.rows, event, target)
-                # Grid placement is deterministic; jitter can clip at most one
-                # point off each horizon edge into a dropped duplicate.
-                assert expected - 2 <= actual <= expected
+                assert actual == expected
         else:
             # A pooled Poisson count's spread shrinks slowly with its mean, so
             # a flat percentage band fails most roots at this per-issuer rate.
@@ -266,6 +265,38 @@ def test_build_jumps_hand_built_two_rows() -> None:
     expected_macro = np.zeros(axis.n_days)
     expected_macro[axis.n_burn + 1] = -0.3 * macro_jump_size
     assert np.allclose(jumps.macro, expected_macro)
+
+
+def test_build_jumps_arrays_are_frozen() -> None:
+    config = Config()
+    axis = build_axis(config.timeline(), config.market.burn_in_days)
+    d1 = axis.dates[axis.n_burn]
+
+    rows = [
+        CalendarEvent(
+            seed="A",
+            date=d1,
+            instrument_id="EQ-0001",
+            event=EventType.EARNINGS,
+            surprise=0.5,
+            affected="equities",
+        ),
+        CalendarEvent(
+            seed="A",
+            date=d1,
+            instrument_id=None,
+            event=EventType.MACRO_PRINT,
+            surprise=-0.3,
+            affected="all",
+        ),
+    ]
+
+    jumps = build_jumps(rows, axis, config)
+
+    with pytest.raises(ValueError):
+        jumps.for_instrument("EQ-0001")[0] = 1.0
+    with pytest.raises(ValueError):
+        jumps.macro[0] = 1.0
 
 
 def test_event_day_indices_excludes_macro_and_generated_rows() -> None:
