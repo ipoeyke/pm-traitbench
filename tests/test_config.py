@@ -12,10 +12,13 @@ from pm_traitbench.config import (
     CalendarConfig,
     Config,
     DriftConfig,
+    EventSpec,
+    MarketConfig,
+    RegimeParams,
     load_config,
 )
 from pm_traitbench.distributions import BetaSpec, LogNormalSpec
-from pm_traitbench.enums import Regime
+from pm_traitbench.enums import EventType, Regime
 from pm_traitbench.errors import ConfigError
 
 
@@ -340,8 +343,13 @@ def test_dump_with_basis_covers_every_leaf() -> None:
 
     assert "biases.p_active" in paths
     assert "biases.params.herding_weight" in paths
+    assert "market.families.credit.asymmetry" in paths
+    assert "market.events.earnings" in paths
 
     expected_paths: set[str] = set()
+
+    def _has_basis_field(value: object) -> bool:
+        return isinstance(value, BaseModel) and "basis" in type(value).model_fields
 
     def walk(model: BaseModel, prefix: str) -> None:
         for name, field in type(model).model_fields.items():
@@ -350,12 +358,12 @@ def test_dump_with_basis_covers_every_leaf() -> None:
             extra = field.json_schema_extra
             if isinstance(extra, dict) and "basis" in extra:
                 expected_paths.add(path)
-            elif isinstance(value, BiasSpec):
+            elif _has_basis_field(value):
                 expected_paths.add(path)
             elif (
                 isinstance(value, dict)
                 and value
-                and all(isinstance(v, BiasSpec) for v in value.values())
+                and all(_has_basis_field(v) for v in value.values())
             ):
                 for key in value:
                     expected_paths.add(f"{path}.{key}")
@@ -378,3 +386,121 @@ def test_revive_weeks_must_start_after_dormant_weeks_end(revive_first: int) -> N
 def test_revive_weeks_starting_the_week_after_dormant_weeks_is_accepted() -> None:
     config = Config.model_validate({"drift": {"dormant_weeks": [32, 40], "revive_weeks": [41, 48]}})
     assert config.drift.revive_weeks == (41, 48)
+
+
+def test_market_defaults_spot_check() -> None:
+    market = Config().market
+    assert market.universe.n_equities == 80
+    assert market.universe.n_sectors == 10
+    assert market.universe.n_credit_issuers == 48
+    assert market.families.credit.asymmetry == 1.1
+    assert market.families.commodity.group_share == 0.6
+    assert market.levels.yield_floor_pct == 0.0
+    assert market.events[EventType.EARNINGS].jitter_days == 5
+    assert market.consensus.report_weekday == 4
+    assert market.check.corr_tolerance_se == 4.0
+    assert market.boundary_weeks == (16, 30)
+    assert market.burn_in_days == 60
+    assert market.seeds["A"] == (Regime.RANGE, Regime.RISK_OFF, Regime.RISK_ON)
+    assert market.regimes.params(Regime.RISK_OFF) == RegimeParams(
+        driver_mean=-0.09, vol_multiplier=1.6, mean_reversion_kappa=0.0
+    )
+
+
+def test_market_seed_with_repeated_regime_raises() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate({"market": {"seeds": {"A": ["range", "range", "risk_on"]}}})
+
+
+def test_market_seed_with_two_regimes_raises() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate({"market": {"seeds": {"A": ["range", "risk_on"]}}})
+
+
+def test_population_market_seed_not_in_market_seeds_raises() -> None:
+    with pytest.raises(ValidationError, match="D"):
+        Config.model_validate({"population": {"market_seeds": ["A", "B", "D"]}})
+
+
+@pytest.mark.parametrize(
+    "boundary_weeks",
+    [(30, 16), (0, 16), (16, 52)],
+)
+def test_market_boundary_weeks_out_of_range_raises(boundary_weeks: tuple[int, int]) -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {"market": {"boundary_weeks": boundary_weeks}, "calendar": {"n_weeks": 52}}
+        )
+
+
+def test_credit_band_shares_not_summing_to_one_raises() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                "market": {
+                    "universe": {
+                        "credit_band_shares": {
+                            "AA": 0.15,
+                            "A": 0.25,
+                            "BBB": 0.30,
+                            "BB": 0.10,
+                            "B": 0.10,
+                        }
+                    }
+                }
+            }
+        )
+
+
+def test_commodities_count_over_table_size_raises() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate({"market": {"universe": {"commodities": {"energy": 7}}}})
+
+
+def test_unknown_fx_pair_raises() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate({"market": {"universe": {"fx_pairs": ["EURUSD", "NOKUSD"]}}})
+
+
+def test_vol_tolerance_not_positive_raises() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate({"market": {"check": {"vol_tolerance": 0}}})
+
+
+def test_corr_tolerance_se_negative_raises() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate({"market": {"check": {"corr_tolerance_se": -1}}})
+
+
+def test_grid_event_with_excessive_jitter_raises() -> None:
+    with pytest.raises(ValidationError):
+        EventSpec(
+            per_year=4,
+            jump_size=0.05,
+            placement="grid",
+            jitter_days=50,
+            basis="sourced",
+            note="test",
+        )
+
+
+def test_events_missing_macro_print_raises() -> None:
+    events = {k: v for k, v in Config().market.events.items() if k != EventType.MACRO_PRINT}
+    with pytest.raises(ValidationError):
+        MarketConfig(events=events)
+
+
+def test_market_problem_in_yaml_raises_config_error(tmp_path: Path) -> None:
+    path = _write_yaml(tmp_path, {"market": {"universe": {"commodities": {"energy": 7}}}})
+    with pytest.raises(ConfigError, match="commodities"):
+        load_config(path)
+
+
+def test_market_yaml_override_keeps_sibling_defaults(tmp_path: Path) -> None:
+    path = _write_yaml(tmp_path, {"market": {"universe": {"n_equities": 20}}})
+    config = load_config(path)
+    assert config.market.universe.n_equities == 20
+    default = Config().market.universe
+    assert config.market.universe.n_sectors == default.n_sectors
+    assert config.market.universe.n_credit_issuers == default.n_credit_issuers
+    assert config.market.families == Config().market.families
