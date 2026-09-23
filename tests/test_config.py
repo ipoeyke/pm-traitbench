@@ -475,6 +475,83 @@ def test_unknown_fx_pair_raises() -> None:
         Config.model_validate({"market": {"universe": {"fx_pairs": ["EURUSD", "NOKUSD"]}}})
 
 
+def test_zero_burn_in_days_raises() -> None:
+    with pytest.raises(
+        ValidationError, match=r"(?s)burn_in_days.*Input should be greater than or equal to 1"
+    ):
+        Config.model_validate({"market": {"burn_in_days": 0}})
+
+
+def test_zero_n_equities_raises() -> None:
+    with pytest.raises(ValidationError, match=r"(?s)n_equities.*Input should be greater than 0"):
+        Config.model_validate({"market": {"universe": {"n_equities": 0}}})
+
+
+def test_zero_n_credit_issuers_raises() -> None:
+    with pytest.raises(
+        ValidationError, match=r"(?s)n_credit_issuers.*Input should be greater than 0"
+    ):
+        Config.model_validate({"market": {"universe": {"n_credit_issuers": 0}}})
+
+
+def test_credit_allocation_with_zero_ig_issuers_raises() -> None:
+    with pytest.raises(ValidationError, match="leave zero investment-grade issuers"):
+        Config.model_validate(
+            {
+                "market": {
+                    "universe": {
+                        "n_credit_issuers": 1,
+                        "credit_band_shares": {
+                            "AA": 0.01,
+                            "A": 0.01,
+                            "BBB": 0.01,
+                            "BB": 0.02,
+                            "B": 0.95,
+                        },
+                    }
+                }
+            }
+        )
+
+
+def test_all_commodity_counts_zero_raises() -> None:
+    with pytest.raises(ValidationError, match="commodities must include at least one commodity"):
+        Config.model_validate(
+            {
+                "market": {
+                    "universe": {
+                        "commodities": {
+                            "energy": 0,
+                            "industrial_metals": 0,
+                            "precious": 0,
+                            "agriculture": 0,
+                        }
+                    }
+                }
+            }
+        )
+
+
+def test_empty_fx_pairs_raises() -> None:
+    with pytest.raises(ValidationError, match="fx_pairs must not be empty"):
+        Config.model_validate({"market": {"universe": {"fx_pairs": []}}})
+
+
+def test_fx_pairs_without_usd_pair_raises() -> None:
+    with pytest.raises(ValidationError, match="fx_pairs must include at least one USD pair"):
+        Config.model_validate({"market": {"universe": {"fx_pairs": ["EURGBP", "EURJPY"]}}})
+
+
+def test_empty_curves_raises() -> None:
+    with pytest.raises(ValidationError, match="curves must not be empty"):
+        Config.model_validate({"market": {"universe": {"curves": []}}})
+
+
+def test_duplicate_curve_raises() -> None:
+    with pytest.raises(ValidationError, match="curves must not repeat an entry"):
+        Config.model_validate({"market": {"universe": {"curves": ["USD", "USD"]}}})
+
+
 def test_vol_tolerance_not_positive_raises() -> None:
     with pytest.raises(
         ValidationError, match=r"(?s)check\.vol_tolerance.*Input should be greater than 0"

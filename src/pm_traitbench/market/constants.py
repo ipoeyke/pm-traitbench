@@ -4,12 +4,30 @@ Config only selects how many entries of each table are used and which are
 turned on; the entries themselves (codes, names, starting levels) live here.
 """
 
+import math
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass
 
 from pm_traitbench.enums import CommodityGroup
 
 HORIZON_DAYS_PER_YEAR = 260
 ANNUALISATION_DAYS = 252
+
+
+def largest_remainder[K: Hashable](
+    n: int, shares: Mapping[K, float], order: Sequence[K]
+) -> dict[K, int]:
+    """Split `n` items across `order` by `shares`, largest remainder first, ties
+    broken by `order`. Config and the universe share this so their counts agree.
+    """
+    raw = {key: n * shares[key] for key in order}
+    counts = {key: math.floor(raw[key]) for key in order}
+    remainder = n - sum(counts.values())
+    # Round before ranking so float noise cannot turn an exact tie into an order override.
+    ranked = sorted(order, key=lambda key: (-round(raw[key] - counts[key], 9), order.index(key)))
+    for key in ranked[:remainder]:
+        counts[key] += 1
+    return counts
 
 
 @dataclass(frozen=True)

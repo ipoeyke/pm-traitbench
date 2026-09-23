@@ -241,7 +241,7 @@ def test_street_score_half_life_runs_in_trading_days_not_updates() -> None:
     # 1 - score[t] == 2**(-t/W) then holds at every weekly update day t,
     # so the score should sit near half the trend at t = W trading days,
     # not at t = W updates (about 5W days on a weekly clock).
-    config = _trending_equity_config(burn_in_days=0)
+    config = _trending_equity_config(burn_in_days=1)
     axis = build_axis(config.timeline(), config.market.burn_in_days)
     instrument = _equity()
     output = ProcessOutput(prices={"EQ-0001": _log_linear_prices(axis.n_days, rate=1.0)})

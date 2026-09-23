@@ -5,13 +5,11 @@ draws within a family happen in one fixed sequence, so a given seed always
 reproduces the same universe.
 """
 
-import math
-
 import numpy as np
 
 from pm_traitbench.config import Config
 from pm_traitbench.enums import HY_BANDS, CommodityGroup, Family, InstrumentKind, RatingBand
-from pm_traitbench.market.constants import COMMODITIES, FX_PAIRS, sector_label
+from pm_traitbench.market.constants import COMMODITIES, FX_PAIRS, largest_remainder, sector_label
 from pm_traitbench.tables.schema import Instrument
 
 _CREDIT_BAND_ORDER: tuple[RatingBand, ...] = (
@@ -21,23 +19,6 @@ _CREDIT_BAND_ORDER: tuple[RatingBand, ...] = (
     RatingBand.BB,
     RatingBand.B,
 )
-
-
-def _credit_band_counts(n: int, shares: dict[RatingBand, float]) -> dict[RatingBand, int]:
-    """Split `n` issuers across bands by largest remainder, ties broken by band order."""
-    raw = {band: n * shares[band] for band in _CREDIT_BAND_ORDER}
-    counts = {band: math.floor(raw[band]) for band in _CREDIT_BAND_ORDER}
-    remainder = n - sum(counts.values())
-    # Round the remainder before ranking: float noise (e.g. 45 * 0.35 != 15.75
-    # exactly) can otherwise separate what should be an exact tie, letting it
-    # override the band-order tie-break.
-    ranked = sorted(
-        _CREDIT_BAND_ORDER,
-        key=lambda band: (-round(raw[band] - counts[band], 9), _CREDIT_BAND_ORDER.index(band)),
-    )
-    for band in ranked[:remainder]:
-        counts[band] += 1
-    return counts
 
 
 def _build_equities(config: Config, rng: np.random.Generator) -> list[Instrument]:
@@ -71,7 +52,7 @@ def _build_equities(config: Config, rng: np.random.Generator) -> list[Instrument
 def _build_credit(config: Config, rng: np.random.Generator) -> list[Instrument]:
     universe = config.market.universe
     n = universe.n_credit_issuers
-    counts = _credit_band_counts(n, universe.credit_band_shares)
+    counts = largest_remainder(n, universe.credit_band_shares, _CREDIT_BAND_ORDER)
 
     issuers: list[tuple[str, str, RatingBand]] = []
     ig_counter = 0

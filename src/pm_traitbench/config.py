@@ -20,7 +20,13 @@ from pm_traitbench.enums import (
     Regime,
 )
 from pm_traitbench.errors import ConfigError
-from pm_traitbench.market.constants import COMMODITIES, FX_PAIRS, HORIZON_DAYS_PER_YEAR, USD_PAIR
+from pm_traitbench.market.constants import (
+    COMMODITIES,
+    FX_PAIRS,
+    HORIZON_DAYS_PER_YEAR,
+    USD_PAIR,
+    largest_remainder,
+)
 from pm_traitbench.timeline import Timeline
 
 BIAS_PARAMS: tuple[str, ...] = (
@@ -446,7 +452,7 @@ class MarketUniverseConfig(BaseModel):
 
     n_equities: int = Field(
         80,
-        ge=0,
+        gt=0,
         json_schema_extra={"basis": "design", "note": "size of the simulated equity universe"},
     )
     n_sectors: int = Field(
@@ -460,7 +466,7 @@ class MarketUniverseConfig(BaseModel):
     )
     n_credit_issuers: int = Field(
         48,
-        ge=0,
+        gt=0,
         json_schema_extra={
             "basis": "design",
             "note": "size of the simulated credit issuer universe",
@@ -549,6 +555,15 @@ class MarketUniverseConfig(BaseModel):
             raise ValueError("credit_band_shares must have a positive investment-grade share")
         return value
 
+    @field_validator("curves")
+    @classmethod
+    def _check_curves(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("curves must not be empty")
+        if len(set(value)) != len(value):
+            raise ValueError(f"curves must not repeat an entry: {list(value)}")
+        return value
+
     @field_validator("commodities")
     @classmethod
     def _check_commodities(cls, value: dict[CommodityGroup, int]) -> dict[CommodityGroup, int]:
@@ -558,16 +573,22 @@ class MarketUniverseConfig(BaseModel):
             max_n = len(COMMODITIES[group])
             if not (0 <= n <= max_n):
                 raise ValueError(f"commodities[{group}] must be between 0 and {max_n}")
+        if sum(value.values()) == 0:
+            raise ValueError("commodities must include at least one commodity")
         return value
 
     @field_validator("fx_pairs")
     @classmethod
     def _check_fx_pairs(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("fx_pairs must not be empty")
         unknown = set(value) - set(FX_PAIRS)
         if unknown:
             raise ValueError(f"fx_pairs has unknown pair(s): {sorted(unknown)}")
         if len(set(value)) != len(value):
             raise ValueError(f"fx_pairs must not repeat an entry: {list(value)}")
+        if not set(value) & set(USD_PAIR.values()):
+            raise ValueError("fx_pairs must include at least one USD pair")
         return value
 
     @field_validator("equity_beta_range", "credit_duration_range")
@@ -577,6 +598,18 @@ class MarketUniverseConfig(BaseModel):
         if not (0 < lo <= hi):
             raise ValueError("range must have 0 < lo <= hi")
         return value
+
+    @model_validator(mode="after")
+    def _check_credit_band_allocation(self) -> "MarketUniverseConfig":
+        counts = largest_remainder(
+            self.n_credit_issuers, self.credit_band_shares, tuple(RatingBand)
+        )
+        ig_bands = set(RatingBand) - HY_BANDS
+        if sum(counts[band] for band in ig_bands) == 0:
+            raise ValueError(
+                "n_credit_issuers and credit_band_shares leave zero investment-grade issuers"
+            )
+        return self
 
 
 class MarketRegimesConfig(BaseModel):
@@ -1286,7 +1319,7 @@ class MarketConfig(BaseModel):
     )
     burn_in_days: int = Field(
         60,
-        ge=0,
+        ge=1,
         json_schema_extra={
             "basis": "design",
             "note": "days of warm-up simulated before the first published day",
