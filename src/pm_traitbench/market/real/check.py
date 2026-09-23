@@ -1,7 +1,8 @@
 """Real-market data-quality check: a real seed has no model targets, so every
 metric here reports a realised value rather than checking it against an
 implied one, except for the fixed structural checks (finiteness, positivity,
-fill runs and calendar counts) that must hold regardless of the source data.
+flatness, fill runs and calendar counts) that must hold regardless of the
+source data.
 """
 
 from bisect import bisect_right
@@ -19,7 +20,7 @@ from pm_traitbench.market.check import (
     family_indices,
 )
 from pm_traitbench.market.constants import ANNUALISATION_DAYS
-from pm_traitbench.market.real.sources import REFERENCE_EQUITY
+from pm_traitbench.market.real.sources import CURVE_SERIES, REFERENCE_EQUITY
 from pm_traitbench.market.seed import SeedMarket
 from pm_traitbench.tables.schema import Instrument
 
@@ -88,6 +89,31 @@ def _positive_metrics(
     return metrics
 
 
+def _floored_metrics(
+    market: SeedMarket, instrument_by_id: dict[str, Instrument], config: Config
+) -> list[CheckMetric]:
+    """Reported only: how many days each yield curve tenor sits at the floor."""
+    floor = config.market.levels.yield_floor_pct
+    metrics = []
+    for name, family, values, is_yield in _instrument_series(market, instrument_by_id):
+        if not is_yield:
+            continue
+        realised = float(np.sum(values <= floor))
+        metrics.append(
+            CheckMetric(
+                seed=market.seed,
+                regime=None,
+                family=family,
+                metric=f"floored:{name}",
+                target=realised,
+                realised=realised,
+                tolerance=0.0,
+                passed=True,
+            )
+        )
+    return metrics
+
+
 def _fill_family(name: str, instrument_by_id: dict[str, Instrument]) -> Family:
     """A fill-run key's family: an instrument's own family where the key is
     one, else SPY (equities), DGS20 (the credit spread base) or a Treasury
@@ -99,7 +125,9 @@ def _fill_family(name: str, instrument_by_id: dict[str, Instrument]) -> Family:
         return Family.EQUITIES
     if name == "DGS20":
         return Family.CREDIT
-    return Family.RATES
+    if name in CURVE_SERIES.values():
+        return Family.RATES
+    raise ValueError(f"fill-run key '{name}' is not a known instrument or reference series")
 
 
 def _fill_run_metrics(
@@ -115,7 +143,7 @@ def _fill_run_metrics(
                 metric=f"fill_run:{name}",
                 target=float(REAL_FILL_LIMIT),
                 realised=float(longest_run),
-                tolerance=float(REAL_FILL_LIMIT),
+                tolerance=0.0,
                 passed=longest_run <= REAL_FILL_LIMIT,
             )
         )
@@ -155,7 +183,7 @@ def _earnings_spacing_metrics(
                 metric=f"earnings_spacing:{instrument_id}",
                 target=float(MIN_EARNINGS_GAP_DAYS),
                 realised=realised,
-                tolerance=float(MIN_EARNINGS_GAP_DAYS),
+                tolerance=0.0,
                 passed=passed,
             )
         )
@@ -165,16 +193,16 @@ def _earnings_spacing_metrics(
 def _realised_moment_metrics(
     market: SeedMarket, instruments: Sequence[Instrument]
 ) -> list[CheckMetric]:
-    """Realised annualised vol and correlation with `z`, per regime span and
-    family, reported for information only: target is set equal to realised.
+    """Per regime span and family: `vol` and `corr` with `z`, reported for
+    information only (target set equal to realised), and `flat` - a family
+    index constant over a span is a data problem, checked against zero.
     """
     indices = family_indices(market, instruments)
     metrics = []
     for span in market.schedule:
         a = market.axis.index(span.date_start)
-        # A real span's date_end can fall on a weekend (the day before the
-        # next span's mapped start); the axis holds weekdays only, so slice
-        # up to the last axis day at or before it.
+        # A real span's date_end can fall on a weekend; the axis holds
+        # weekdays only, so slice up to the last axis day at or before it.
         b = bisect_right(market.axis.dates, span.date_end) - 1
         z_window = market.z[a : b + 1]
         for family in Family:
@@ -193,9 +221,19 @@ def _realised_moment_metrics(
                     passed=True,
                 )
             )
-            # A floored (e.g. curve-pinned) index can be constant over a span; its
-            # correlation with `z` is undefined, so report it as zero rather than
-            # dividing by a zero standard deviation.
+            metrics.append(
+                CheckMetric(
+                    seed=market.seed,
+                    regime=span.regime,
+                    family=family,
+                    metric=f"flat:{family.value}",
+                    target=0.0,
+                    realised=float(std),
+                    tolerance=0.0,
+                    passed=bool(std > 0),
+                )
+            )
+            # Guards only the divide; a flat index already fails via `flat` above.
             corr = float(np.corrcoef(changes, z_window)[0, 1]) if std > 0 else 0.0
             metrics.append(
                 CheckMetric(
@@ -224,6 +262,7 @@ def check_real_market(
 
     metrics.extend(_finite_metrics(market, instrument_by_id))
     metrics.extend(_positive_metrics(market, instrument_by_id, config))
+    metrics.extend(_floored_metrics(market, instrument_by_id, config))
     metrics.extend(_fill_run_metrics(market, instrument_by_id))
     metrics.extend(count_metrics(market, instruments))
     metrics.extend(_earnings_spacing_metrics(market, instruments))

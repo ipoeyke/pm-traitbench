@@ -29,6 +29,17 @@ _REPORT_BAND_LO = 20
 _REPORT_BAND_HI = 40
 _MIN_REPORT_GAP_WEEKDAYS = 40
 
+# Realistic starting yields (percent) so a curve tenor never nears the 0.0
+# floor; steps are scaled to about 0.05 percentage points a day.
+_TREASURY_START_PCT: dict[str, float] = {
+    "DGS2": 2.5,
+    "DGS5": 2.7,
+    "DGS10": 2.9,
+    "DGS20": 3.0,
+    "DGS30": 3.1,
+}
+_TREASURY_STEP_PCT = 0.05
+
 
 def _fake_opener(files: dict[str, bytes]) -> Callable[[str], bytes]:
     """An opener returning canned bytes for known URLs, failing loudly on any other."""
@@ -159,9 +170,9 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
     calendar quarter, each report at least 40 weekdays from its neighbours,
     with the first equity ticker's report in the holiday's quarter moved
     onto the holiday weekday itself (replacing, not duplicating, that
-    ticker's report for that quarter, and shifting its neighbouring
-    quarters' reports to keep the spacing) rather than any weekend date,
-    since a real cache never holds a weekend file.
+    ticker's report for that quarter); only the following quarter's band
+    carries forward to keep the spacing, never the preceding one, rather
+    than any weekend date, since a real cache never holds a weekend file.
     """
 
     def _build(config: Config) -> FakeCache:
@@ -173,9 +184,13 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
         real_seeds = {name: spec for name, spec in config.market.real.seeds.items() if name in used}
         nasdaq_day_set: set[date] = set()
         quarters: list[tuple[date, date]] = []
+        # Where each seed's own quarters start in `quarters`, so the spacing
+        # carry-forward below never bridges two non-adjacent seed windows.
+        seed_starts: set[int] = set()
         for spec in real_seeds.values():
             window_end = real_window_end(spec, config.calendar.n_weeks)
             nasdaq_day_set.update(_weekdays(spec.window_start, window_end))
+            seed_starts.add(len(quarters))
             quarters.extend(_quarters_overlapping(spec.window_start, window_end))
         nasdaq_days = sorted(nasdaq_day_set)
 
@@ -193,7 +208,11 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
         # their own draw into a walk differs.
         draws = {series: rng.normal(0, 1, size=len(series_days)) for series in fred_series()}
         walks = {
-            series: 100.0 + np.cumsum(draw)
+            series: (
+                _TREASURY_START_PCT[series] + _TREASURY_STEP_PCT * np.cumsum(draw)
+                if series in _TREASURY_START_PCT
+                else 100.0 + np.cumsum(draw)
+            )
             for series, draw in draws.items()
             if series not in _CREDIT_SERIES
         }
@@ -253,16 +272,22 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
             prev_pos: int | None = None
             prev_len: int | None = None
             for qi, (q_start, q_end) in enumerate(quarters):
+                if qi in seed_starts:
+                    prev_pos, prev_len = None, None
                 candidates = _weekdays(q_start, q_end)
                 n = len(candidates)
                 lo, hi = _clamped_band(n)
                 if prev_pos is not None:
-                    # Carry the previous quarter's position forward so this
-                    # quarter's report stays >= the minimum gap away, even
-                    # after a pinned holiday report pushed the previous one
-                    # outside the plain band.
-                    lo = max(lo, _MIN_REPORT_GAP_WEEKDAYS - prev_len + prev_pos)
-                    lo = min(lo, n - 1)
+                    # Carry the previous position forward so this report stays
+                    # >= the minimum gap away.
+                    min_needed = _MIN_REPORT_GAP_WEEKDAYS - prev_len + prev_pos
+                    if min_needed > n - 1:
+                        raise AssertionError(
+                            f"quarter {qi} for {ticker} has only {n} weekdays, too few to "
+                            f"keep a >= {_MIN_REPORT_GAP_WEEKDAYS}-weekday gap from the "
+                            "previous report"
+                        )
+                    lo = max(lo, min_needed)
                     hi = max(min(hi, n), lo + 1)
                 if ticker == target_ticker and qi == holiday_quarter_index:
                     report_day = holiday
