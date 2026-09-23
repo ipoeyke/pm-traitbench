@@ -11,11 +11,10 @@ from typing import Any
 import numpy as np
 
 from pm_traitbench.enums import (
-    HY_BANDS,
+    IG_BANDS,
     EventType,
     Family,
     InstrumentKind,
-    RatingBand,
     Regime,
     Tenor,
 )
@@ -26,7 +25,6 @@ from pm_traitbench.market.output import ProcessOutput
 from pm_traitbench.market.seed import SeedMarket
 from pm_traitbench.tables.schema import Instrument
 
-_IG_BANDS = set(RatingBand) - HY_BANDS
 # macro_print has no single target instrument; its count metric carries no family.
 _EVENT_FAMILY: dict[EventType, Family | None] = {
     EventType.EARNINGS: Family.EQUITIES,
@@ -79,7 +77,7 @@ class CheckReport:
         }
 
 
-def _fx_currencies(instruments: Sequence[Instrument]) -> list[str]:
+def fx_currencies(instruments: Sequence[Instrument]) -> list[str]:
     """Non-USD currencies whose USD pair is configured, sorted for determinism."""
     pairs_present = {
         i.instrument_id.removeprefix("FX-") for i in instruments if i.family == Family.FX
@@ -117,9 +115,7 @@ def family_indices(
     curves = [i for i in instruments if i.kind == InstrumentKind.SOVEREIGN_CURVE]
     y10_level = np.array([output.curves[(c.instrument_id, Tenor.Y10)] for c in curves]).mean(axis=0)
 
-    ig_issuers = [
-        i for i in instruments if i.family == Family.CREDIT and i.rating_band in _IG_BANDS
-    ]
+    ig_issuers = [i for i in instruments if i.family == Family.CREDIT and i.rating_band in IG_BANDS]
     credit_level = np.log(
         np.array([output.spreads[i.instrument_id] for i in ig_issuers]).mean(axis=0)
     )
@@ -129,7 +125,7 @@ def family_indices(
         axis=0
     )
 
-    currencies = _fx_currencies(instruments)
+    currencies = fx_currencies(instruments)
     fx_level = np.array([_fx_currency_log_value(output, ccy) for ccy in currencies]).mean(axis=0)
 
     return {

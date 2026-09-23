@@ -16,13 +16,14 @@ from pm_traitbench.market.seed import SeedMarket, to_rows
 def _market(config: Config) -> SeedMarket:
     axis = build_axis(config.timeline(), config.market.burn_in_days)
     path = constant_path(Regime.RANGE, axis.n_days, config)
+    output = ProcessOutput(prices={"EQ-0001": 100.0 + np.arange(axis.n_days, dtype=float)})
     return SeedMarket(
         seed="A",
         axis=axis,
         schedule=[],
         path=path,
         z=np.zeros(axis.n_days),
-        output=ProcessOutput(),
+        output=output,
         calendar=[],
         drawn_events={},
         consensus=ConsensusResult(
@@ -37,4 +38,7 @@ def test_fills_defaults_to_empty_and_to_rows_ignores_it() -> None:
 
     filled = dataclasses.replace(market, fills={"EQ-0001": 3})
     assert filled.fills == {"EQ-0001": 3}
-    assert to_rows(filled) == to_rows(market)
+
+    rows = to_rows(filled)
+    assert rows.prices  # a real price series makes the equality below meaningful
+    assert rows == to_rows(market)

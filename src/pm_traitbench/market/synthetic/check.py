@@ -13,29 +13,19 @@ from collections.abc import Sequence
 import numpy as np
 
 from pm_traitbench.config import Config, RegimeParams
-from pm_traitbench.enums import HY_BANDS, Family, InstrumentKind, RatingBand, Regime, Tenor
+from pm_traitbench.enums import IG_BANDS, Family, InstrumentKind, Regime, Tenor
 from pm_traitbench.market.check import (
     CheckMetric,
     CheckReport,
     check_error,
     count_metrics,
     family_indices,
+    fx_currencies,
 )
-from pm_traitbench.market.constants import ANNUALISATION_DAYS, FX_PAIRS, USD_PAIR
+from pm_traitbench.market.constants import ANNUALISATION_DAYS
 from pm_traitbench.market.seed import SeedMarket
 from pm_traitbench.market.synthetic.processes.common import log_grid_step, nearest_level
 from pm_traitbench.tables.schema import Instrument
-
-_IG_BANDS = set(RatingBand) - HY_BANDS
-
-
-def _fx_currencies(instruments: Sequence[Instrument]) -> list[str]:
-    """Non-USD currencies whose USD pair is configured, sorted for determinism."""
-    pairs_present = {
-        i.instrument_id.removeprefix("FX-") for i in instruments if i.family == Family.FX
-    }
-    currencies = sorted({ccy for code in pairs_present for ccy in FX_PAIRS[code] if ccy != "USD"})
-    return [ccy for ccy in currencies if USD_PAIR.get(ccy) in pairs_present]
 
 
 def implied_moments(
@@ -64,7 +54,7 @@ def implied_moments(
         independent = np.sum(sigma_c**2) * (1 - c**2) / n**2 + 0.15**2 * cfg.slope_vol_bp**2 / n
     elif family == Family.CREDIT:
         n_ig = sum(
-            1 for i in instruments if i.family == Family.CREDIT and i.rating_band in _IG_BANDS
+            1 for i in instruments if i.family == Family.CREDIT and i.rating_band in IG_BANDS
         )
         cfg = families.credit
         a, c = cfg.asymmetry, cfg.driver_corr
@@ -91,7 +81,7 @@ def implied_moments(
             for g, n_g in group_counts.items()
         )
     elif family == Family.FX:
-        currencies = _fx_currencies(instruments)
+        currencies = fx_currencies(instruments)
         n = len(currencies)
         cfg = families.fx
         loading = float(np.mean([cfg.currency_vol[c] * cfg.driver_corr[c] for c in currencies]))

@@ -9,7 +9,6 @@ from pm_traitbench.config import Config
 from pm_traitbench.enums import EventType, Family, InstrumentKind
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.market.synthetic.events import EVENT_TARGETS, build_jumps, sample_events
-from pm_traitbench.market.synthetic.universe import build_universe
 from pm_traitbench.rng import stream
 from pm_traitbench.tables.schema import CalendarEvent, Instrument
 
@@ -35,15 +34,9 @@ def _rng_for(root: int):
     return functools.partial(stream, root, "market")
 
 
-def _build(config: Config, root: int):
-    axis = build_axis(config.timeline(), config.market.burn_in_days)
-    instruments = build_universe(config, stream(root, "market", "universe"))
-    return axis, instruments
-
-
-def _long_sample():
+def _long_sample(build_axis_and_universe):
     config = _long_config()
-    axis, instruments = _build(config, _LONG_ROOT)
+    axis, instruments = build_axis_and_universe(config, _LONG_ROOT)
     result = sample_events(instruments, axis, config, _rng_for(_LONG_ROOT), "A")
     return config, axis, instruments, result
 
@@ -54,8 +47,10 @@ def _row_count(rows: list[CalendarEvent], event: EventType, target_key: str) -> 
     return sum(1 for row in rows if row.event == event and row.instrument_id == target_key)
 
 
-def test_grid_counts_are_exact_and_poisson_counts_are_within_tolerance() -> None:
-    config, axis, instruments, result = _long_sample()
+def test_grid_counts_are_exact_and_poisson_counts_are_within_tolerance(
+    build_axis_and_universe,
+) -> None:
+    config, axis, instruments, result = _long_sample(build_axis_and_universe)
     years = (axis.n_days - axis.n_burn) / 260
 
     for event, spec in config.market.events.items():
@@ -77,8 +72,8 @@ def test_grid_counts_are_exact_and_poisson_counts_are_within_tolerance() -> None
             assert abs(actual - mu) <= 4 * mu**0.5
 
 
-def test_earnings_exact_count_per_equity_with_unique_dates() -> None:
-    config, axis, instruments, result = _long_sample()
+def test_earnings_exact_count_per_equity_with_unique_dates(build_axis_and_universe) -> None:
+    config, axis, instruments, result = _long_sample(build_axis_and_universe)
     years = (axis.n_days - axis.n_burn) / 260
     expected_count = round(4 * years)
 
@@ -94,8 +89,8 @@ def test_earnings_exact_count_per_equity_with_unique_dates() -> None:
         assert len(set(dates)) == len(dates)
 
 
-def test_rating_sign_matches_label_and_surprises_are_bounded() -> None:
-    _, _, _, result = _long_sample()
+def test_rating_sign_matches_label_and_surprises_are_bounded(build_axis_and_universe) -> None:
+    _, _, _, result = _long_sample(build_axis_and_universe)
     for row in result.rows:
         if row.surprise is not None:
             assert -1 <= row.surprise <= 1
@@ -105,28 +100,30 @@ def test_rating_sign_matches_label_and_surprises_are_bounded() -> None:
             assert row.surprise > 0
 
 
-def test_two_sided_event_types_produce_both_signs() -> None:
-    _, _, _, result = _long_sample()
+def test_two_sided_event_types_produce_both_signs(build_axis_and_universe) -> None:
+    _, _, _, result = _long_sample(build_axis_and_universe)
     for event in _TWO_SIDED_EVENTS:
         surprises = [row.surprise for row in result.rows if row.event == event]
         assert any(s > 0 for s in surprises)
         assert any(s < 0 for s in surprises)
 
 
-def test_no_sampled_row_dated_before_calendar_start() -> None:
-    config, _, _, result = _long_sample()
+def test_no_sampled_row_dated_before_calendar_start(build_axis_and_universe) -> None:
+    config, _, _, result = _long_sample(build_axis_and_universe)
     assert all(row.date >= config.calendar.start for row in result.rows)
 
 
-def test_drawn_counts_equal_row_counts_per_type() -> None:
-    config, _, _, result = _long_sample()
+def test_drawn_counts_equal_row_counts_per_type(build_axis_and_universe) -> None:
+    config, _, _, result = _long_sample(build_axis_and_universe)
     for event in config.market.events:
         assert result.drawn[event] == sum(1 for row in result.rows if row.event == event)
 
 
-def test_same_root_different_market_seeds_share_dates_but_not_surprises() -> None:
+def test_same_root_different_market_seeds_share_dates_but_not_surprises(
+    build_axis_and_universe,
+) -> None:
     config = Config()
-    axis, instruments = _build(config, 1)
+    axis, instruments = build_axis_and_universe(config, 1)
     rng_for = _rng_for(1)
     result_a = sample_events(instruments, axis, config, rng_for, "A")
     result_b = sample_events(instruments, axis, config, rng_for, "B")

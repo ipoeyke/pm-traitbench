@@ -8,37 +8,10 @@ import json
 import numpy as np
 import pytest
 
-from pm_traitbench.config import Config
 from pm_traitbench.enums import EventType, Family
 from pm_traitbench.errors import MarketCheckError
-from pm_traitbench.market.axis import SimAxis, build_axis
 from pm_traitbench.market.check import CheckReport, family_indices
-from pm_traitbench.market.seed import SeedMarket
-from pm_traitbench.market.synthetic.build import build_seed
 from pm_traitbench.market.synthetic.check import check_market
-from pm_traitbench.market.synthetic.drivers import DriverShocks, draw_shocks
-from pm_traitbench.market.synthetic.universe import build_universe
-from pm_traitbench.rng import stream
-from pm_traitbench.tables.schema import Instrument
-
-
-@pytest.fixture(scope="module")
-def universe() -> tuple[Config, tuple[Instrument, ...], SimAxis, DriverShocks]:
-    """The default config, full default universe, axis and driver shocks, shared across seeds."""
-    config = Config()
-    axis = build_axis(config.timeline(), config.market.burn_in_days)
-    instruments = tuple(build_universe(config, stream(config.seed.root, "market", "universe")))
-    shocks = draw_shocks(config.seed.root, axis.n_days)
-    return config, instruments, axis, shocks
-
-
-@pytest.fixture(scope="module")
-def markets(universe) -> dict[str, SeedMarket]:
-    """Every default seed, generated once for the whole module."""
-    config, instruments, axis, shocks = universe
-    return {
-        seed: build_seed(config, seed, instruments, shocks, axis) for seed in config.market.seeds
-    }
 
 
 def test_dropped_positioning_report_row_raises_naming_the_count_metric(universe, markets) -> None:

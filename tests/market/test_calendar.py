@@ -6,15 +6,7 @@ from pm_traitbench.config import Config
 from pm_traitbench.enums import EventType, Family
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.market.calendar import event_day_indices, generated_rows, third_friday
-from pm_traitbench.market.synthetic.universe import build_universe
-from pm_traitbench.rng import stream
 from pm_traitbench.tables.schema import CalendarEvent
-
-
-def _build(config: Config, root: int):
-    axis = build_axis(config.timeline(), config.market.burn_in_days)
-    instruments = build_universe(config, stream(root, "market", "universe"))
-    return axis, instruments
 
 
 def test_third_friday_is_a_friday_in_the_third_week() -> None:
@@ -23,9 +15,9 @@ def test_third_friday_is_a_friday_in_the_third_week() -> None:
     assert 15 <= friday.day <= 21
 
 
-def test_generated_rows_contract_expiry_and_positioning_report() -> None:
+def test_generated_rows_contract_expiry_and_positioning_report(build_axis_and_universe) -> None:
     config = Config()
-    axis, instruments = _build(config, 1)
+    axis, instruments = build_axis_and_universe(config, 1)
     rows = generated_rows(instruments, axis, "A")
 
     commodities = [i for i in instruments if i.family == Family.COMMODITIES]
