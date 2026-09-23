@@ -8,10 +8,18 @@ import math
 from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass
 
-from pm_traitbench.enums import CommodityGroup
+from pm_traitbench.enums import CommodityGroup, RatingBand
 
 HORIZON_DAYS_PER_YEAR = 260
 ANNUALISATION_DAYS = 252
+
+CREDIT_BAND_ORDER: tuple[RatingBand, ...] = (
+    RatingBand.AA,
+    RatingBand.A,
+    RatingBand.BBB,
+    RatingBand.BB,
+    RatingBand.B,
+)
 
 
 def largest_remainder[K: Hashable](

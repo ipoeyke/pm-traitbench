@@ -22,6 +22,7 @@ from pm_traitbench.enums import (
 from pm_traitbench.errors import ConfigError
 from pm_traitbench.market.constants import (
     COMMODITIES,
+    CREDIT_BAND_ORDER,
     FX_PAIRS,
     HORIZON_DAYS_PER_YEAR,
     USD_PAIR,
@@ -602,7 +603,7 @@ class MarketUniverseConfig(BaseModel):
     @model_validator(mode="after")
     def _check_credit_band_allocation(self) -> "MarketUniverseConfig":
         counts = largest_remainder(
-            self.n_credit_issuers, self.credit_band_shares, tuple(RatingBand)
+            self.n_credit_issuers, self.credit_band_shares, CREDIT_BAND_ORDER
         )
         ig_bands = set(RatingBand) - HY_BANDS
         if sum(counts[band] for band in ig_bands) == 0:

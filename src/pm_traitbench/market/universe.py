@@ -9,16 +9,14 @@ import numpy as np
 
 from pm_traitbench.config import Config
 from pm_traitbench.enums import HY_BANDS, CommodityGroup, Family, InstrumentKind, RatingBand
-from pm_traitbench.market.constants import COMMODITIES, FX_PAIRS, largest_remainder, sector_label
-from pm_traitbench.tables.schema import Instrument
-
-_CREDIT_BAND_ORDER: tuple[RatingBand, ...] = (
-    RatingBand.AA,
-    RatingBand.A,
-    RatingBand.BBB,
-    RatingBand.BB,
-    RatingBand.B,
+from pm_traitbench.market.constants import (
+    COMMODITIES,
+    CREDIT_BAND_ORDER,
+    FX_PAIRS,
+    largest_remainder,
+    sector_label,
 )
+from pm_traitbench.tables.schema import Instrument
 
 
 def _build_equities(config: Config, rng: np.random.Generator) -> list[Instrument]:
@@ -52,12 +50,12 @@ def _build_equities(config: Config, rng: np.random.Generator) -> list[Instrument
 def _build_credit(config: Config, rng: np.random.Generator) -> list[Instrument]:
     universe = config.market.universe
     n = universe.n_credit_issuers
-    counts = largest_remainder(n, universe.credit_band_shares, _CREDIT_BAND_ORDER)
+    counts = largest_remainder(n, universe.credit_band_shares, CREDIT_BAND_ORDER)
 
     issuers: list[tuple[str, str, RatingBand]] = []
     ig_counter = 0
     hy_counter = 0
-    for band in _CREDIT_BAND_ORDER:
+    for band in CREDIT_BAND_ORDER:
         for _ in range(counts[band]):
             if band in HY_BANDS:
                 hy_counter += 1
