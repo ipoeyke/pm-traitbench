@@ -2,7 +2,7 @@
 
 from collections import Counter
 
-from pm_traitbench.enums import CommodityGroup, Family, RatingBand
+from pm_traitbench.enums import CommodityGroup, Family, InstrumentKind, RatingBand
 from pm_traitbench.market.real.sources import (
     REAL_INSTRUMENTS,
     fred_series,
@@ -104,6 +104,8 @@ def test_curve_registry_entry() -> None:
     assert len(curves) == 1
     curve = curves[0]
     assert curve.instrument_id == "RT-USD"
+    assert curve.family == Family.RATES
+    assert curve.kind == InstrumentKind.SOVEREIGN_CURVE
     assert curve.series == "DGS10"
     assert curve.source == "fred"
 

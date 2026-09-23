@@ -1338,6 +1338,11 @@ class RealSeedSpec(BaseModel):
         return self
 
 
+def real_window_end(spec: RealSeedSpec, n_weeks: int) -> date:
+    """The exclusive end of a real seed's simulation window."""
+    return spec.window_start + timedelta(weeks=n_weeks)
+
+
 # A longer gap than a holiday week means the underlying series is broken, not thin.
 REAL_FILL_LIMIT = 5
 # So the axis's first day can still be filled forward from a value before the window.
@@ -1515,7 +1520,7 @@ class Config(BaseModel):
                 )
         n_weeks = self.calendar.n_weeks
         for seed_name, spec in self.market.real.seeds.items():
-            window_end = spec.window_start + timedelta(weeks=n_weeks)
+            window_end = real_window_end(spec, n_weeks)
             for regime, start in spec.regime_starts:
                 if not (spec.window_start <= start < window_end):
                     raise ValueError(

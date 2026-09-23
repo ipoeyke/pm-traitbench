@@ -96,7 +96,10 @@ def main(argv: list[str] | None = None, stages: Sequence[Stage] | None = None) -
             manifest = real_fetch.fetch_all(
                 config, args.data_dir, force=args.force, opener=real_fetch.urlopen_bytes
             )
-            print(f"fetched {len(manifest.entries)} files into {args.data_dir}")
+            if manifest.entries:
+                print(f"fetched {len(manifest.entries)} files into {args.data_dir}")
+            else:
+                print("no real market seeds configured")
             return 0
         store = DataStore(args.data_dir, config.output)
         run_stage(args.stage, config, store, force=args.force)

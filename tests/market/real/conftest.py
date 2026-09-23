@@ -4,6 +4,7 @@ used instead of the network by every test in this package.
 
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from pm_traitbench.config import Config
 from pm_traitbench.enums import Family
 from pm_traitbench.market.real.fetch import fetch_all, fetch_range, fred_url, nasdaq_url, yahoo_url
 from pm_traitbench.market.real.sources import REAL_INSTRUMENTS, fred_series, yahoo_tickers
+from pm_traitbench.market.stage import referenced_seeds
 
 
 def _fake_opener(files: dict[str, bytes]) -> Callable[[str], bytes]:
@@ -106,21 +108,29 @@ def _nasdaq_json(symbols: list[str]) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
+@dataclass(frozen=True)
+class FakeCache:
+    """A built fake raw cache: its data dir and the shared holiday-gap weekday."""
+
+    data_dir: Path
+    holiday: date
+
+
 @pytest.fixture
-def fake_cache(tmp_path: Path) -> Callable[[Config], Path]:
-    """Build a deterministic fake raw cache for `config`'s real seeds and return its data dir.
+def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
+    """Build a deterministic fake raw cache for `config`'s real seeds.
 
     Covers SPY and every registry series over the fetch range. FRED and Yahoo
     share one holiday-gap weekday: FRED keeps the row with an empty value
     (its real convention), Yahoo omits the row entirely. Yahoo timestamps sit
     at 13:30 UTC. The Nasdaq calendar has every equity ticker reporting once
-    per calendar quarter, with one ticker's report in the holiday's quarter
-    moved onto the holiday weekday itself (replacing, not duplicating, that
-    ticker's report for that quarter) rather than any weekend date, since a
-    real cache never holds a weekend file.
+    per calendar quarter, with the first equity ticker's report in the
+    holiday's quarter moved onto the holiday weekday itself (replacing, not
+    duplicating, that ticker's report for that quarter) rather than any
+    weekend date, since a real cache never holds a weekend file.
     """
 
-    def _build(config: Config) -> Path:
+    def _build(config: Config) -> FakeCache:
         data_dir = tmp_path / "data"
         start, end = fetch_range(config)
         weekdays = _weekdays(start, end)
@@ -140,7 +150,8 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], Path]:
             values = dict(zip(series_days, walk, strict=True))
             files[yahoo_url(ticker, start, end)] = _yahoo_json(values)
 
-        real_seeds = config.market.real.seeds
+        used = set(referenced_seeds(config))
+        real_seeds = {name: spec for name, spec in config.market.real.seeds.items() if name in used}
         first_seed = next(iter(real_seeds.values()))
         window_end = first_seed.window_start + timedelta(weeks=config.calendar.n_weeks)
         nasdaq_days = _weekdays(first_seed.window_start, window_end)
@@ -168,6 +179,6 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], Path]:
             files[nasdaq_url(day)] = _nasdaq_json(symbols_by_date.get(day, []))
 
         fetch_all(config, data_dir, opener=_fake_opener(files), sleeper=lambda _: None)
-        return data_dir
+        return FakeCache(data_dir=data_dir, holiday=holiday)
 
     return _build

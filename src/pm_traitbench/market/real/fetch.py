@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from pm_traitbench.config import (
     REAL_FETCH_BUFFER_DAYS,
@@ -21,9 +21,11 @@ from pm_traitbench.config import (
     REAL_RETRIES,
     Config,
     RealSeedSpec,
+    real_window_end,
 )
 from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.real.sources import fred_series, yahoo_tickers
+from pm_traitbench.market.stage import referenced_seeds
 
 Opener = Callable[[str], bytes]
 
@@ -79,28 +81,32 @@ def _weekdays_before(day: date, n: int) -> date:
     return current
 
 
-def _window_end(spec: RealSeedSpec, n_weeks: int) -> date:
-    return spec.window_start + timedelta(weeks=n_weeks)
+def _referenced_real_seeds(config: Config) -> dict[str, RealSeedSpec]:
+    """Real seeds the population's pilot/full market-seed lists use."""
+    used = set(referenced_seeds(config))
+    return {name: spec for name, spec in config.market.real.seeds.items() if name in used}
 
 
 def fetch_range(config: Config) -> tuple[date, date]:
-    """Union over real seeds of (burn-in start minus the fetch buffer, window end)."""
-    seeds = config.market.real.seeds
+    """Union over referenced real seeds of (burn-in start minus the fetch buffer,
+    window end). Falls back to the calendar start when no real seed is referenced.
+    """
+    seeds = _referenced_real_seeds(config)
     if not seeds:
         return (config.calendar.start, config.calendar.start)
     back = config.market.burn_in_days + REAL_FETCH_BUFFER_DAYS
     starts = [_weekdays_before(spec.window_start, back) for spec in seeds.values()]
-    ends = [_window_end(spec, config.calendar.n_weeks) for spec in seeds.values()]
+    ends = [real_window_end(spec, config.calendar.n_weeks) for spec in seeds.values()]
     return (min(starts), max(ends))
 
 
 def _nasdaq_days(config: Config) -> list[date]:
-    """Every weekday from the first real seed's window start to its window end."""
-    seeds = config.market.real.seeds
+    """Every weekday from the first referenced real seed's window start to its end."""
+    seeds = _referenced_real_seeds(config)
     if not seeds:
         return []
     first = next(iter(seeds.values()))
-    end = _window_end(first, config.calendar.n_weeks)
+    end = real_window_end(first, config.calendar.n_weeks)
     days = []
     day = first.window_start
     while day <= end:
@@ -166,14 +172,24 @@ def _fetch_with_retry(
             sleeper(interval * 2**attempt)
             attempt += 1
             continue
-        except (OSError, http.client.IncompleteRead) as e:
-            # Timeouts, connection resets, incomplete reads and other transient
-            # network failures (URLError is itself an OSError) retry like a 5xx.
+        except URLError as e:
+            # Only a timeout or connection failure wrapped in a URLError is
+            # transient; anything else (SSL, DNS...) raises at once below.
+            transient = isinstance(e.reason, TimeoutError | ConnectionError)
+            if not transient or attempt >= REAL_RETRIES - 1:
+                raise StageIOError(f"{label}: fetch failed ({e.reason})") from e
+            sleeper(interval * 2**attempt)
+            attempt += 1
+            continue
+        except (TimeoutError, ConnectionError, http.client.IncompleteRead) as e:
             if attempt >= REAL_RETRIES - 1:
                 raise StageIOError(f"{label}: fetch failed ({e})") from e
             sleeper(interval * 2**attempt)
             attempt += 1
             continue
+        except OSError as e:
+            # A non-transient OSError (permission, DNS, SSL...) never retries.
+            raise StageIOError(f"{label}: fetch failed ({e})") from e
         sleeper(interval)
         return body
 
@@ -228,21 +244,32 @@ def _load_old_manifest(data_dir: Path) -> Manifest | None:
     return _read_manifest(path)
 
 
+def _write_manifest(root: Path, manifest: Manifest) -> None:
+    manifest_path = root / "manifest.json"
+    tmp_path = manifest_path.with_name(manifest_path.name + ".tmp")
+    tmp_path.write_text(manifest.to_json(), encoding="utf-8")
+    os.replace(tmp_path, manifest_path)
+
+
 def fetch_all(
     config: Config,
     data_dir: Path,
     *,
     force: bool = False,
     opener: Opener = urlopen_bytes,
-    sleeper: Callable[[float], None] = time.sleep,
+    sleeper: Callable[[float], None] | None = None,
 ) -> Manifest:
     """Fetch every real-market raw series into the cache and write its manifest.
 
-    Without `force`, a file already on disk whose sha256 still matches the
-    previous manifest is kept and not refetched; with `force` every file is
-    refetched. Requests are spaced `REAL_REQUEST_INTERVAL_S` apart, with
-    exponential backoff on a retryable HTTP failure.
+    Without `force`, a file already on disk whose sha256 and URL still match
+    the previous manifest is kept and not refetched; with `force` every file
+    is refetched. Requests are spaced `REAL_REQUEST_INTERVAL_S` apart, with
+    exponential backoff on a retryable failure. The manifest is checkpointed
+    after every file, so a failure partway through keeps prior progress.
+    When no real seed is referenced by the population's market seeds, no
+    file is fetched and an empty manifest is written.
     """
+    sleep = sleeper if sleeper is not None else time.sleep
     root = cache_dir(data_dir)
     for sub in ("fred", "yahoo", "nasdaq"):
         (root / sub).mkdir(parents=True, exist_ok=True)
@@ -252,46 +279,48 @@ def fetch_all(
     old_by_path = {entry.path: entry for entry in old.entries} if old else {}
 
     tasks: list[tuple[str, str, str]] = []
-    for series in fred_series():
-        tasks.append((f"fred/{series}.csv", fred_url(series, start, end), series))
-    for ticker in yahoo_tickers():
-        tasks.append((f"yahoo/{ticker}.json", yahoo_url(ticker, start, end), ticker))
-    for day in _nasdaq_days(config):
-        label = day.isoformat()
-        tasks.append((f"nasdaq/{label}.json", nasdaq_url(day), label))
+    if _referenced_real_seeds(config):
+        for series in fred_series():
+            tasks.append((f"fred/{series}.csv", fred_url(series, start, end), series))
+        for ticker in yahoo_tickers():
+            tasks.append((f"yahoo/{ticker}.json", yahoo_url(ticker, start, end), ticker))
+        for day in _nasdaq_days(config):
+            label = day.isoformat()
+            tasks.append((f"nasdaq/{label}.json", nasdaq_url(day), label))
 
     entries: list[ManifestEntry] = []
     for rel_path, url, label in tasks:
         full_path = root / rel_path
         old_entry = old_by_path.get(rel_path)
+        entry: ManifestEntry | None = None
         # A kept file must match both the manifest sha256 and the URL it was
         # fetched from; a changed fetch window changes the URL even when a
         # coincidentally identical file is still on disk.
         if not force and old_entry is not None and old_entry.url == url and full_path.exists():
             actual = hashlib.sha256(full_path.read_bytes()).hexdigest()
             if actual == old_entry.sha256:
-                entries.append(old_entry)
-                continue
+                entry = old_entry
 
-        body = _fetch_with_retry(opener, sleeper, REAL_REQUEST_INTERVAL_S, url, label)
-        _validate(rel_path, body, label)
-
-        full_path.write_bytes(body)
-        entries.append(
-            ManifestEntry(
+        if entry is None:
+            body = _fetch_with_retry(opener, sleep, REAL_REQUEST_INTERVAL_S, url, label)
+            _validate(rel_path, body, label)
+            full_path.write_bytes(body)
+            entry = ManifestEntry(
                 path=rel_path,
                 url=url,
                 retrieved_at=datetime.now(UTC).isoformat(),
                 sha256=hashlib.sha256(body).hexdigest(),
                 size=len(body),
             )
+
+        entries.append(entry)
+        # Checkpoint immediately: a failure on the next file keeps this progress.
+        _write_manifest(
+            root, Manifest(window=(start.isoformat(), end.isoformat()), entries=tuple(entries))
         )
 
     manifest = Manifest(window=(start.isoformat(), end.isoformat()), entries=tuple(entries))
-    manifest_path = root / "manifest.json"
-    tmp_path = manifest_path.with_name(manifest_path.name + ".tmp")
-    tmp_path.write_text(manifest.to_json(), encoding="utf-8")
-    os.replace(tmp_path, manifest_path)
+    _write_manifest(root, manifest)
     return manifest
 
 

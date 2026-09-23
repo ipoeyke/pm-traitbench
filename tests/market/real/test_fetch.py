@@ -45,13 +45,6 @@ def _weekdays_of(start: date, end: date) -> list[date]:
     return days
 
 
-def _holiday_of(config: Config) -> date:
-    """The fixture's one shared holiday-gap weekday (see tests/market/real/conftest.py)."""
-    start, end = fetch_range(config)
-    weekdays = _weekdays_of(start, end)
-    return weekdays[len(weekdays) // 2]
-
-
 def test_fred_url_matches_the_binding_form() -> None:
     url = fred_url("DGS10", date(2018, 6, 4), date(2019, 6, 3))
     assert url == (
@@ -91,31 +84,45 @@ def test_fetch_range_starts_seventy_weekdays_before_window_start_and_ends_at_win
     assert end == spec.window_start + timedelta(weeks=config.calendar.n_weeks)
 
 
-def test_fetch_all_writes_every_file_and_a_matching_manifest(fake_cache) -> None:
+def test_fetch_all_with_no_referenced_real_seeds_fetches_nothing(tmp_path: Path) -> None:
     config = Config()
-    data_dir = fake_cache(config)
-    cache = RawCache.open(data_dir)
-    assert len(cache.manifest.entries) > 0
-    for entry in cache.manifest.entries:
-        assert (data_dir / "raw" / "market" / entry.path).exists()
-
-
-def test_second_fetch_without_force_makes_no_requests(fake_cache) -> None:
-    config = Config()
-    data_dir = fake_cache(config)
+    only_synthetic = config.model_copy(
+        update={"population": config.population.model_copy(update={"pilot_market_seeds": ("A",)})}
+    )
 
     def _opener(url: str) -> bytes:
         raise AssertionError(f"should not be called: {url}")
 
-    fetch_all(config, data_dir, opener=_opener, sleeper=lambda _: None)
+    manifest = fetch_all(only_synthetic, tmp_path, opener=_opener, sleeper=lambda _: None)
+    assert manifest.entries == ()
+
+
+def test_fetch_all_writes_every_file_and_a_matching_manifest(fake_cache) -> None:
+    config = Config()
+    result = fake_cache(config)
+    cache = RawCache.open(result.data_dir)
+    assert len(cache.manifest.entries) > 0
+    for entry in cache.manifest.entries:
+        assert (result.data_dir / "raw" / "market" / entry.path).exists()
+
+
+def test_second_fetch_without_force_makes_no_requests(fake_cache) -> None:
+    config = Config()
+    result = fake_cache(config)
+
+    def _opener(url: str) -> bytes:
+        raise AssertionError(f"should not be called: {url}")
+
+    fetch_all(config, result.data_dir, opener=_opener, sleeper=lambda _: None)
 
 
 def test_second_fetch_with_force_refetches_every_file(fake_cache) -> None:
     config = Config()
-    data_dir = fake_cache(config)
-    old = RawCache.open(data_dir).manifest
+    result = fake_cache(config)
+    old = RawCache.open(result.data_dir).manifest
     bodies_by_url = {
-        entry.url: (data_dir / "raw" / "market" / entry.path).read_bytes() for entry in old.entries
+        entry.url: (result.data_dir / "raw" / "market" / entry.path).read_bytes()
+        for entry in old.entries
     }
 
     calls: list[str] = []
@@ -124,7 +131,7 @@ def test_second_fetch_with_force_refetches_every_file(fake_cache) -> None:
         calls.append(url)
         return bodies_by_url[url]
 
-    fetch_all(config, data_dir, force=True, opener=_opener, sleeper=lambda _: None)
+    fetch_all(config, result.data_dir, force=True, opener=_opener, sleeper=lambda _: None)
     assert len(calls) == len(old.entries)
 
 
@@ -166,6 +173,32 @@ def test_kept_file_must_match_both_sha256_and_url(
 
     fetch_all(shifted_config, tmp_path, opener=_opener, sleeper=lambda _: None)
     assert calls["n"] == 1
+
+
+def test_manifest_checkpoints_after_each_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure partway through a fetch leaves the manifest holding the files
+    already fetched, not just the ones from before this run started.
+    """
+    monkeypatch.setattr(fetch_module, "fred_series", lambda: ["DGS2", "DGS5", "DGS10"])
+    monkeypatch.setattr(fetch_module, "yahoo_tickers", lambda: [])
+    monkeypatch.setattr(fetch_module, "_nasdaq_days", lambda config: [])
+    config = Config()
+    body = b"observation_date,X\n2018-01-02,1.0\n"
+    calls = {"n": 0}
+
+    def _opener(url: str) -> bytes:
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+        return body
+
+    with pytest.raises(StageIOError):
+        fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
+
+    manifest = RawCache.open(tmp_path).manifest
+    assert [entry.path for entry in manifest.entries] == ["fred/DGS2.csv", "fred/DGS5.csv"]
 
 
 def test_transient_429s_retry_then_succeed_with_backoff(
@@ -224,7 +257,7 @@ def test_non_retryable_http_error_raises_immediately(
     assert calls["n"] == 1
 
 
-def test_url_error_retries_like_5xx_then_raises(
+def test_url_error_with_non_transient_reason_raises_immediately(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _isolate_to_one_fred_series(monkeypatch, "DGS2")
@@ -234,6 +267,22 @@ def test_url_error_retries_like_5xx_then_raises(
     def _opener(url: str) -> bytes:
         calls["n"] += 1
         raise URLError("connection refused")
+
+    with pytest.raises(StageIOError, match="DGS2"):
+        fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
+    assert calls["n"] == 1
+
+
+def test_url_error_wrapping_a_timeout_retries_then_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_to_one_fred_series(monkeypatch, "DGS2")
+    config = Config()
+    calls = {"n": 0}
+
+    def _opener(url: str) -> bytes:
+        calls["n"] += 1
+        raise URLError(TimeoutError("timed out"))
 
     with pytest.raises(StageIOError, match="DGS2"):
         fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
@@ -262,12 +311,15 @@ def test_connection_reset_retries_like_5xx_then_raises(
 ) -> None:
     _isolate_to_one_fred_series(monkeypatch, "DGS2")
     config = Config()
+    calls = {"n": 0}
 
     def _opener(url: str) -> bytes:
+        calls["n"] += 1
         raise ConnectionResetError("connection reset by peer")
 
     with pytest.raises(StageIOError, match="DGS2"):
         fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
+    assert calls["n"] == REAL_RETRIES
 
 
 def test_incomplete_read_retries_like_5xx_then_raises(
@@ -281,6 +333,23 @@ def test_incomplete_read_retries_like_5xx_then_raises(
 
     with pytest.raises(StageIOError, match="DGS2"):
         fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
+
+
+def test_other_os_error_raises_immediately(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SSL, permission and DNS failures are OSErrors but never transient timeouts
+    or connection failures, so they raise without retrying.
+    """
+    _isolate_to_one_fred_series(monkeypatch, "DGS2")
+    config = Config()
+    calls = {"n": 0}
+
+    def _opener(url: str) -> bytes:
+        calls["n"] += 1
+        raise PermissionError("permission denied")
+
+    with pytest.raises(StageIOError, match="DGS2"):
+        fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
+    assert calls["n"] == 1
 
 
 def test_malformed_fred_body_raises_naming_the_series(
@@ -328,13 +397,13 @@ def test_raw_cache_open_fails_on_missing_manifest(tmp_path: Path) -> None:
 
 def test_raw_cache_open_fails_on_tampered_file_naming_its_path(fake_cache) -> None:
     config = Config()
-    data_dir = fake_cache(config)
-    cache = RawCache.open(data_dir)
-    tampered_path = data_dir / "raw" / "market" / cache.manifest.entries[0].path
+    result = fake_cache(config)
+    cache = RawCache.open(result.data_dir)
+    tampered_path = result.data_dir / "raw" / "market" / cache.manifest.entries[0].path
     tampered_path.write_bytes(b"tampered")
 
     with pytest.raises(StageIOError) as exc_info:
-        RawCache.open(data_dir)
+        RawCache.open(result.data_dir)
     assert str(tampered_path) in str(exc_info.value)
 
 
@@ -364,17 +433,16 @@ def test_raw_cache_open_raises_on_corrupt_manifest_naming_its_path(tmp_path: Pat
 
 def test_fred_skips_missing_marker(fake_cache) -> None:
     config = Config()
-    data_dir = fake_cache(config)
-    holiday = _holiday_of(config)
+    result = fake_cache(config)
     start, end = fetch_range(config)
     weekdays = _weekdays_of(start, end)
 
-    cache = RawCache.open(data_dir)
+    cache = RawCache.open(result.data_dir)
     values = cache.fred("DGS2")
-    assert holiday not in values
+    assert result.holiday not in values
     assert len(values) == len(weekdays) - 1
     for day in weekdays:
-        if day != holiday:
+        if day != result.holiday:
             assert isinstance(values[day], float)
 
 
@@ -410,13 +478,12 @@ def test_yahoo_maps_a_known_timestamp_and_skips_a_null_adjclose(
 
 def test_nasdaq_symbols_returns_the_set(fake_cache) -> None:
     config = Config()
-    data_dir = fake_cache(config)
-    holiday = _holiday_of(config)
+    result = fake_cache(config)
 
-    cache = RawCache.open(data_dir)
-    symbols = cache.nasdaq_symbols(holiday)
+    cache = RawCache.open(result.data_dir)
+    symbols = cache.nasdaq_symbols(result.holiday)
     assert isinstance(symbols, set)
-    assert len(symbols) > 0
+    assert "AAPL" in symbols
 
 
 def test_fake_opener_raises_on_unknown_url(fake_opener) -> None:
