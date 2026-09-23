@@ -168,11 +168,13 @@ and every date is remapped onto the simulated calendar's own axis. This
 disguise hides levels, names and dates, but not the return pattern itself,
 which is real history. Credit prices and commodity M2-M12 are derived from
 these series rather than fetched directly. An event's surprise is its own
-series' daily move scaled by that series' own historical daily sd, so
-ordinary days stay small and the size of a genuine outlier is preserved;
-an earnings surprise instead scales the equity's abnormal return (its own
-move net of `beta` times SPY's), so a market-wide move on the same day is
-not mistaken for the earnings reaction.
+series' daily move scaled by that series' own historical daily sd and
+passed through `tanh`, so ordinary days stay small, a large outlier still
+ranks above a smaller one instead of saturating to the same score, and
+the value approaches but never reaches +-1; an earnings surprise instead
+scales the equity's abnormal return (its own move net of `beta` times
+SPY's), so a market-wide move on the same day is not mistaken for the
+earnings reaction.
 
 Limitations from the model:
 

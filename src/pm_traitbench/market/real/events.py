@@ -42,8 +42,9 @@ __all__ = [
     "surprise_rows",
 ]
 
-# A 1-sd day scores 1/3, and only a move beyond 3 sd reaches +-1, so a real
-# event's surprise keeps its relative size instead of saturating every day.
+# A 1-sd day scores about 0.32 (tanh(1/3)); the value approaches +-1 as the
+# move grows but never reaches it, so even a large outlier keeps its
+# ranking relative to a bigger one instead of saturating to the same score.
 SURPRISE_SD_SCALE = 3.0
 
 FOMC_DATES: tuple[date, ...] = (
@@ -229,8 +230,12 @@ def real_event_days(
     return events
 
 
-def _clip(value: float) -> float:
-    return float(np.clip(value, -1.0, 1.0))
+def _squash(value: float) -> float:
+    """Map a raw sd-scaled move onto (-1, 1), preserving sign and relative
+    size instead of saturating a large outlier to the same score as any
+    other move past the bound.
+    """
+    return float(np.tanh(value))
 
 
 def _daily_sd(diffs: np.ndarray, seed: str, name: str) -> float:
@@ -295,24 +300,24 @@ def surprise_rows(
             if y10_sd_cache is None:
                 y10_sd_cache = _daily_sd(y10_diff, seed, event.instrument_id or "curve")
             move = -(y10_bp[t] - y10_bp[t - 1])
-            surprise = _clip(move / (SURPRISE_SD_SCALE * y10_sd_cache))
+            surprise = _squash(move / (SURPRISE_SD_SCALE * y10_sd_cache))
         elif event.event in (EventType.INVENTORY_REPORT, EventType.CROP_REPORT):
             returns = _commodity_returns(event.instrument_id)
             if event.instrument_id not in commodity_sd:
                 commodity_sd[event.instrument_id] = _daily_sd(returns, seed, event.instrument_id)
             move = returns[t - 1]
-            surprise = _clip(move / (SURPRISE_SD_SCALE * commodity_sd[event.instrument_id]))
+            surprise = _squash(move / (SURPRISE_SD_SCALE * commodity_sd[event.instrument_id]))
         elif event.event == EventType.MACRO_PRINT:
             if spy_sd_cache is None:
                 spy_sd_cache = _daily_sd(spy_returns, seed, "SPY")
             move = spy_log_return[t]
-            surprise = _clip(move / (SURPRISE_SD_SCALE * spy_sd_cache))
+            surprise = _squash(move / (SURPRISE_SD_SCALE * spy_sd_cache))
         elif event.event == EventType.EARNINGS:
             a = _abnormal_return(event.instrument_id)
             if event.instrument_id not in equity_sd:
                 equity_sd[event.instrument_id] = _daily_sd(a[1:], seed, event.instrument_id)
             move = a[t]
-            surprise = _clip(move / (SURPRISE_SD_SCALE * equity_sd[event.instrument_id]))
+            surprise = _squash(move / (SURPRISE_SD_SCALE * equity_sd[event.instrument_id]))
         else:
             raise ValueError(f"real events do not support {event.event.value}")
 

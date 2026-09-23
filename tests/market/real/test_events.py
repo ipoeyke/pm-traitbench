@@ -300,7 +300,7 @@ def test_unsupported_event_type_raises() -> None:
         )
 
 
-def test_earnings_move_of_exactly_one_sd_scores_one_third() -> None:
+def test_earnings_move_of_exactly_one_sd_scores_tanh_of_one_third() -> None:
     d0, d1 = _sd_ratio_pair(1.0, 1.0)
     prices = 100.0 * np.exp(np.array([0.0, d0, d0 + d1]))
     rows = surprise_rows(
@@ -312,7 +312,7 @@ def test_earnings_move_of_exactly_one_sd_scores_one_third() -> None:
         seed="S",
         betas={"EQ-TEST": 1.0},
     )
-    assert rows[0].surprise == pytest.approx(1 / SURPRISE_SD_SCALE)
+    assert rows[0].surprise == pytest.approx(np.tanh(1 / SURPRISE_SD_SCALE))
     assert rows[0].affected == "equities"
 
 
@@ -335,10 +335,10 @@ def test_earnings_abnormal_return_subtracts_beta_times_spy_return() -> None:
         seed="S",
         betas={"EQ-TEST": beta},
     )
-    assert rows[0].surprise == pytest.approx(1 / SURPRISE_SD_SCALE)
+    assert rows[0].surprise == pytest.approx(np.tanh(1 / SURPRISE_SD_SCALE))
 
 
-def test_cb_meeting_move_of_exactly_one_sd_scores_one_third() -> None:
+def test_cb_meeting_move_of_exactly_one_sd_scores_tanh_of_one_third() -> None:
     d0, d1 = _sd_ratio_pair(-1.0, 1.0)  # move = -d0 = 1.0, a positive rate cut is good
     y10_bp = np.array([100.0, 100.0 + d0, 100.0 + d0 + d1])
     rows = surprise_rows(
@@ -349,11 +349,11 @@ def test_cb_meeting_move_of_exactly_one_sd_scores_one_third() -> None:
         axis=_AXIS_3D,
         seed="S",
     )
-    assert rows[0].surprise == pytest.approx(1 / SURPRISE_SD_SCALE)
+    assert rows[0].surprise == pytest.approx(np.tanh(1 / SURPRISE_SD_SCALE))
     assert rows[0].affected == "rates"
 
 
-def test_inventory_report_move_of_exactly_one_sd_scores_one_third() -> None:
+def test_inventory_report_move_of_exactly_one_sd_scores_tanh_of_one_third() -> None:
     d0, d1 = _sd_ratio_pair(1.0, 1.0)
     prices = 100.0 * np.exp(np.array([0.0, d0, d0 + d1]))
     rows = surprise_rows(
@@ -364,11 +364,11 @@ def test_inventory_report_move_of_exactly_one_sd_scores_one_third() -> None:
         axis=_AXIS_3D,
         seed="S",
     )
-    assert rows[0].surprise == pytest.approx(1 / SURPRISE_SD_SCALE)
+    assert rows[0].surprise == pytest.approx(np.tanh(1 / SURPRISE_SD_SCALE))
     assert rows[0].affected == "commodities"
 
 
-def test_crop_report_move_of_exactly_minus_one_sd_scores_minus_one_third() -> None:
+def test_crop_report_move_of_exactly_minus_one_sd_scores_tanh_of_minus_one_third() -> None:
     d0, d1 = _sd_ratio_pair(-1.0, 1.0)
     prices = 100.0 * np.exp(np.array([0.0, d0, d0 + d1]))
     rows = surprise_rows(
@@ -379,11 +379,11 @@ def test_crop_report_move_of_exactly_minus_one_sd_scores_minus_one_third() -> No
         axis=_AXIS_3D,
         seed="S",
     )
-    assert rows[0].surprise == pytest.approx(-1 / SURPRISE_SD_SCALE)
+    assert rows[0].surprise == pytest.approx(np.tanh(-1 / SURPRISE_SD_SCALE))
     assert rows[0].affected == "commodities"
 
 
-def test_macro_print_move_of_exactly_one_sd_scores_one_third() -> None:
+def test_macro_print_move_of_exactly_one_sd_scores_tanh_of_one_third() -> None:
     d0, d1 = _sd_ratio_pair(1.0, 1.0)
     spy_log_return = np.array([0.0, d0, d1])
     rows = surprise_rows(
@@ -396,10 +396,10 @@ def test_macro_print_move_of_exactly_one_sd_scores_one_third() -> None:
     )
     assert rows[0].instrument_id is None
     assert rows[0].affected == "all"
-    assert rows[0].surprise == pytest.approx(1 / SURPRISE_SD_SCALE)
+    assert rows[0].surprise == pytest.approx(np.tanh(1 / SURPRISE_SD_SCALE))
 
 
-def test_a_four_sd_move_clips_to_one_and_a_minus_four_sd_move_clips_to_minus_one() -> None:
+def test_a_four_sd_move_scores_tanh_of_four_thirds_and_stays_below_one() -> None:
     d0, d1 = _sd_ratio_pair(4.0, 4.0)
     spy_log_return = np.array([0.0, d0, d1])
     positive = surprise_rows(
@@ -410,7 +410,8 @@ def test_a_four_sd_move_clips_to_one_and_a_minus_four_sd_move_clips_to_minus_one
         axis=_AXIS_3D,
         seed="S",
     )
-    assert positive[0].surprise == 1.0
+    assert positive[0].surprise == pytest.approx(np.tanh(4 / SURPRISE_SD_SCALE))
+    assert abs(positive[0].surprise) < 1.0
 
     d0, d1 = _sd_ratio_pair(-4.0, 4.0)
     spy_log_return = np.array([0.0, d0, d1])
@@ -422,7 +423,8 @@ def test_a_four_sd_move_clips_to_one_and_a_minus_four_sd_move_clips_to_minus_one
         axis=_AXIS_3D,
         seed="S",
     )
-    assert negative[0].surprise == -1.0
+    assert negative[0].surprise == pytest.approx(np.tanh(-4 / SURPRISE_SD_SCALE))
+    assert abs(negative[0].surprise) < 1.0
 
 
 def test_flat_series_raises_naming_the_seed() -> None:
