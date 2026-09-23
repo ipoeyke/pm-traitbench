@@ -33,6 +33,9 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
+markers = [
+    "network: needs the real network; skipped unless --run-network is passed",
+]
 
 [dependency-groups]
 dev = [
