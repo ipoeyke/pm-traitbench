@@ -6,10 +6,11 @@ from typing import Any
 
 from pm_traitbench.config import Config
 from pm_traitbench.market.axis import build_axis
-from pm_traitbench.market.check import check_market
-from pm_traitbench.market.drivers import draw_shocks
-from pm_traitbench.market.generate import generate_seed, to_rows
-from pm_traitbench.market.universe import build_universe
+from pm_traitbench.market.seed import to_rows
+from pm_traitbench.market.synthetic.build import build_seed
+from pm_traitbench.market.synthetic.check import check_market
+from pm_traitbench.market.synthetic.drivers import draw_shocks
+from pm_traitbench.market.synthetic.universe import build_universe
 from pm_traitbench.rng import stream
 from pm_traitbench.stages import Stage
 from pm_traitbench.tables.schema import CalendarEvent, ConsensusRow, CurvePoint, Price, RegimeSpan
@@ -44,7 +45,7 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
     reports: dict[str, Any] = {}
 
     for seed in config.population.market_seeds:
-        market = generate_seed(config, seed, instruments, shocks, axis)
+        market = build_seed(config, seed, instruments, shocks, axis)
         report = check_market(market, instruments, config)
         reports[seed] = report.to_dict()
 

@@ -9,8 +9,8 @@ from pm_traitbench.config import Config
 from pm_traitbench.enums import Family, InstrumentKind, Positioning, StreetView, Tenor
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.market.consensus import build_consensus
-from pm_traitbench.market.processes.common import ProcessOutput
-from pm_traitbench.market.universe import build_universe
+from pm_traitbench.market.output import ProcessOutput
+from pm_traitbench.market.synthetic.universe import build_universe
 from pm_traitbench.rng import stream
 from pm_traitbench.tables.schema import Instrument
 

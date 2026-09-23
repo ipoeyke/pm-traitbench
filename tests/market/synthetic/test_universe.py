@@ -6,7 +6,7 @@ from fractions import Fraction
 from pm_traitbench.config import Config
 from pm_traitbench.enums import HY_BANDS, CommodityGroup, Family, InstrumentKind, RatingBand
 from pm_traitbench.market.constants import COMMODITIES, FX_PAIRS, sector_label
-from pm_traitbench.market.universe import build_universe
+from pm_traitbench.market.synthetic.universe import build_universe
 from pm_traitbench.rng import stream
 
 _CREDIT_BAND_ORDER = (

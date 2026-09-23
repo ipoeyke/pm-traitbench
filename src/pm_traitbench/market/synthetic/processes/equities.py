@@ -7,8 +7,8 @@ the regime's kappa, and carries its own sampled earnings jumps.
 import numpy as np
 
 from pm_traitbench.enums import Family
-from pm_traitbench.market.drivers import daily_vol
-from pm_traitbench.market.processes.common import (
+from pm_traitbench.market.synthetic.drivers import daily_vol
+from pm_traitbench.market.synthetic.processes.common import (
     ProcessInputs,
     ProcessOutput,
     log_grid_step,

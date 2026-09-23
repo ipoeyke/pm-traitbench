@@ -8,8 +8,12 @@ sovereign yield move, scaled by duration.
 import numpy as np
 
 from pm_traitbench.enums import HY_BANDS, Family, Tenor
-from pm_traitbench.market.drivers import daily_vol
-from pm_traitbench.market.processes.common import ProcessInputs, ProcessOutput, nearest_level
+from pm_traitbench.market.synthetic.drivers import daily_vol
+from pm_traitbench.market.synthetic.processes.common import (
+    ProcessInputs,
+    ProcessOutput,
+    nearest_level,
+)
 
 _PHI = 0.98  # AR(1) persistence: about a 34-trading-day half-life for issuer news
 

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from pm_traitbench.market.processes.common import (
+from pm_traitbench.market.synthetic.processes.common import (
     ProcessOutput,
     log_grid_step,
     nearest_level,

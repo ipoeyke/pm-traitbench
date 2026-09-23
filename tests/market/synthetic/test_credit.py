@@ -9,12 +9,12 @@ import pytest
 from pm_traitbench.config import Config
 from pm_traitbench.enums import HY_BANDS, Family, Regime, Tenor
 from pm_traitbench.market.axis import build_axis
-from pm_traitbench.market.calendar import EventJumps
-from pm_traitbench.market.processes.common import ProcessInputs, ProcessOutput
-from pm_traitbench.market.processes.credit import simulate
-from pm_traitbench.market.processes.rates import simulate as simulate_rates
 from pm_traitbench.market.regimes import constant_path
-from pm_traitbench.market.universe import build_universe
+from pm_traitbench.market.synthetic.events import EventJumps
+from pm_traitbench.market.synthetic.processes.common import ProcessInputs, ProcessOutput
+from pm_traitbench.market.synthetic.processes.credit import simulate
+from pm_traitbench.market.synthetic.processes.rates import simulate as simulate_rates
+from pm_traitbench.market.synthetic.universe import build_universe
 from pm_traitbench.rng import stream
 from pm_traitbench.timeline import Timeline
 

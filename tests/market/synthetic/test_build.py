@@ -16,14 +16,15 @@ from pm_traitbench.enums import (
     Tenor,
 )
 from pm_traitbench.market.axis import build_axis
-from pm_traitbench.market.calendar import EventJumps
 from pm_traitbench.market.constants import FX_PAIRS, USD_PAIR
-from pm_traitbench.market.drivers import draw_shocks
-from pm_traitbench.market.generate import MarketRows, SeedMarket, generate_seed, market_rng, to_rows
-from pm_traitbench.market.processes import commodities, credit, equities, fx, rates
-from pm_traitbench.market.processes.common import ProcessInputs
 from pm_traitbench.market.regimes import constant_path
-from pm_traitbench.market.universe import build_universe
+from pm_traitbench.market.seed import MarketRows, SeedMarket, market_rng, to_rows
+from pm_traitbench.market.synthetic.build import build_seed
+from pm_traitbench.market.synthetic.drivers import draw_shocks
+from pm_traitbench.market.synthetic.events import EventJumps
+from pm_traitbench.market.synthetic.processes import commodities, credit, equities, fx, rates
+from pm_traitbench.market.synthetic.processes.common import ProcessInputs
+from pm_traitbench.market.synthetic.universe import build_universe
 from pm_traitbench.rng import stream
 from pm_traitbench.timeline import Timeline
 
@@ -70,13 +71,13 @@ def _market_inputs(config: Config):
 
 def _generate(config: Config, seed: str):
     axis, instruments, shocks = _market_inputs(config)
-    return axis, instruments, generate_seed(config, seed, instruments, shocks, axis)
+    return axis, instruments, build_seed(config, seed, instruments, shocks, axis)
 
 
 def _generate_pair(config: Config, seed_a: str, seed_b: str):
     axis, instruments, shocks = _market_inputs(config)
-    market_a = generate_seed(config, seed_a, instruments, shocks, axis)
-    market_b = generate_seed(config, seed_b, instruments, shocks, axis)
+    market_a = build_seed(config, seed_a, instruments, shocks, axis)
+    market_b = build_seed(config, seed_b, instruments, shocks, axis)
     return axis, instruments, market_a, market_b
 
 
@@ -139,12 +140,12 @@ def test_seeds_with_different_regime_orders_differ_in_prices() -> None:
     assert prices_a != prices_b
 
 
-def test_generate_seed_is_deterministic_across_calls() -> None:
+def test_build_seed_is_deterministic_across_calls() -> None:
     config = _demo_config()
     axis, instruments, shocks = _market_inputs(config)
 
-    rows_1 = to_rows(generate_seed(config, "A", instruments, shocks, axis))
-    rows_2 = to_rows(generate_seed(config, "A", instruments, shocks, axis))
+    rows_1 = to_rows(build_seed(config, "A", instruments, shocks, axis))
+    rows_2 = to_rows(build_seed(config, "A", instruments, shocks, axis))
 
     def _dump(rows):
         return [row.model_dump() for row in rows]

@@ -9,8 +9,8 @@ from pm_traitbench import pipeline
 from pm_traitbench.cli import main
 from pm_traitbench.config import load_config
 from pm_traitbench.errors import MarketCheckError, StageIOError
-from pm_traitbench.market.check import check_market as real_check_market
 from pm_traitbench.market.stage import MARKET_STAGE
+from pm_traitbench.market.synthetic.check import check_market as real_check_market
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.specs import MARKET_TABLES
 from pm_traitbench.tables.store import DataStore

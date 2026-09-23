@@ -4,8 +4,8 @@ import numpy as np
 
 from pm_traitbench.config import Config
 from pm_traitbench.enums import CommodityGroup, Regime
-from pm_traitbench.market.drivers import daily_vol, draw_shocks, seed_driver
 from pm_traitbench.market.regimes import constant_path
+from pm_traitbench.market.synthetic.drivers import daily_vol, draw_shocks, seed_driver
 
 
 def test_draw_shocks_is_deterministic_for_the_same_root_seed() -> None:

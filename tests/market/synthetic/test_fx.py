@@ -9,12 +9,12 @@ import pytest
 from pm_traitbench.config import Config
 from pm_traitbench.enums import Family, Regime
 from pm_traitbench.market.axis import build_axis
-from pm_traitbench.market.calendar import EventJumps
 from pm_traitbench.market.constants import FX_PAIRS, USD_PAIR
-from pm_traitbench.market.processes.common import ProcessInputs, round_log_gap
-from pm_traitbench.market.processes.fx import simulate
 from pm_traitbench.market.regimes import constant_path
-from pm_traitbench.market.universe import build_universe
+from pm_traitbench.market.synthetic.events import EventJumps
+from pm_traitbench.market.synthetic.processes.common import ProcessInputs, round_log_gap
+from pm_traitbench.market.synthetic.processes.fx import simulate
+from pm_traitbench.market.synthetic.universe import build_universe
 from pm_traitbench.rng import stream
 from pm_traitbench.timeline import Timeline
 

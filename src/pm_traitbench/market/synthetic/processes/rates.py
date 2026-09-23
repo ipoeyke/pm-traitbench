@@ -8,8 +8,12 @@ published yield is floored at a configured minimum.
 import numpy as np
 
 from pm_traitbench.enums import SOVEREIGN_TENORS, InstrumentKind, Tenor
-from pm_traitbench.market.drivers import daily_vol
-from pm_traitbench.market.processes.common import ProcessInputs, ProcessOutput, nearest_level
+from pm_traitbench.market.synthetic.drivers import daily_vol
+from pm_traitbench.market.synthetic.processes.common import (
+    ProcessInputs,
+    ProcessOutput,
+    nearest_level,
+)
 
 _WEIGHTS = np.array([-0.5, -0.15, 0.15, 0.5])
 _Y10_INDEX = SOVEREIGN_TENORS.index(Tenor.Y10)
