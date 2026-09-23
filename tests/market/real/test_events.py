@@ -228,7 +228,7 @@ def test_a_four_sd_move_clips_to_one_and_a_minus_four_sd_move_clips_to_minus_one
 
 
 def test_flat_series_raises_naming_the_seed() -> None:
-    with pytest.raises(StageIOError, match="S"):
+    with pytest.raises(StageIOError, match=r"real seed 'S': 'SPY' has zero daily sd"):
         surprise_rows(
             [RealEvent(instrument_id=None, event=EventType.MACRO_PRINT, day=1)],
             ProcessOutput(),

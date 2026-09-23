@@ -254,6 +254,22 @@ def test_cache_narrower_than_the_config_needs_raises_stage_io_error(fake_cache) 
     assert not (result.data_dir / "market").exists()
 
 
+def test_cache_ending_before_the_config_needs_raises_stage_io_error(fake_cache) -> None:
+    config = _demo_config()
+    result = fake_cache(config)
+    store = DataStore(result.data_dir, config.output)
+
+    manifest_path = cache_dir(result.data_dir) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["window"][1] = "2019-01-01"  # earlier than what the config needs
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(StageIOError, match="run fetch-market again"):
+        run_stage(MARKET_STAGE, config, store)
+
+    assert not (result.data_dir / "market").exists()
+
+
 def test_referenced_seeds_orders_pilot_first_and_dedupes() -> None:
     config = Config.model_validate(
         {"population": {"pilot_market_seeds": ["C"], "market_seeds": ["A", "B", "C"]}}

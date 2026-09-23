@@ -180,8 +180,8 @@ def surprise_rows(
     turn it into a CalendarEvent row, sorted for the calendar table.
 
     Each surprise is the event's own daily move scaled by that series' own
-    sd over the whole axis, so magnitude reflects how unusual the move
-    actually was rather than a single fixed jump size.
+    sd over the whole axis, so magnitude reflects how unusual the move was
+    rather than a single fixed jump size.
     """
     y10_diff = np.diff(y10_bp)
     y10_sd_cache: float | None = None

@@ -210,6 +210,39 @@ def test_write_bytes_failure_raises_stage_io_error_naming_the_path(
     assert str(fetch_module.cache_dir(tmp_path) / "fred" / "DGS2.csv") in str(exc_info.value)
 
 
+def test_mkdir_failure_raises_stage_io_error_naming_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_to_one_fred_series(monkeypatch, "DGS2")
+    config = Config()
+
+    def _raise(self: Path, *args, **kwargs) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(Path, "mkdir", _raise)
+
+    with pytest.raises(StageIOError) as exc_info:
+        fetch_all(config, tmp_path, opener=lambda url: b"unused", sleeper=lambda _: None)
+    assert str(fetch_module.cache_dir(tmp_path) / "fred") in str(exc_info.value)
+
+
+def test_manifest_write_failure_raises_stage_io_error_naming_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_to_one_fred_series(monkeypatch, "DGS2")
+    config = Config()
+    body = b"observation_date,DGS2\n2018-01-02,2.0\n"
+
+    def _raise(self: Path, *args, **kwargs) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_text", _raise)
+
+    with pytest.raises(StageIOError) as exc_info:
+        fetch_all(config, tmp_path, opener=lambda url: body, sleeper=lambda _: None)
+    assert str(fetch_module.cache_dir(tmp_path) / "manifest.json") in str(exc_info.value)
+
+
 def _read_manifest(tmp_path: Path) -> fetch_module.Manifest:
     manifest_path = fetch_module.cache_dir(tmp_path) / "manifest.json"
     return fetch_module.Manifest.from_json(manifest_path.read_text(encoding="utf-8"))

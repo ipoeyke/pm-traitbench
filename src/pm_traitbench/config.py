@@ -1554,7 +1554,7 @@ class Config(BaseModel):
             if not (cover_start <= spec.window_start and last_day <= cover_end):
                 raise ValueError(
                     f"market.real.seeds['{seed_name}'] window {spec.window_start} to "
-                    f"{window_end} falls outside the FOMC/WASDE/NFP date coverage "
+                    f"{last_day} falls outside the FOMC/WASDE/NFP date coverage "
                     f"{cover_start} to {cover_end}"
                 )
         first, last = self.market.boundary_weeks

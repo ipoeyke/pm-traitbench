@@ -549,7 +549,8 @@ def test_real_seed_regime_start_on_saturday_raises() -> None:
 def test_real_seed_window_outside_event_date_coverage_raises() -> None:
     with pytest.raises(
         ValidationError,
-        match=r"falls outside the FOMC/WASDE/NFP date coverage 2018-06-04 to 2019-05-31",
+        match=r"window 2018-06-11 to 2019-06-07 falls outside the FOMC/WASDE/NFP date "
+        r"coverage 2018-06-04 to 2019-05-31",
     ):
         Config.model_validate(
             {

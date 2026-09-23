@@ -154,15 +154,15 @@ family index with zero variance over a span fails as `flat`; the days a
 yield curve tenor spent at its floor are likewise reported only.
 
 Every real series keeps its historical day-over-day change (log for
-prices; level for yields, which are then floored). Credit prices and
-commodity M2-M12 are derived. Only its starting level is rebased onto the
-same configured ranges a synthetic seed uses, its instrument id is the
-fixed anonymised registry (`EQ-R001`, not a ticker), and every date is
-remapped onto the simulated calendar's own axis. This disguise hides
-levels, names and dates, but not the return pattern itself, which is real
-history. An event's surprise is its own series' daily move scaled by that
-series' own historical daily sd, so ordinary days stay small and the size
-of a genuine outlier is preserved.
+prices; level for yields, which are then floored); only its starting level
+is rebased onto the same configured ranges a synthetic seed uses. Its
+instrument id is the fixed anonymised registry (`EQ-R001`, not a ticker),
+and every date is remapped onto the simulated calendar's own axis. This
+disguise hides levels, names and dates, but not the return pattern itself,
+which is real history. Credit prices and commodity M2-M12 are derived from
+these series rather than fetched directly. An event's surprise is its own
+series' daily move scaled by that series' own historical daily sd, so
+ordinary days stay small and the size of a genuine outlier is preserved.
 
 Limitations from the model:
 
@@ -177,7 +177,9 @@ Limitations from the model:
   to a capped run length; a longer gap fails the market stage.
 - The EIA petroleum status report's own holiday-shifted release dates are
   not modelled: the inventory report event fires on every Wednesday, and a
-  report that lands on a market holiday scores a zero surprise.
+  report that lands on a market holiday scores a zero surprise. A real
+  event row can also score zero surprise on an ordinary day when its
+  source repeats the previous close.
 - An event's surprise is priced from the seed's own realised price or yield
   reaction, not from a reported consensus-versus-actual figure.
 - A real seed has no earnings feed, so it never draws an EARNINGS event: an
