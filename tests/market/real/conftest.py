@@ -21,6 +21,8 @@ from pm_traitbench.market.real.sources import (
     yahoo_tickers,
 )
 
+_CREDIT_SERIES: frozenset[str] = frozenset({"DAAA", "DBAA"})
+
 
 def _fake_opener(files: dict[str, bytes]) -> Callable[[str], bytes]:
     """An opener returning canned bytes for known URLs, failing loudly on any other."""
@@ -164,15 +166,24 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
         rng = np.random.default_rng(0)
         files: dict[str, bytes] = {}
 
-        # Corporate yields (DAAA, DBAA) always sit above the 20Y Treasury they're
-        # spread against; a large fixed offset keeps that true for a real seed's
-        # whole window without changing the draw count for any other series.
-        credit_spread_offset = {"DAAA": 1000.0, "DBAA": 1000.0}
+        # One draw per series, in fred_series() order, so the draw count and
+        # sequence match every other series exactly; only how DAAA/DBAA turn
+        # their own draw into a walk differs.
+        draws = {series: rng.normal(0, 1, size=len(series_days)) for series in fred_series()}
+        walks = {
+            series: 100.0 + np.cumsum(draw)
+            for series, draw in draws.items()
+            if series not in _CREDIT_SERIES
+        }
+        # Corporate yields track the 20Y Treasury plus a positive, slowly
+        # drifting spread built from their own draw: about 60bp and 180bp,
+        # moving a few bp a day, never going negative like two independent
+        # walks eventually would.
+        walks["DAAA"] = walks["DGS20"] + 0.6 * np.exp(np.cumsum(0.03 * draws["DAAA"]))
+        walks["DBAA"] = walks["DGS20"] + 1.8 * np.exp(np.cumsum(0.03 * draws["DBAA"]))
 
         for series in fred_series():
-            walk = 100.0 + np.cumsum(rng.normal(0, 1, size=len(series_days)))
-            walk = walk + credit_spread_offset.get(series, 0.0)
-            values = dict(zip(series_days, walk, strict=True))
+            values = dict(zip(series_days, walks[series], strict=True))
             files[fred_url(series, start, end)] = _fred_csv(series, weekdays, values)
 
         n_returns = len(series_days) - 1

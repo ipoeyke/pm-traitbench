@@ -14,6 +14,7 @@ import numpy as np
 
 from pm_traitbench.config import Config, RealSeedSpec
 from pm_traitbench.enums import FUTURES_TENORS, Family, InstrumentKind, Tenor
+from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.axis import SimAxis
 from pm_traitbench.market.calendar import RngFor, event_day_indices, generated_rows, row_sort_key
 from pm_traitbench.market.consensus import build_consensus
@@ -44,7 +45,7 @@ def real_schedule(
 ) -> list[RegimeSpan]:
     """Map a real seed's regime start dates onto the axis, tiling the whole horizon.
 
-    Each mapped start is the day before the next span's mapped start, or the
+    Each span ends the day before the next span's mapped start, or on the
     last axis day for the final span.
     """
     offset = spec.window_start - calendar_start
@@ -141,6 +142,7 @@ def _build_credit(
     prices: dict[str, np.ndarray],
     spreads: dict[str, np.ndarray],
     y5: np.ndarray,
+    seed: str,
 ) -> None:
     dgs20 = _aligned(cache.fred("DGS20"), dates, "DGS20", fills)
     for inst in instruments:
@@ -149,6 +151,10 @@ def _build_credit(
         reg = _REGISTRY_BY_ID[inst.instrument_id]
         yld = _aligned(cache.fred(reg.series), dates, inst.instrument_id, fills)
         s_real_bp = 100 * (yld - dgs20)
+        if np.any(s_real_bp <= 0):
+            raise StageIOError(
+                f"real seed '{seed}': credit spread for '{reg.series}' is not positive on some day"
+            )
         base = config.market.levels.credit_base_spread_bp[inst.rating_band]
         s = s_real_bp * base / s_real_bp[0]
         spreads[inst.instrument_id] = s
@@ -216,7 +222,7 @@ def build_seed(
 
     _build_equities(instruments, cache, dates, config, fills, prices, rng_for)
     _build_commodities(instruments, cache, dates, config, fills, prices, curves)
-    _build_credit(instruments, cache, dates, config, fills, prices, spreads, y5)
+    _build_credit(instruments, cache, dates, config, fills, prices, spreads, y5, seed)
     _build_fx(instruments, cache, dates, config, fills, prices)
 
     spy_raw = _aligned(cache.yahoo(REFERENCE_EQUITY), dates, REFERENCE_EQUITY, fills)

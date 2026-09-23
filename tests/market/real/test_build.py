@@ -6,14 +6,16 @@ import numpy as np
 import pytest
 
 from pm_traitbench.config import Config, RealSeedSpec
-from pm_traitbench.enums import EventType, Family, InstrumentKind, Regime, Tenor
+from pm_traitbench.enums import EventType, Family, InstrumentKind, RatingBand, Regime, Tenor
+from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.axis import SimAxis, build_axis
 from pm_traitbench.market.real.align import aligned_series
-from pm_traitbench.market.real.build import build_seed, real_schedule
+from pm_traitbench.market.real.build import _build_credit, build_seed, real_schedule
 from pm_traitbench.market.real.fetch import RawCache
-from pm_traitbench.market.real.sources import REAL_INSTRUMENTS
+from pm_traitbench.market.real.sources import CREDIT_DURATION_YEARS, REAL_INSTRUMENTS
 from pm_traitbench.market.real.universe import build_real_universe, real_axis_dates
 from pm_traitbench.market.seed import to_rows
+from pm_traitbench.tables.schema import Instrument
 
 _REGISTRY = {inst.instrument_id: inst for inst in REAL_INSTRUMENTS}
 
@@ -96,10 +98,7 @@ def test_fx_usd_pair_log_changes_match_the_real_series_exactly(fake_cache) -> No
         np.testing.assert_allclose(np.diff(np.log(rebased)), np.diff(np.log(raw)), atol=1e-12)
 
 
-def test_credit_spread_rebasing_is_a_constant_multiple_of_the_real_spread(fake_cache) -> None:
-    # The fixture's independent random-walk yields can make the real AA/BBB-over-
-    # Treasury difference cross zero, unlike genuine corporate-over-sovereign data,
-    # so a scalar-multiple check is used instead of a log-difference one.
+def test_credit_spread_log_changes_match_the_real_series_exactly(fake_cache) -> None:
     config = Config()
     result = fake_cache(config)
     cache = RawCache.open(result.data_dir)
@@ -113,9 +112,8 @@ def test_credit_spread_rebasing_is_a_constant_multiple_of_the_real_spread(fake_c
         reg = _REGISTRY[inst.instrument_id]
         yld, _ = aligned_series(cache.fred(reg.series), dates, name=inst.instrument_id)
         s_real_bp = 100 * (yld - dgs20)
-        base = config.market.levels.credit_base_spread_bp[inst.rating_band]
-        expected = s_real_bp * base / s_real_bp[0]
-        np.testing.assert_allclose(market.output.spreads[inst.instrument_id], expected, atol=1e-9)
+        s = market.output.spreads[inst.instrument_id]
+        np.testing.assert_allclose(np.diff(np.log(s)), np.diff(np.log(s_real_bp)), atol=1e-12)
 
 
 def test_day_zero_levels_match_configuration(fake_cache) -> None:
@@ -172,7 +170,7 @@ def test_curve_shape_preserves_real_tenor_differences_where_unfloored(fake_cache
     np.testing.assert_allclose((y2 - y10)[unfloored], (y2_real - y10_real)[unfloored], atol=1e-9)
 
 
-def test_credit_price_falls_when_spread_and_five_year_yield_both_rise(fake_cache) -> None:
+def test_credit_price_recurrence_matches_the_binding_formula_exactly(fake_cache) -> None:
     config = Config()
     result = fake_cache(config)
     _, instruments, market = _build(config, result)
@@ -185,13 +183,18 @@ def test_credit_price_falls_when_spread_and_five_year_yield_both_rise(fake_cache
             continue
         s = market.output.spreads[inst.instrument_id]
         p = market.output.prices[inst.instrument_id]
-        found = False
-        for t in range(1, len(s)):
-            if s[t] > s[t - 1] and y5[t] > y5[t - 1]:
-                assert p[t] < p[t - 1]
-                found = True
-                break
-        assert found, f"no day with both spread and 5Y yield rising for {inst.instrument_id}"
+
+        move = (s[1:] - s[:-1]) + 100 * (y5[1:] - y5[:-1])
+        expected_ratio = 1 - CREDIT_DURATION_YEARS * move / 10000
+        actual_ratio = p[1:] / p[:-1]
+        np.testing.assert_allclose(actual_ratio, expected_ratio, atol=1e-12)
+
+        # The binding formula must also hold on a day where the spread and the
+        # 5Y yield move in opposite directions, not only when both move together.
+        opposite = np.flatnonzero((s[1:] - s[:-1]) * (y5[1:] - y5[:-1]) < 0)
+        assert opposite.size > 0, f"no opposite-direction day found for {inst.instrument_id}"
+        t = int(opposite[0]) + 1
+        assert p[t] / p[t - 1] == pytest.approx(expected_ratio[t - 1], abs=1e-12)
 
 
 def test_driver_has_unit_sd_and_is_zero_on_day_zero(fake_cache) -> None:
@@ -298,6 +301,27 @@ def test_two_real_seeds_with_the_same_window_differ_only_in_flip_rows(fake_cache
     market_r1 = build_seed(config, "R1", instruments, cache, axis)
     market_r2 = build_seed(config, "R2", instruments, cache, axis)
 
+    # Every rebased series is derived purely from the shared real data, so it
+    # must be identical between the two seeds; only the flip-driven rows and
+    # scores can depend on the seed name.
+    assert set(market_r1.output.prices) == set(market_r2.output.prices)
+    for instrument_id, series in market_r1.output.prices.items():
+        np.testing.assert_array_equal(series, market_r2.output.prices[instrument_id])
+
+    assert set(market_r1.output.spreads) == set(market_r2.output.spreads)
+    for instrument_id, series in market_r1.output.spreads.items():
+        np.testing.assert_array_equal(series, market_r2.output.spreads[instrument_id])
+
+    assert set(market_r1.output.curves) == set(market_r2.output.curves)
+    for key, series in market_r1.output.curves.items():
+        np.testing.assert_array_equal(series, market_r2.output.curves[key])
+
+    np.testing.assert_array_equal(market_r1.z, market_r2.z)
+
+    schedule_r1 = [(span.regime, span.date_start, span.date_end) for span in market_r1.schedule]
+    schedule_r2 = [(span.regime, span.date_start, span.date_end) for span in market_r2.schedule]
+    assert schedule_r1 == schedule_r2
+
     def _non_flip_rows(market):
         return sorted(
             (row.date, row.instrument_id or "", row.event, row.surprise, row.affected)
@@ -315,3 +339,46 @@ def test_two_real_seeds_with_the_same_window_differ_only_in_flip_rows(fake_cache
         }
 
     assert _flip_rows(market_r1) != _flip_rows(market_r2)
+
+
+class _StubCreditCache:
+    """A minimal cache double exposing only `fred`, for testing the credit
+    spread's positivity guard directly without a fetched manifest.
+    """
+
+    def __init__(self, values_by_series: dict[str, dict[date, float]]) -> None:
+        self._values = values_by_series
+
+    def fred(self, series: str) -> dict[date, float]:
+        return self._values[series]
+
+
+def test_build_credit_raises_when_the_raw_spread_is_not_positive() -> None:
+    dates = [date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 3)]
+    cache = _StubCreditCache(
+        {
+            "DGS20": dict.fromkeys(dates, 5.0),
+            "DAAA": {dates[0]: 4.0, dates[1]: 6.0, dates[2]: 6.0},
+        }
+    )
+    instrument = Instrument(
+        instrument_id="CR-R-IG-001",
+        family=Family.CREDIT,
+        kind=InstrumentKind.CREDIT_ISSUER,
+        name="CR-R-IG-001",
+        currency="USD",
+        sector="sector_01",
+        rating_band=RatingBand.AA,
+        commodity_group=None,
+        duration_years=CREDIT_DURATION_YEARS,
+        beta=None,
+        expiry_rule=None,
+    )
+    config = Config()
+    y5 = np.zeros(len(dates))
+
+    with pytest.raises(StageIOError) as exc_info:
+        _build_credit([instrument], cache, dates, config, {}, {}, {}, y5, "R1")
+
+    assert "R1" in str(exc_info.value)
+    assert "DAAA" in str(exc_info.value)
