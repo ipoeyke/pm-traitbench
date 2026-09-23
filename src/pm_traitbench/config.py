@@ -1393,7 +1393,7 @@ class MarketRealConfig(BaseModel):
 
     seeds: dict[str, RealSeedSpec] = Field(default_factory=_default_real_seeds)
     sec_user_agent: str = Field(
-        "pm-traitbench 65440968+ipoeyke@users.noreply.github.com",
+        "pm-traitbench admin@example.com",
         json_schema_extra={
             "basis": "design",
             "note": (

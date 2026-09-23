@@ -36,7 +36,7 @@ def test_config_builds_with_defaults() -> None:
     assert config.population.pilot_market_seeds == ("R1",)
     assert config.population.full_per_cell == 3
     assert config.market.real.seeds["R1"].window_start == date(2018, 6, 4)
-    expected_agent = "pm-traitbench 65440968+ipoeyke@users.noreply.github.com"
+    expected_agent = "pm-traitbench admin@example.com"
     assert config.market.real.sec_user_agent == expected_agent
     assert config.mandate.book_size_min == 50e6
     assert config.mandate.book_size_max == 2e9
