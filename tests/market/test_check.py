@@ -92,6 +92,20 @@ def test_check_market_passes_at_default_config_for_fat_tailed_corr_roots(
     assert all(m.passed for m in report.metrics)
 
 
+def test_check_market_passes_with_configured_report_weekday() -> None:
+    config = Config.model_validate({"market": {"consensus": {"report_weekday": 1}}})
+    axis = build_axis(config.timeline(), config.market.burn_in_days)
+    instruments = tuple(build_universe(config, stream(config.seed.root, "market", "universe")))
+    shocks = draw_shocks(config.seed.root, axis.n_days)
+    market = generate_seed(config, "A", instruments, shocks, axis)
+    report = check_market(market, instruments, config)
+    assert all(m.passed for m in report.metrics)
+
+    positioning_rows = [row for row in market.calendar if row.event == EventType.POSITIONING_REPORT]
+    assert positioning_rows
+    assert all(row.date.weekday() == 1 for row in positioning_rows)
+
+
 def test_rigged_vol_multiplier_raises_naming_the_regime_and_metric(universe, markets) -> None:
     config, instruments, _, _ = universe
     rigged = _rigged_config(

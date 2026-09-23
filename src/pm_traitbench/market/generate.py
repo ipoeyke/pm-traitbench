@@ -83,7 +83,7 @@ def generate_seed(
     path = regime_path(axis, lookup, config)
 
     sampled = sample_events(instruments, axis, config, rng_for, seed)
-    generated = generated_rows(instruments, axis, seed)
+    generated = generated_rows(instruments, axis, seed, config.market.consensus.report_weekday)
     jumps = build_jumps(sampled.rows, axis, config)
     z = seed_driver(shocks, path, jumps.macro)
 

@@ -149,7 +149,7 @@ def third_friday(year: int, month: int) -> date:
 
 
 def generated_rows(
-    instruments: Sequence[Instrument], axis: SimAxis, seed: str
+    instruments: Sequence[Instrument], axis: SimAxis, seed: str, report_weekday: int
 ) -> list[CalendarEvent]:
     """Deterministic, un-sampled rows: commodity contract expiries and weekly positioning."""
     horizon_dates = axis.dates[axis.horizon]
@@ -175,7 +175,7 @@ def generated_rows(
             )
 
     for day in horizon_dates:
-        if day.weekday() == 4:
+        if day.weekday() == report_weekday:
             rows.append(
                 CalendarEvent(
                     seed=seed,

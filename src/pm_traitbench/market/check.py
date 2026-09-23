@@ -343,7 +343,9 @@ def _date_mismatch_metric(
     )
 
 
-def _count_metrics(market: SeedMarket, instruments: Sequence[Instrument]) -> list[CheckMetric]:
+def _count_metrics(
+    market: SeedMarket, instruments: Sequence[Instrument], report_weekday: int
+) -> list[CheckMetric]:
     """One metric per calendar row count the pipeline can predict exactly."""
     calendar = market.calendar
     metrics: list[CheckMetric] = []
@@ -390,7 +392,7 @@ def _count_metrics(market: SeedMarket, instruments: Sequence[Instrument]) -> lis
             )
         )
 
-    expected_reports = sorted(day for day in horizon_dates if day.weekday() == 4)
+    expected_reports = sorted(day for day in horizon_dates if day.weekday() == report_weekday)
     actual_reports = [row.date for row in calendar if row.event == EventType.POSITIONING_REPORT]
     metrics.append(
         _date_mismatch_metric(
@@ -470,7 +472,7 @@ def check_market(
             )
 
     metrics.extend(_round_level_metrics(market, instruments, config))
-    metrics.extend(_count_metrics(market, instruments))
+    metrics.extend(_count_metrics(market, instruments, config.market.consensus.report_weekday))
 
     misses = [metric for metric in metrics if not metric.passed]
     if misses:
