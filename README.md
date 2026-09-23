@@ -14,6 +14,7 @@ uv sync
 ## Usage
 
 ```sh
+uv run pm-traitbench fetch-market --config configs/demo.yaml --data-dir data
 uv run pm-traitbench sample --config configs/demo.yaml --data-dir data
 uv run pm-traitbench market --config configs/demo.yaml --data-dir data
 ```
@@ -24,6 +25,10 @@ The `sample` stage writes four tables to `data`: `personas`, `traits`,
 and `regimes`, simulating one market per configured market seed. Pass
 `--force` to overwrite a table that already exists. Run `uv run
 pm-traitbench --help` for the full command list.
+
+`fetch-market` only needs to run first when the config references a real
+market seed, as the default and demo configs both do for their pilot seed;
+a config with only synthetic seeds can skip it. See "Real market" below.
 
 On a full run, `market/prices`, `market/curves` and `market/consensus` are
 by far the largest tables; set `output.tables` in the config to override
@@ -118,6 +123,72 @@ crossings between two closes also counted as a test. Drift is not
 checked: a drift check over one regime span would pass or fail mostly by
 chance, because the standard error of drift over 14-22 weeks exceeds the
 drift itself.
+
+### Real market
+
+A real market seed (the population's pilot seed by default) replays actual
+history instead of simulating it. Its raw data comes from:
+
+- FRED: Treasury yields (2Y/5Y/10Y/20Y/30Y), Moody's seasoned corporate
+  bond yields for the credit spread, and daily FX rates.
+- Yahoo Finance's chart API: equity closes, continuous front-month futures
+  for commodities, and the SPY reference series.
+- The Nasdaq earnings calendar: which tickers report on which day.
+- Fixed public dates: FOMC (Federal Reserve), WASDE (USDA) and Employment
+  Situation (BLS) release schedules.
+
+`fetch-market` writes this raw data under `<data-dir>/raw/market`, gitignored
+and never committed or redistributed; its manifest records the URL, retrieval
+time and hash of every file fetched, not the data itself. The market stage
+refuses to run against an incomplete cache.
+
+A real seed has no model target to check against, so its check is mostly
+structural: every price, spread and curve value must be finite and positive
+(a yield against its floor instead), no series may sit on a forward-filled
+value for longer than the fetch's fill limit, calendar row counts must match
+what the config implies, and consecutive earnings for one equity must be at
+least 40 trading days apart. These run before anything realised is computed,
+since a moment over bad data cannot be trusted. Once they pass, each regime
+span and family's realised annualised volatility and correlation with `z`
+are reported for information, not checked against a target, and a family
+index with zero variance over a span fails as `flat`; the days a yield
+curve tenor spent at its floor are likewise reported only.
+
+Every real series keeps its exact historical day-over-day log change; only
+its starting level is rebased onto the same configured ranges a synthetic
+seed uses, its instrument id is the fixed anonymised registry (`EQ-R001`,
+not a ticker), and every date is remapped onto the simulated calendar's own
+axis. This disguise hides levels, names and dates, but not the return
+pattern itself, which is real history.
+
+Limitations from the model:
+
+- Only a USD sovereign curve is real; EUR/GBP/JPY curves stay synthetic-only.
+- Credit is investment-grade only: two index series (Moody's Aaa- and
+  Baa-equivalent proxies), with no high-yield tier and no issuer-level noise.
+- A commodity's M2-M12 tenors are scripted from its M1 level, not
+  independently fetched, and its continuous M1 series rolls at Yahoo's own
+  contract-roll dates, which do not line up with the calendar's third-Friday
+  contract-expiry rows.
+- A missing observation (a holiday) forward-fills from the prior value, up
+  to a capped run length; a longer gap fails the fetch.
+- The EIA petroleum status report's own holiday-shifted release dates are
+  not modelled: the inventory report event fires on every Wednesday.
+- An event's surprise is priced from the seed's own realised price or yield
+  reaction, not from a reported consensus-versus-actual figure.
+
+To run the full split on real data rather than just the pilot, point
+`population.market_seeds` at a real seed too:
+
+```yaml
+population:
+  market_seeds: [R1]
+  pilot_market_seeds: [R1]
+```
+
+Add further real seeds under `market.real.seeds`, each with its own
+`window_start` and `regime_starts`, to give the full split more than one
+market seed.
 
 ## Development
 

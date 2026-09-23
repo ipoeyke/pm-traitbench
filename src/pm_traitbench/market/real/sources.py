@@ -103,7 +103,7 @@ def _build_curve() -> list[RealInstrument]:
             instrument_id="RT-USD",
             family=Family.RATES,
             kind=InstrumentKind.SOVEREIGN_CURVE,
-            name="RT-USD",
+            name="USD sovereign curve",
             currency="USD",
             source="fred",
             series="DGS10",
