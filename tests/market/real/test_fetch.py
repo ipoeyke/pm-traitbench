@@ -9,7 +9,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 import pm_traitbench.market.real.fetch as fetch_module
-from pm_traitbench.config import REAL_REQUEST_INTERVAL_S, REAL_RETRIES, Config
+from pm_traitbench.config import REAL_REQUEST_INTERVAL_S, REAL_RETRIES, Config, real_window_end
 from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.real.fetch import (
     RawCache,
@@ -88,6 +88,66 @@ def _only_synthetic(config: Config) -> Config:
     return config.model_copy(
         update={"population": config.population.model_copy(update={"pilot_market_seeds": ("A",)})}
     )
+
+
+def _two_real_seed_config() -> Config:
+    """A config referencing two real seeds, R1's default window plus a second,
+    non-adjacent window 104 weeks later.
+    """
+    config = Config()
+    r1 = config.market.real.seeds["R1"]
+    r2 = r1.model_copy(
+        update={
+            "window_start": r1.window_start + timedelta(weeks=104),
+            "regime_starts": tuple(
+                (regime, start + timedelta(weeks=104)) for regime, start in r1.regime_starts
+            ),
+            "note": "second window for multi-seed fetch testing",
+        }
+    )
+    return config.model_copy(
+        update={
+            "market": config.market.model_copy(
+                update={
+                    "real": config.market.real.model_copy(update={"seeds": {"R1": r1, "R2": r2}})
+                }
+            ),
+            "population": config.population.model_copy(update={"pilot_market_seeds": ("R1", "R2")}),
+        }
+    )
+
+
+def test_nasdaq_days_covers_every_referenced_real_seeds_window() -> None:
+    config = _two_real_seed_config()
+    r1 = config.market.real.seeds["R1"]
+    r2 = config.market.real.seeds["R2"]
+
+    days = fetch_module._nasdaq_days(config)
+
+    r1_days = _weekdays_of(r1.window_start, real_window_end(r1, config.calendar.n_weeks))
+    r2_days = _weekdays_of(r2.window_start, real_window_end(r2, config.calendar.n_weeks))
+    assert set(r1_days) <= set(days)
+    assert set(r2_days) <= set(days)
+    assert days == sorted(set(r1_days) | set(r2_days))
+
+
+def test_fetch_all_fetches_nasdaq_days_for_every_referenced_real_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(fetch_module, "fred_series", lambda: [])
+    monkeypatch.setattr(fetch_module, "yahoo_tickers", lambda: [])
+
+    config = _two_real_seed_config()
+    r1 = config.market.real.seeds["R1"]
+    r2 = config.market.real.seeds["R2"]
+
+    body = b'{"data": {"rows": null}}'
+    manifest = fetch_all(config, tmp_path, opener=lambda url: body, sleeper=lambda _: None)
+
+    paths = {entry.path for entry in manifest.entries}
+    assert f"nasdaq/{r1.window_start.isoformat()}.json" in paths
+    r2_end = real_window_end(r2, config.calendar.n_weeks)
+    assert f"nasdaq/{r2_end.isoformat()}.json" in paths
 
 
 def test_fetch_all_with_no_referenced_real_seeds_fetches_nothing(tmp_path: Path) -> None:

@@ -132,19 +132,33 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
     (its real convention), Yahoo omits the row entirely. Yahoo timestamps sit
     at 13:30 UTC. Every equity is generated as `beta * spy_return + noise`
     with a known beta, so a beta regression against SPY can be checked
-    against a known slope. The Nasdaq calendar has every equity ticker
-    reporting once per calendar quarter, with the first equity ticker's
-    report in the holiday's quarter moved onto the holiday weekday itself
-    (replacing, not duplicating, that ticker's report for that quarter)
-    rather than any weekend date, since a real cache never holds a weekend
-    file.
+    against a known slope. The Nasdaq calendar covers every referenced real
+    seed's own window and has every equity ticker reporting once per
+    calendar quarter, with the first equity ticker's report in the
+    holiday's quarter moved onto the holiday weekday itself (replacing, not
+    duplicating, that ticker's report for that quarter) rather than any
+    weekend date, since a real cache never holds a weekend file.
     """
 
     def _build(config: Config) -> FakeCache:
         data_dir = tmp_path / "data"
         start, end = fetch_range(config)
         weekdays = _weekdays(start, end)
-        holiday = weekdays[len(weekdays) // 2]
+
+        used = set(referenced_seeds(config))
+        real_seeds = {name: spec for name, spec in config.market.real.seeds.items() if name in used}
+        nasdaq_day_set: set[date] = set()
+        quarters: list[tuple[date, date]] = []
+        for spec in real_seeds.values():
+            window_end = real_window_end(spec, config.calendar.n_weeks)
+            nasdaq_day_set.update(_weekdays(spec.window_start, window_end))
+            quarters.extend(_quarters_overlapping(spec.window_start, window_end))
+        nasdaq_days = sorted(nasdaq_day_set)
+
+        # Picked from the union of the seeds' own windows (not the wider
+        # fetch range, which can include a gap between non-adjacent windows
+        # that no seed's Nasdaq calendar covers).
+        holiday = nasdaq_days[len(nasdaq_days) // 2]
         series_days = [day for day in weekdays if day != holiday]
 
         rng = np.random.default_rng(0)
@@ -187,14 +201,7 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
             values = dict(zip(series_days, walk, strict=True))
             files[yahoo_url(ticker, start, end)] = _yahoo_json(values)
 
-        used = set(referenced_seeds(config))
-        real_seeds = {name: spec for name, spec in config.market.real.seeds.items() if name in used}
-        first_seed = next(iter(real_seeds.values()))
-        window_end = real_window_end(first_seed, config.calendar.n_weeks)
-        nasdaq_days = _weekdays(first_seed.window_start, window_end)
-
         equities = [inst.series for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES]
-        quarters = _quarters_overlapping(first_seed.window_start, window_end)
         holiday_quarter_index = next(
             (i for i, (q_start, q_end) in enumerate(quarters) if q_start <= holiday <= q_end),
             None,

@@ -3,6 +3,7 @@ against the fetched raw cache, in the same family order as the synthetic
 universe (equities, credit, curve, commodities, FX).
 """
 
+from collections.abc import Mapping
 from datetime import date
 
 import numpy as np
@@ -38,16 +39,26 @@ def _referenced_real_specs(config: Config) -> dict[str, RealSeedSpec]:
     return {name: spec for name, spec in config.market.real.seeds.items() if name in used}
 
 
-def _pooled_real_dates(config: Config, axis: SimAxis) -> list[date]:
-    """Union of every referenced real seed's real axis dates, for pooling beta."""
-    dates: set[date] = set()
-    for spec in _referenced_real_specs(config).values():
-        dates.update(real_axis_dates(spec, axis, config.calendar.start))
-    return sorted(dates)
-
-
 def _log_returns(prices: np.ndarray) -> np.ndarray:
     return np.diff(np.log(prices))
+
+
+def _pooled_log_returns(
+    cache: RawCache,
+    ticker: str,
+    specs: Mapping[str, RealSeedSpec],
+    axis: SimAxis,
+    calendar_start: date,
+) -> np.ndarray:
+    """Log returns for `ticker`, computed within each real seed's own window and
+    concatenated across seeds: no return spans the gap between two windows.
+    """
+    parts = []
+    for spec in specs.values():
+        dates = real_axis_dates(spec, axis, calendar_start)
+        prices, _ = aligned_series(cache.yahoo(ticker), dates, name=ticker)
+        parts.append(_log_returns(prices))
+    return np.concatenate(parts) if parts else np.array([], dtype=float)
 
 
 def _beta(spy_returns: np.ndarray, equity_returns: np.ndarray) -> float:
@@ -55,16 +66,17 @@ def _beta(spy_returns: np.ndarray, equity_returns: np.ndarray) -> float:
     return round(float(slope), 4)
 
 
-def _build_equities(cache: RawCache, dates: list[date]) -> list[Instrument]:
-    spy_prices, _ = aligned_series(cache.yahoo(REFERENCE_EQUITY), dates, name=REFERENCE_EQUITY)
-    spy_returns = _log_returns(spy_prices)
+def _build_equities(
+    cache: RawCache, specs: Mapping[str, RealSeedSpec], axis: SimAxis, calendar_start: date
+) -> list[Instrument]:
+    spy_returns = _pooled_log_returns(cache, REFERENCE_EQUITY, specs, axis, calendar_start)
 
     instruments = []
     for inst in REAL_INSTRUMENTS:
         if inst.family != Family.EQUITIES:
             continue
-        prices, _ = aligned_series(cache.yahoo(inst.series), dates, name=inst.series)
-        beta = _beta(spy_returns, _log_returns(prices))
+        equity_returns = _pooled_log_returns(cache, inst.series, specs, axis, calendar_start)
+        beta = _beta(spy_returns, equity_returns)
         instruments.append(
             Instrument(
                 instrument_id=inst.instrument_id,
@@ -186,9 +198,9 @@ def build_real_universe(config: Config, cache: RawCache, axis: SimAxis) -> list[
     """Build the real instrument universe: equities, credit, curve, commodities,
     FX (the registry's USD pairs, then the derived cross pairs).
     """
-    dates = _pooled_real_dates(config, axis)
+    specs = _referenced_real_specs(config)
     instruments: list[Instrument] = []
-    instruments.extend(_build_equities(cache, dates))
+    instruments.extend(_build_equities(cache, specs, axis, config.calendar.start))
     instruments.extend(_build_credit())
     instruments.extend(_build_curve())
     instruments.extend(_build_commodities(config))

@@ -10,7 +10,7 @@ sampling stream is used here.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 
 import numpy as np
 
@@ -18,6 +18,7 @@ from pm_traitbench.config import Config, RealSeedSpec
 from pm_traitbench.enums import CommodityGroup, EventType, Family, InstrumentKind
 from pm_traitbench.market.axis import SimAxis
 from pm_traitbench.market.calendar import row_sort_key
+from pm_traitbench.market.check import EVENT_FAMILY
 from pm_traitbench.market.constants import ANNUALISATION_DAYS
 from pm_traitbench.market.output import ProcessOutput
 from pm_traitbench.market.real.fetch import RawCache
@@ -68,24 +69,9 @@ _TICKER_TO_INSTRUMENT_ID: dict[str, str] = {
     inst.series: inst.instrument_id for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES
 }
 
-_EVENT_FAMILY: dict[EventType, Family] = {
-    EventType.EARNINGS: Family.EQUITIES,
-    EventType.CB_MEETING: Family.RATES,
-    EventType.INVENTORY_REPORT: Family.COMMODITIES,
-    EventType.CROP_REPORT: Family.COMMODITIES,
-}
-
 # The event types a real seed can draw; rating actions are never generated
 # for real seeds, so they always count as zero.
-_COUNTED_EVENT_TYPES: tuple[EventType, ...] = (
-    EventType.EARNINGS,
-    EventType.RATING_DOWNGRADE,
-    EventType.RATING_UPGRADE,
-    EventType.CB_MEETING,
-    EventType.INVENTORY_REPORT,
-    EventType.CROP_REPORT,
-    EventType.MACRO_PRINT,
-)
+_COUNTED_EVENT_TYPES: tuple[EventType, ...] = tuple(EVENT_FAMILY)
 
 
 @dataclass(frozen=True)
@@ -97,17 +83,6 @@ class RealEvent:
     day: int
 
 
-def _roll_to_weekday(report_date: date) -> date:
-    """A real cache never holds a weekend earnings file, but a hand-built
-    source might place a report on one; roll it forward to the next weekday.
-    A holiday weekday is already a weekday and stays put.
-    """
-    day = report_date
-    while day.weekday() >= 5:
-        day += timedelta(days=1)
-    return day
-
-
 def real_event_days(
     instruments: Sequence[Instrument],
     cache: RawCache,
@@ -115,7 +90,13 @@ def real_event_days(
     axis: SimAxis,
     calendar_start: date,
 ) -> list[RealEvent]:
-    """Build the real event calendar's dates and targets, horizon days only."""
+    """Build the real event calendar's dates and targets, horizon days only.
+
+    Every axis day's real date is a weekday: `real_axis_dates` maps Monday to
+    Monday, so the offset between `calendar_start` and `spec.window_start` is
+    a whole number of weeks. The Nasdaq feed is fetched for weekdays only, so
+    `cache.nasdaq_symbols` is only ever asked about a weekday too.
+    """
     real_dates = real_axis_dates(spec, axis, calendar_start)
     horizon = range(axis.n_burn, axis.n_days)
     real_date_to_day = {real_dates[t]: t for t in horizon}
@@ -125,9 +106,8 @@ def real_event_days(
     for t in horizon:
         symbols = cache.nasdaq_symbols(real_dates[t]) & set(_TICKER_TO_INSTRUMENT_ID)
         for symbol in sorted(symbols):
-            day = real_date_to_day[_roll_to_weekday(real_dates[t])]
             instrument_id = _TICKER_TO_INSTRUMENT_ID[symbol]
-            events.append(RealEvent(instrument_id=instrument_id, event=EventType.EARNINGS, day=day))
+            events.append(RealEvent(instrument_id=instrument_id, event=EventType.EARNINGS, day=t))
 
     curve_ids = [i.instrument_id for i in instruments if i.kind == InstrumentKind.SOVEREIGN_CURVE]
     for fomc_date in FOMC_DATES:
@@ -212,7 +192,7 @@ def surprise_rows(
         else:
             raise ValueError(f"real events do not support {event.event.value}")
 
-        family = _EVENT_FAMILY.get(event.event)
+        family = EVENT_FAMILY.get(event.event)
         affected = family.value if family is not None else "all"
 
         rows.append(

@@ -101,19 +101,17 @@ def fetch_range(config: Config) -> tuple[date, date]:
 
 
 def _nasdaq_days(config: Config) -> list[date]:
-    """Every weekday from the first referenced real seed's window start to its end."""
+    """Union of every referenced real seed's horizon weekdays, window start to end."""
     seeds = _referenced_real_seeds(config)
-    if not seeds:
-        return []
-    first = next(iter(seeds.values()))
-    end = real_window_end(first, config.calendar.n_weeks)
-    days = []
-    day = first.window_start
-    while day <= end:
-        if day.weekday() < 5:
-            days.append(day)
-        day += timedelta(days=1)
-    return days
+    days: set[date] = set()
+    for spec in seeds.values():
+        end = real_window_end(spec, config.calendar.n_weeks)
+        day = spec.window_start
+        while day <= end:
+            if day.weekday() < 5:
+                days.add(day)
+            day += timedelta(days=1)
+    return sorted(days)
 
 
 @dataclass(frozen=True)

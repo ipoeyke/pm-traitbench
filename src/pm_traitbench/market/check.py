@@ -26,7 +26,7 @@ from pm_traitbench.market.seed import SeedMarket
 from pm_traitbench.tables.schema import Instrument
 
 # macro_print has no single target instrument; its count metric carries no family.
-_EVENT_FAMILY: dict[EventType, Family | None] = {
+EVENT_FAMILY: dict[EventType, Family | None] = {
     EventType.EARNINGS: Family.EQUITIES,
     EventType.RATING_DOWNGRADE: Family.CREDIT,
     EventType.RATING_UPGRADE: Family.CREDIT,
@@ -185,7 +185,7 @@ def count_metrics(market: SeedMarket, instruments: Sequence[Instrument]) -> list
     for event, expected in market.drawn_events.items():
         metrics.append(
             _count_metric(
-                market.seed, _EVENT_FAMILY[event], event.value, expected, event_counts[event]
+                market.seed, EVENT_FAMILY[event], event.value, expected, event_counts[event]
             )
         )
 

@@ -14,7 +14,6 @@ from pm_traitbench.market.real.events import (
     NFP_DATES,
     WASDE_DATES,
     RealEvent,
-    _roll_to_weekday,
     drawn_counts,
     real_event_days,
     surprise_rows,
@@ -33,15 +32,6 @@ def test_fixed_date_lists_are_ascending_and_within_the_seed_window(dates: tuple[
     assert len(set(dates)) == len(dates)
     for day in dates:
         assert _WINDOW_START <= day <= _WINDOW_END
-
-
-def test_roll_to_weekday_moves_a_weekend_date_to_the_next_monday() -> None:
-    assert _roll_to_weekday(date(2018, 6, 9)) == date(2018, 6, 11)  # Saturday
-    assert _roll_to_weekday(date(2018, 6, 10)) == date(2018, 6, 11)  # Sunday
-
-
-def test_roll_to_weekday_leaves_a_weekday_in_place() -> None:
-    assert _roll_to_weekday(date(2018, 6, 6)) == date(2018, 6, 6)
 
 
 def _real_event_days(config: Config, result):
@@ -151,6 +141,18 @@ def test_surprise_formulas_match_the_binding_examples() -> None:
     assert earnings_rows[0].surprise == pytest.approx(1.0)
     assert earnings_rows[0].affected == "equities"
 
+    negative_earnings_rows = surprise_rows(
+        [RealEvent(instrument_id="EQ-TEST", event=EventType.EARNINGS, day=1)],
+        ProcessOutput(prices={"EQ-TEST": np.array([100.0, 100.0 * np.exp(-0.02)])}),
+        spy_log_return=np.zeros(2),
+        betas={"EQ-TEST": 1.0},
+        y10_bp=np.zeros(2),
+        axis=axis,
+        seed="S",
+        config=config,
+    )
+    assert negative_earnings_rows[0].surprise == pytest.approx(-0.4)
+
     cb_rows = surprise_rows(
         [RealEvent(instrument_id="RT-USD", event=EventType.CB_MEETING, day=1)],
         ProcessOutput(),
@@ -165,12 +167,14 @@ def test_surprise_formulas_match_the_binding_examples() -> None:
     assert cb_rows[0].affected == "rates"
 
 
-def test_surprise_is_clipped_to_the_unit_range() -> None:
+def test_crop_report_surprise_sign_and_magnitude() -> None:
     config = Config()
     axis = SimAxis(dates=(date(2020, 1, 1), date(2020, 1, 2)), n_burn=0)
+    jump_size = config.market.events[EventType.CROP_REPORT].jump_size
+    r_c = 0.015
     rows = surprise_rows(
-        [RealEvent(instrument_id="CM-CRD", event=EventType.INVENTORY_REPORT, day=1)],
-        ProcessOutput(prices={"CM-CRD": np.array([100.0, 100.0 * np.exp(1.0)])}),
+        [RealEvent(instrument_id="CM-WHT", event=EventType.CROP_REPORT, day=1)],
+        ProcessOutput(prices={"CM-WHT": np.array([100.0, 100.0 * np.exp(r_c)])}),
         spy_log_return=np.zeros(2),
         betas={},
         y10_bp=np.zeros(2),
@@ -178,8 +182,35 @@ def test_surprise_is_clipped_to_the_unit_range() -> None:
         seed="S",
         config=config,
     )
-    assert rows[0].surprise == 1.0
+    assert rows[0].surprise == pytest.approx(r_c / jump_size)
     assert rows[0].affected == "commodities"
+
+
+def test_surprise_is_clipped_to_the_unit_range() -> None:
+    config = Config()
+    axis = SimAxis(dates=(date(2020, 1, 1), date(2020, 1, 2)), n_burn=0)
+    rows = surprise_rows(
+        [
+            RealEvent(instrument_id="CM-CRD", event=EventType.INVENTORY_REPORT, day=1),
+            RealEvent(instrument_id="CM-WHT", event=EventType.CROP_REPORT, day=1),
+        ],
+        ProcessOutput(
+            prices={
+                "CM-CRD": np.array([100.0, 100.0 * np.exp(1.0)]),
+                "CM-WHT": np.array([100.0, 100.0 * np.exp(-1.0)]),
+            }
+        ),
+        spy_log_return=np.zeros(2),
+        betas={},
+        y10_bp=np.zeros(2),
+        axis=axis,
+        seed="S",
+        config=config,
+    )
+    by_instrument = {r.instrument_id: r for r in rows}
+    assert by_instrument["CM-CRD"].surprise == 1.0
+    assert by_instrument["CM-WHT"].surprise == -1.0
+    assert by_instrument["CM-WHT"].affected == "commodities"
 
 
 def test_macro_print_surprise_row_is_market_wide() -> None:
