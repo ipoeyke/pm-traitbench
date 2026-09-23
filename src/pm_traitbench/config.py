@@ -1564,6 +1564,8 @@ def _walk(model: BaseModel, prefix: str, rows: list[BasisRow]) -> None:
         elif isinstance(value, dict) and value and all(_has_basis_field(v) for v in value.values()):
             for key, entry in value.items():
                 rows.append(BasisRow(f"{path}.{key}", _dumped(entry), entry.basis, entry.note))
+        elif isinstance(value, dict) and not value:
+            pass  # an empty dict of per-entry-basis models has no leaves to record
         elif isinstance(value, BaseModel):
             _walk(value, path, rows)
         else:

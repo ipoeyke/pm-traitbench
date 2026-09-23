@@ -379,6 +379,13 @@ def test_dump_with_basis_covers_every_leaf() -> None:
     assert paths == expected_paths
 
 
+def test_dump_with_basis_tolerates_empty_real_seeds() -> None:
+    config = Config.model_validate(
+        {"population": {"pilot_market_seeds": ["A"]}, "market": {"real": {"seeds": {}}}}
+    )
+    config.dump_with_basis()
+
+
 @pytest.mark.parametrize("revive_first", [38, 40])
 def test_revive_weeks_must_start_after_dormant_weeks_end(revive_first: int) -> None:
     overrides = {"drift": {"dormant_weeks": [32, 40], "revive_weeks": [revive_first, 48]}}

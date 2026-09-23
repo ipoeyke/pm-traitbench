@@ -137,6 +137,6 @@ def test_run_stage_raises_stage_io_error_for_unfetched_real_pilot_seed(tmp_path:
 
 def test_referenced_seeds_orders_pilot_first_and_dedupes() -> None:
     config = Config.model_validate(
-        {"population": {"pilot_market_seeds": ["A"], "market_seeds": ["A", "B", "C"]}}
+        {"population": {"pilot_market_seeds": ["C"], "market_seeds": ["A", "B", "C"]}}
     )
-    assert referenced_seeds(config) == ["A", "B", "C"]
+    assert referenced_seeds(config) == ["C", "A", "B"]
