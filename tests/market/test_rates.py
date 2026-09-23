@@ -133,7 +133,7 @@ def test_ten_year_realised_vol_matches_the_level_vol_target(regime: Regime) -> N
 
     rates_cfg = config.market.families.rates
     mult = config.market.regimes.vol_multiplier[regime]
-    target = rates_cfg.level_vol_bp * mult
+    target = rates_cfg.level_vol_bp["USD"] * mult
 
     assert abs(realised_vol - target) / target < 0.10
 

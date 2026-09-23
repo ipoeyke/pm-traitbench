@@ -32,7 +32,8 @@ def simulate(inputs: ProcessInputs) -> ProcessOutput:
     slope0 = ((starts - level0[:, None]) * _WEIGHTS).sum(axis=1) / (_WEIGHTS**2).sum()
     offsets = starts - (level0[:, None] + _WEIGHTS[None, :] * slope0[:, None])
 
-    sigma_level = daily_vol(rates_cfg.level_vol_bp / 100, inputs.path)
+    level_vol_bp = np.array([rates_cfg.level_vol_bp[curve.currency] for curve in curves])
+    sigma_level = daily_vol(level_vol_bp[:, None] / 100, inputs.path)
     sigma_slope = daily_vol(rates_cfg.slope_vol_bp / 100, inputs.path)
     c = rates_cfg.driver_corr
 
@@ -59,7 +60,7 @@ def simulate(inputs: ProcessInputs) -> ProcessOutput:
         raw10_prev = level[:, t - 1] + 0.15 * slope[:, t - 1] + offsets[:, _Y10_INDEX]
         pull = kappa[t] * (raw10_prev - nearest_level(raw10_prev, 0.25))
         shock = c * inputs.z[t] + np.sqrt(1 - c**2) * e_level[:, t]
-        level[:, t] = level[:, t - 1] + sigma_level[t] * shock - pull - jump_bp[:, t] / 100
+        level[:, t] = level[:, t - 1] + sigma_level[:, t] * shock - pull - jump_bp[:, t] / 100
         slope[:, t] = slope[:, t - 1] + sigma_slope[t] * e_slope[:, t]
 
     yields = np.maximum(

@@ -676,14 +676,15 @@ class EquityFamilyConfig(BaseModel):
 class RatesFamilyConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    level_vol_bp: float = Field(
-        90.0,
-        gt=0,
+    level_vol_bp: dict[str, float] = Field(
+        default_factory=lambda: {"USD": 90.0, "GBP": 90.0, "EUR": 70.0, "JPY": 30.0},
         json_schema_extra={
-            "basis": "sourced",
+            "basis": "guess",
             "note": (
-                "realised volatility of daily 10-year yield changes 1990-2026 is 92bp a "
-                "year, FRED DGS10."
+                "USD 10-year realised vol of daily changes 1990-2026 is 92bp a year, FRED "
+                "DGS10; GBP, EUR and JPY are guesses scaled to their lower yield levels; "
+                "OECD long-term rate series on FRED (IRLTLT01GBM156N, IRLTLT01DEM156N, "
+                "IRLTLT01JPM156N) would verify them."
             ),
         },
     )
@@ -709,6 +710,13 @@ class RatesFamilyConfig(BaseModel):
             ),
         },
     )
+
+    @field_validator("level_vol_bp")
+    @classmethod
+    def _check_level_vol_bp_positive(cls, value: dict[str, float]) -> dict[str, float]:
+        if any(v <= 0 for v in value.values()):
+            raise ValueError("level_vol_bp must be positive")
+        return value
 
 
 class CreditFamilyConfig(BaseModel):
@@ -1324,6 +1332,11 @@ class MarketConfig(BaseModel):
         missing_curves = set(self.universe.curves) - set(self.levels.curve_start)
         if missing_curves:
             raise ValueError(f"levels.curve_start missing curve(s): {sorted(missing_curves)}")
+        missing_level_vol = set(self.universe.curves) - set(self.families.rates.level_vol_bp)
+        if missing_level_vol:
+            raise ValueError(
+                f"families.rates.level_vol_bp missing curve(s): {sorted(missing_level_vol)}"
+            )
         used_currencies = {
             currency
             for pair in self.universe.fx_pairs

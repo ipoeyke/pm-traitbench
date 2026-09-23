@@ -64,7 +64,7 @@ def signal_vol(instrument: Instrument, market: MarketConfig) -> float:
         base_spread = market.levels.credit_base_spread_bp[instrument.rating_band]
         return instrument.duration_years * base_spread * families.credit.factor_vol * h / 10000
     if instrument.kind == InstrumentKind.SOVEREIGN_CURVE:
-        return families.rates.level_vol_bp / 100
+        return families.rates.level_vol_bp[instrument.currency] / 100
     if instrument.family == Family.COMMODITIES:
         return families.commodity.group_vol[instrument.commodity_group]
     if instrument.family == Family.FX:

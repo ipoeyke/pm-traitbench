@@ -170,8 +170,9 @@ def implied_moments(
         n = len(curves)
         cfg = families.rates
         c = cfg.driver_corr
-        loading = cfg.level_vol_bp * c
-        independent = cfg.level_vol_bp**2 * (1 - c**2) / n + 0.15**2 * cfg.slope_vol_bp**2 / n
+        sigma_c = np.array([cfg.level_vol_bp[curve.currency] for curve in curves])
+        loading = sigma_c.mean() * c
+        independent = np.sum(sigma_c**2) * (1 - c**2) / n**2 + 0.15**2 * cfg.slope_vol_bp**2 / n
     elif family == Family.CREDIT:
         n_ig = sum(
             1 for i in instruments if i.family == Family.CREDIT and i.rating_band in _IG_BANDS
@@ -179,8 +180,10 @@ def implied_moments(
         cfg = families.credit
         a, c = cfg.asymmetry, cfg.driver_corr
         k2 = (a**2 + a**-2) / 2 - (a - 1 / a) ** 2 / (2 * np.pi)
-        loading = cfg.factor_vol * np.sqrt(k2) * c
-        independent = cfg.factor_vol**2 * k2 * (1 - c**2) + cfg.issuer_vol**2 / n_ig
+        # The slope of the centred asymmetric shock on the driver is the mean of the
+        # two scalings it takes on either side of zero.
+        loading = cfg.factor_vol * c * (a + 1 / a) / 2
+        independent = cfg.factor_vol**2 * k2 - loading**2 + cfg.issuer_vol**2 / n_ig
     elif family == Family.COMMODITIES:
         commodities = [i for i in instruments if i.family == Family.COMMODITIES]
         cfg = families.commodity

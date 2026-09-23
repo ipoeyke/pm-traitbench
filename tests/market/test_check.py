@@ -65,6 +65,18 @@ def test_check_market_passes_at_default_config(universe, markets, seed: str) -> 
     assert all(m.passed for m in report.metrics)
 
 
+@pytest.mark.parametrize("root_seed", [25, 30])
+def test_check_market_passes_at_default_config_for_late_roots(root_seed: int) -> None:
+    # The rates check failed for these roots when every curve shared one level vol.
+    config = Config.model_validate({"seed": {"root": root_seed}})
+    axis = build_axis(config.timeline(), config.market.burn_in_days)
+    instruments = tuple(build_universe(config, stream(config.seed.root, "market", "universe")))
+    shocks = draw_shocks(config.seed.root, axis.n_days)
+    market = generate_seed(config, "C", instruments, shocks, axis)
+    report = check_market(market, instruments, config)
+    assert all(m.passed for m in report.metrics)
+
+
 def test_rigged_vol_multiplier_raises_naming_the_regime_and_metric(universe, markets) -> None:
     config, instruments, _, _ = universe
     rigged = _rigged_config(

@@ -277,9 +277,8 @@ def test_family_index_drift_matches_the_model_implied_mean(regime: Regime) -> No
         axis=0
     )
     rates_cfg = config.market.families.rates
-    rates_implied = (
-        (rates_cfg.level_vol_bp / 100) * mult / np.sqrt(252) * rates_cfg.driver_corr
-    ) * driver_mean
+    mean_level_vol = np.mean([rates_cfg.level_vol_bp[c.currency] for c in curve_list]) / 100
+    rates_implied = (mean_level_vol * mult / np.sqrt(252) * rates_cfg.driver_corr) * driver_mean
     _assert_drift_matches_model("rates_10y", np.diff(y10_index), rates_implied)
 
     ig_issuers = [
