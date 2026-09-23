@@ -27,8 +27,9 @@ def build_population(config: Config) -> list[PmSlot]:
 
     Both splits fill a grid of asset class, market seed, typicality and
     drift, so the pilot exercises drift as well as static behaviour. The
-    pilot covers only the leading market seeds, which keeps it small while
-    every remaining cell stays as full as in the full split.
+    pilot runs its own market seeds, kept separate from the full split's, so
+    it can run on a different kind of market (a real one by default) while
+    the full split stays fully synthetic.
     Within each split, replicate is the outermost loop so raising a
     per-cell count only appends slots and leaves existing indices unchanged.
     """
@@ -36,7 +37,7 @@ def build_population(config: Config) -> list[PmSlot]:
     cells: list[tuple[Split, AssetClass, str, Typicality, bool]] = []
 
     splits = (
-        (Split.PILOT, pop.pilot_per_cell, pop.market_seeds[: pop.pilot_market_seed_count]),
+        (Split.PILOT, pop.pilot_per_cell, pop.pilot_market_seeds),
         (Split.FULL, pop.full_per_cell, pop.market_seeds),
     )
     for split, per_cell, market_seeds in splits:

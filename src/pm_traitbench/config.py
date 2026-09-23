@@ -1,7 +1,7 @@
 """Pipeline configuration: sections, binding defaults and YAML loading."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -185,12 +185,14 @@ class PopulationConfig(BaseModel):
         default=("A", "B", "C"),
         json_schema_extra={"basis": "design", "note": "three parallel market seeds per cell"},
     )
-    pilot_market_seed_count: int = Field(
-        1,
-        ge=1,
+    pilot_market_seeds: tuple[str, ...] = Field(
+        default=("R1",),
         json_schema_extra={
             "basis": "design",
-            "note": "the pilot uses only this many of the leading market seeds",
+            "note": (
+                "the pilot runs on a real historical market so it can finish before "
+                "the synthetic full split"
+            ),
         },
     )
     pilot_per_cell: int = Field(
@@ -206,18 +208,18 @@ class PopulationConfig(BaseModel):
         for name, values in (
             ("asset_classes", self.asset_classes),
             ("market_seeds", self.market_seeds),
+            ("pilot_market_seeds", self.pilot_market_seeds),
         ):
             if not values:
                 raise ValueError(f"{name} must not be empty")
             if len(set(values)) != len(values):
                 raise ValueError(f"{name} must not repeat an entry: {list(values)}")
-        if any(not seed.strip() for seed in self.market_seeds):
-            raise ValueError("market_seeds must not contain a blank name")
-        if self.pilot_market_seed_count > len(self.market_seeds):
-            raise ValueError(
-                f"pilot_market_seed_count is {self.pilot_market_seed_count} but only "
-                f"{len(self.market_seeds)} market_seeds are configured"
-            )
+        for name, seeds in (
+            ("market_seeds", self.market_seeds),
+            ("pilot_market_seeds", self.pilot_market_seeds),
+        ):
+            if any(not seed.strip() for seed in seeds):
+                raise ValueError(f"{name} must not contain a blank name")
         if self.pilot_per_cell == 0 and self.full_per_cell == 0:
             raise ValueError("pilot_per_cell and full_per_cell cannot both be 0")
         return self
@@ -1307,6 +1309,70 @@ def _default_market_seeds() -> dict[str, tuple[Regime, Regime, Regime]]:
     }
 
 
+class RealSeedSpec(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    window_start: date
+    regime_starts: tuple[tuple[Regime, date], tuple[Regime, date], tuple[Regime, date]]
+    basis: Basis
+    note: str = Field(min_length=1)
+
+    @field_validator("window_start")
+    @classmethod
+    def _check_window_start_monday(cls, value: date) -> date:
+        if value.weekday() != 0:
+            raise ValueError("window_start must be a Monday")
+        return value
+
+    @model_validator(mode="after")
+    def _check_regime_starts(self) -> "RealSeedSpec":
+        regimes = [regime for regime, _ in self.regime_starts]
+        if set(regimes) != set(Regime):
+            raise ValueError(f"regime_starts must list each regime exactly once: {regimes}")
+        dates = [start for _, start in self.regime_starts]
+        if dates[0] != self.window_start:
+            raise ValueError("regime_starts must begin at window_start")
+        for earlier, later in zip(dates, dates[1:], strict=False):
+            if earlier >= later:
+                raise ValueError("regime_starts dates must be strictly ascending")
+        return self
+
+
+# A longer gap than a holiday week means the underlying series is broken, not thin.
+REAL_FILL_LIMIT = 5
+# So the axis's first day can still be filled forward from a value before the window.
+REAL_FETCH_BUFFER_DAYS = 10
+# Spaces requests to stay under Yahoo Finance's unofficial rate limit.
+REAL_REQUEST_INTERVAL_S = 1.0
+# Enough attempts to ride out a transient network failure.
+REAL_RETRIES = 5
+
+
+def _default_real_seeds() -> dict[str, RealSeedSpec]:
+    return {
+        "R1": RealSeedSpec(
+            window_start=date(2018, 6, 4),
+            regime_starts=(
+                (Regime.RANGE, date(2018, 6, 4)),
+                (Regime.RISK_OFF, date(2018, 10, 1)),
+                (Regime.RISK_ON, date(2018, 12, 26)),
+            ),
+            basis="design",
+            note=(
+                "a calm range (+7%), the Q4 2018 selloff (-19%) and the 2019 rebound "
+                "(+12%) give the pilot seed the range, risk_off, risk_on order; the "
+                "year is less memorable than 2020 or 2022"
+            ),
+        )
+    }
+
+
+class MarketRealConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    seeds: dict[str, RealSeedSpec] = Field(default_factory=_default_real_seeds)
+
+
 class MarketConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -1339,6 +1405,7 @@ class MarketConfig(BaseModel):
     events: dict[EventType, EventSpec] = Field(default_factory=_default_market_events)
     consensus: MarketConsensusConfig = Field(default_factory=MarketConsensusConfig)
     check: MarketCheckConfig = Field(default_factory=MarketCheckConfig)
+    real: MarketRealConfig = Field(default_factory=MarketRealConfig)
 
     @field_validator("seeds")
     @classmethod
@@ -1366,6 +1433,15 @@ class MarketConfig(BaseModel):
         if set(value) != set(_MARKET_EVENT_TYPES):
             raise ValueError(f"events keys must be exactly {_MARKET_EVENT_TYPES}")
         return value
+
+    @model_validator(mode="after")
+    def _check_seed_namespaces(self) -> "MarketConfig":
+        overlap = set(self.seeds) & set(self.real.seeds)
+        if overlap:
+            raise ValueError(
+                f"seed name(s) in both market.seeds and market.real.seeds: {sorted(overlap)}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_cross_references(self) -> "MarketConfig":
@@ -1426,14 +1502,27 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def _check_market_consistency(self) -> "Config":
-        missing_seeds = set(self.population.market_seeds) - set(self.market.seeds)
-        if missing_seeds:
-            raise ValueError(
-                "market.seeds missing seed(s) used by population.market_seeds: "
-                f"{sorted(missing_seeds)}"
-            )
-        first, last = self.market.boundary_weeks
+        known_seeds = set(self.market.seeds) | set(self.market.real.seeds)
+        for name, seeds in (
+            ("population.pilot_market_seeds", self.population.pilot_market_seeds),
+            ("population.market_seeds", self.population.market_seeds),
+        ):
+            missing = set(seeds) - known_seeds
+            if missing:
+                raise ValueError(
+                    f"{name} references seed(s) not in market.seeds or "
+                    f"market.real.seeds: {sorted(missing)}"
+                )
         n_weeks = self.calendar.n_weeks
+        for seed_name, spec in self.market.real.seeds.items():
+            window_end = spec.window_start + timedelta(weeks=n_weeks)
+            for regime, start in spec.regime_starts:
+                if not (spec.window_start <= start < window_end):
+                    raise ValueError(
+                        f"market.real.seeds['{seed_name}'] regime start {start} for "
+                        f"{regime} must fall within [{spec.window_start}, {window_end})"
+                    )
+        first, last = self.market.boundary_weeks
         if not (1 <= first < last <= n_weeks - 1):
             raise ValueError(f"market.boundary_weeks must fall within 1..{n_weeks - 1}")
         return self

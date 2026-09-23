@@ -55,7 +55,7 @@ def _expected_cells(
 def test_every_pilot_cell_including_drift_has_exactly_pilot_per_cell_slots():
     config = Config()
     counts = _cell_counts(s for s in build_population(config) if s.split == Split.PILOT)
-    assert set(counts) == _expected_cells(config, ("A",))
+    assert set(counts) == _expected_cells(config, config.population.pilot_market_seeds)
     assert all(count == config.population.pilot_per_cell for count in counts.values())
 
 
@@ -66,12 +66,24 @@ def test_every_full_cell_including_drift_has_exactly_full_per_cell_slots():
     assert all(count == config.population.full_per_cell for count in counts.values())
 
 
-def test_pilot_market_seed_count_widens_the_pilot_to_more_seeds():
-    slots = build_population(_config(pilot_market_seed_count=2))
+def test_pilot_slots_carry_each_pilot_market_seed():
+    slots = build_population(Config())
+    pilot_seeds = {s.market_seed for s in slots if s.split == Split.PILOT}
+    assert pilot_seeds == set(Config().population.pilot_market_seeds)
+
+
+def test_full_slots_carry_each_market_seed():
+    slots = build_population(Config())
+    full_seeds = {s.market_seed for s in slots if s.split == Split.FULL}
+    assert full_seeds == set(Config().population.market_seeds)
+
+
+def test_pilot_market_seeds_independent_of_market_seeds():
+    slots = build_population(_config(pilot_market_seeds=["R1"], market_seeds=["A", "B"]))
     pilot_seeds = {s.market_seed for s in slots if s.split == Split.PILOT}
     full_seeds = {s.market_seed for s in slots if s.split == Split.FULL}
-    assert pilot_seeds == {"A", "B"}
-    assert full_seeds == {"A", "B", "C"}
+    assert pilot_seeds == {"R1"}
+    assert full_seeds == {"A", "B"}
 
 
 def test_half_of_the_slots_in_each_split_have_drift():

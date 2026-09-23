@@ -5,6 +5,7 @@ full state, check each against what the config implies, then write the six marke
 from typing import Any
 
 from pm_traitbench.config import Config
+from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.market.seed import to_rows
 from pm_traitbench.market.synthetic.build import build_seed
@@ -26,16 +27,31 @@ from pm_traitbench.tables.specs import (
 from pm_traitbench.tables.store import DataStore
 
 
-def run(config: Config, store: DataStore) -> dict[str, Any]:
-    """Simulate every configured market seed and write the six market tables.
+def referenced_seeds(config: Config) -> list[str]:
+    """Every market seed the population grid uses, pilot seeds first, without repeats."""
+    seen: dict[str, None] = {}
+    for seed in (*config.population.pilot_market_seeds, *config.population.market_seeds):
+        seen.setdefault(seed, None)
+    return list(seen)
 
-    The universe, axis and driver shocks are shared across every seed. Each
-    seed is generated and checked in turn; a failing seed raises
-    MarketCheckError before any table is written.
+
+def run(config: Config, store: DataStore) -> dict[str, Any]:
+    """Simulate every referenced market seed and write the six market tables.
+
+    The universe, axis and driver shocks are shared across every synthetic
+    seed and built only if one is referenced. Each seed is generated and
+    checked in turn; a failing seed raises MarketCheckError before any table
+    is written. A real seed raises StageIOError, since fetching real market
+    data is not wired in yet.
     """
-    axis = build_axis(config.timeline(), config.market.burn_in_days)
-    instruments = build_universe(config, stream(config.seed.root, "market", "universe"))
-    shocks = draw_shocks(config.seed.root, axis.n_days)
+    seeds = referenced_seeds(config)
+    real_seeds = config.market.real.seeds
+
+    axis = instruments = shocks = None
+    if any(seed not in real_seeds for seed in seeds):
+        axis = build_axis(config.timeline(), config.market.burn_in_days)
+        instruments = build_universe(config, stream(config.seed.root, "market", "universe"))
+        shocks = draw_shocks(config.seed.root, axis.n_days)
 
     prices: list[Price] = []
     curves: list[CurvePoint] = []
@@ -44,7 +60,12 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
     regimes: list[RegimeSpan] = []
     reports: dict[str, Any] = {}
 
-    for seed in config.population.market_seeds:
+    for seed in seeds:
+        if seed in real_seeds:
+            raise StageIOError(
+                f"real market seed '{seed}' needs a raw cache; run fetch-market first"
+            )
+
         market = build_seed(config, seed, instruments, shocks, axis)
         report = check_market(market, instruments, config)
         reports[seed] = report.to_dict()

@@ -7,9 +7,9 @@ import pytest
 
 from pm_traitbench import pipeline
 from pm_traitbench.cli import main
-from pm_traitbench.config import load_config
+from pm_traitbench.config import Config, load_config
 from pm_traitbench.errors import MarketCheckError, StageIOError
-from pm_traitbench.market.stage import MARKET_STAGE
+from pm_traitbench.market.stage import MARKET_STAGE, referenced_seeds
 from pm_traitbench.market.synthetic.check import check_market as real_check_market
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.specs import MARKET_TABLES
@@ -122,3 +122,21 @@ def test_cli_returns_1_and_writes_nothing_when_a_later_seed_fails(
 
 def test_pipeline_stage_names_are_sample_then_market() -> None:
     assert tuple(stage.name for stage in pipeline.STAGES) == ("sample", "market")
+
+
+def test_run_stage_raises_stage_io_error_for_unfetched_real_pilot_seed(tmp_path: Path) -> None:
+    config = Config()  # binding defaults pilot the population on real seed R1
+    store = DataStore(tmp_path, config.output)
+
+    with pytest.raises(StageIOError, match="run fetch-market first"):
+        run_stage(MARKET_STAGE, config, store)
+
+    assert not (tmp_path / "market").exists()
+    assert not (tmp_path / "run_metadata").exists()
+
+
+def test_referenced_seeds_orders_pilot_first_and_dedupes() -> None:
+    config = Config.model_validate(
+        {"population": {"pilot_market_seeds": ["A"], "market_seeds": ["A", "B", "C"]}}
+    )
+    assert referenced_seeds(config) == ["A", "B", "C"]
