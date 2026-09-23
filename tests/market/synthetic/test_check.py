@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from pm_traitbench.config import Config, RegimeParams
-from pm_traitbench.enums import Family, InstrumentKind, Regime
+from pm_traitbench.enums import EventType, Family, InstrumentKind, Regime
 from pm_traitbench.errors import MarketCheckError
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.market.synthetic.build import build_seed
@@ -68,6 +68,20 @@ def test_check_market_passes_at_default_config_for_fat_tailed_corr_roots(
     market = build_seed(config, seed, instruments, shocks, axis)
     report = check_market(market, instruments, config)
     assert all(m.passed for m in report.metrics)
+
+
+def test_check_market_passes_with_configured_report_weekday() -> None:
+    config = Config.model_validate({"market": {"consensus": {"report_weekday": 1}}})
+    axis = build_axis(config.timeline(), config.market.burn_in_days)
+    instruments = tuple(build_universe(config, stream(config.seed.root, "market", "universe")))
+    shocks = draw_shocks(config.seed.root, axis.n_days)
+    market = build_seed(config, "A", instruments, shocks, axis)
+    report = check_market(market, instruments, config)
+    assert all(m.passed for m in report.metrics)
+
+    positioning_rows = [row for row in market.calendar if row.event == EventType.POSITIONING_REPORT]
+    assert positioning_rows
+    assert all(row.date.weekday() == 1 for row in positioning_rows)
 
 
 def test_rigged_vol_multiplier_raises_naming_the_regime_and_metric(universe, markets) -> None:

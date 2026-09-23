@@ -18,7 +18,7 @@ def test_third_friday_is_a_friday_in_the_third_week() -> None:
 def test_generated_rows_contract_expiry_and_positioning_report(build_axis_and_universe) -> None:
     config = Config()
     axis, instruments = build_axis_and_universe(config, 1)
-    rows = generated_rows(instruments, axis, "A")
+    rows = generated_rows(instruments, axis, "A", config.market.consensus.report_weekday)
 
     commodities = [i for i in instruments if i.family == Family.COMMODITIES]
     horizon_dates = axis.dates[axis.horizon]
@@ -43,6 +43,21 @@ def test_generated_rows_contract_expiry_and_positioning_report(build_axis_and_un
     assert all(row.instrument_id is None and row.affected == "all" for row in positioning_rows)
     assert all(row.surprise is None for row in rows)
     assert all(row.date >= config.calendar.start for row in rows)
+
+
+def test_generated_rows_positioning_report_follows_configured_weekday(
+    build_axis_and_universe,
+) -> None:
+    config = Config.model_validate({"market": {"consensus": {"report_weekday": 1}}})
+    axis, instruments = build_axis_and_universe(config, 1)
+    rows = generated_rows(instruments, axis, "A", config.market.consensus.report_weekday)
+
+    horizon_dates = axis.dates[axis.horizon]
+    horizon_tuesdays = [day for day in horizon_dates if day.weekday() == 1]
+    positioning_rows = [row for row in rows if row.event == EventType.POSITIONING_REPORT]
+
+    assert {row.date for row in positioning_rows} == set(horizon_tuesdays)
+    assert all(row.date.weekday() == 1 for row in positioning_rows)
 
 
 def test_event_day_indices_excludes_macro_and_generated_rows() -> None:

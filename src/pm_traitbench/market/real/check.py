@@ -223,7 +223,7 @@ def check_real_market(
     structural.extend(_positive_metrics(market, instrument_by_id, config))
     structural.extend(_floored_metrics(market, instrument_by_id, config))
     structural.extend(_fill_run_metrics(market, instrument_by_id))
-    structural.extend(count_metrics(market, instruments))
+    structural.extend(count_metrics(market, instruments, config.market.consensus.report_weekday))
 
     misses = [metric for metric in structural if not metric.passed]
     if misses:

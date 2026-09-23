@@ -241,7 +241,7 @@ def check_market(
             )
 
     metrics.extend(_round_level_metrics(market, instruments, config))
-    metrics.extend(count_metrics(market, instruments))
+    metrics.extend(count_metrics(market, instruments, config.market.consensus.report_weekday))
 
     misses = [metric for metric in metrics if not metric.passed]
     if misses:
