@@ -9,14 +9,13 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 import pm_traitbench.market.real.fetch as fetch_module
-from pm_traitbench.config import REAL_REQUEST_INTERVAL_S, REAL_RETRIES, Config, real_window_end
+from pm_traitbench.config import REAL_REQUEST_INTERVAL_S, REAL_RETRIES, Config
 from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.real.fetch import (
     RawCache,
     fetch_all,
     fetch_range,
     fred_url,
-    nasdaq_url,
     urlopen_bytes,
     yahoo_url,
 )
@@ -26,13 +25,11 @@ def _isolate_to_one_fred_series(monkeypatch: pytest.MonkeyPatch, series: str) ->
     """Restrict fetch_all's task list to a single FRED series, for retry/error tests."""
     monkeypatch.setattr(fetch_module, "fred_series", lambda: [series])
     monkeypatch.setattr(fetch_module, "yahoo_tickers", lambda: [])
-    monkeypatch.setattr(fetch_module, "_nasdaq_days", lambda config: [])
 
 
 def _isolate_to_one_yahoo_ticker(monkeypatch: pytest.MonkeyPatch, ticker: str) -> None:
     monkeypatch.setattr(fetch_module, "fred_series", lambda: [])
     monkeypatch.setattr(fetch_module, "yahoo_tickers", lambda: [ticker])
-    monkeypatch.setattr(fetch_module, "_nasdaq_days", lambda config: [])
 
 
 def _weekdays_of(start: date, end: date) -> list[date]:
@@ -64,11 +61,6 @@ def test_yahoo_url_matches_the_binding_form() -> None:
     )
 
 
-def test_nasdaq_url_matches_the_binding_form() -> None:
-    url = nasdaq_url(date(2018, 7, 6))
-    assert url == "https://api.nasdaq.com/api/calendar/earnings?date=2018-07-06"
-
-
 def test_fetch_range_starts_seventy_weekdays_before_window_start_and_ends_at_window_end() -> None:
     config = Config()
     spec = next(iter(config.market.real.seeds.values()))
@@ -88,66 +80,6 @@ def _only_synthetic(config: Config) -> Config:
     return config.model_copy(
         update={"population": config.population.model_copy(update={"pilot_market_seeds": ("A",)})}
     )
-
-
-def _two_real_seed_config() -> Config:
-    """A config referencing two real seeds, R1's default window plus a second,
-    non-adjacent window 104 weeks later.
-    """
-    config = Config()
-    r1 = config.market.real.seeds["R1"]
-    r2 = r1.model_copy(
-        update={
-            "window_start": r1.window_start + timedelta(weeks=104),
-            "regime_starts": tuple(
-                (regime, start + timedelta(weeks=104)) for regime, start in r1.regime_starts
-            ),
-            "note": "second window for multi-seed fetch testing",
-        }
-    )
-    return config.model_copy(
-        update={
-            "market": config.market.model_copy(
-                update={
-                    "real": config.market.real.model_copy(update={"seeds": {"R1": r1, "R2": r2}})
-                }
-            ),
-            "population": config.population.model_copy(update={"pilot_market_seeds": ("R1", "R2")}),
-        }
-    )
-
-
-def test_nasdaq_days_covers_every_referenced_real_seeds_window() -> None:
-    config = _two_real_seed_config()
-    r1 = config.market.real.seeds["R1"]
-    r2 = config.market.real.seeds["R2"]
-
-    days = fetch_module._nasdaq_days(config)
-
-    r1_days = _weekdays_of(r1.window_start, real_window_end(r1, config.calendar.n_weeks))
-    r2_days = _weekdays_of(r2.window_start, real_window_end(r2, config.calendar.n_weeks))
-    assert set(r1_days) <= set(days)
-    assert set(r2_days) <= set(days)
-    assert days == sorted(set(r1_days) | set(r2_days))
-
-
-def test_fetch_all_fetches_nasdaq_days_for_every_referenced_real_seed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(fetch_module, "fred_series", lambda: [])
-    monkeypatch.setattr(fetch_module, "yahoo_tickers", lambda: [])
-
-    config = _two_real_seed_config()
-    r1 = config.market.real.seeds["R1"]
-    r2 = config.market.real.seeds["R2"]
-
-    body = b'{"data": {"rows": null}}'
-    manifest = fetch_all(config, tmp_path, opener=lambda url: body, sleeper=lambda _: None)
-
-    paths = {entry.path for entry in manifest.entries}
-    assert f"nasdaq/{r1.window_start.isoformat()}.json" in paths
-    r2_end = real_window_end(r2, config.calendar.n_weeks)
-    assert f"nasdaq/{r2_end.isoformat()}.json" in paths
 
 
 def test_fetch_all_with_no_referenced_real_seeds_fetches_nothing(tmp_path: Path) -> None:
@@ -275,7 +207,6 @@ def test_manifest_checkpoints_after_each_fetch(
     """
     monkeypatch.setattr(fetch_module, "fred_series", lambda: ["DGS2", "DGS5", "DGS10"])
     monkeypatch.setattr(fetch_module, "yahoo_tickers", lambda: [])
-    monkeypatch.setattr(fetch_module, "_nasdaq_days", lambda config: [])
     config = Config()
     body = b"observation_date,X\n2018-01-02,1.0\n"
     calls = {"n": 0}
@@ -302,7 +233,6 @@ def test_checkpoint_seeds_still_valid_old_entries_for_tasks_not_yet_reached(
     """
     monkeypatch.setattr(fetch_module, "fred_series", lambda: ["DGS2", "DGS5", "DGS10"])
     monkeypatch.setattr(fetch_module, "yahoo_tickers", lambda: [])
-    monkeypatch.setattr(fetch_module, "_nasdaq_days", lambda config: [])
     config = Config()
     body = b"observation_date,X\n2018-01-02,1.0\n"
 
@@ -504,18 +434,6 @@ def test_malformed_yahoo_body_raises_naming_the_ticker(
         fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
 
 
-def test_malformed_nasdaq_body_raises_naming_the_date() -> None:
-    from pm_traitbench.market.real.fetch import _validate_nasdaq
-
-    with pytest.raises(StageIOError, match="2018-07-06"):
-        _validate_nasdaq(b'{"data": {}}', "2018-07-06")
-    with pytest.raises(StageIOError, match="2018-07-06"):
-        _validate_nasdaq(b'{"data": {"rows": "oops"}}', "2018-07-06")
-    # null or empty rows are valid (no reports that day), not malformed
-    _validate_nasdaq(b'{"data": {"rows": null}}', "2018-07-06")
-    _validate_nasdaq(b'{"data": {"rows": []}}', "2018-07-06")
-
-
 def test_raw_cache_open_fails_on_missing_manifest(tmp_path: Path) -> None:
     with pytest.raises(StageIOError, match="run fetch-market first"):
         RawCache.open(tmp_path)
@@ -547,14 +465,6 @@ def test_raw_cache_yahoo_raises_for_an_unlisted_ticker(fake_cache) -> None:
     cache = RawCache.open(result.data_dir)
     with pytest.raises(StageIOError, match="UNKNOWN"):
         cache.yahoo("UNKNOWN")
-
-
-def test_raw_cache_nasdaq_symbols_raises_for_an_unlisted_date(fake_cache) -> None:
-    config = Config()
-    result = fake_cache(config)
-    cache = RawCache.open(result.data_dir)
-    with pytest.raises(StageIOError, match="2099-01-01"):
-        cache.nasdaq_symbols(date(2099, 1, 1))
 
 
 def test_raw_cache_open_fails_on_tampered_file_naming_its_path(fake_cache) -> None:
@@ -636,16 +546,6 @@ def test_yahoo_maps_a_known_timestamp_and_skips_a_null_adjclose(
     cache = RawCache.open(tmp_path)
     values = cache.yahoo("AAPL")
     assert values == {date(2018, 6, 4): 123.45}
-
-
-def test_nasdaq_symbols_returns_the_set(fake_cache) -> None:
-    config = Config()
-    result = fake_cache(config)
-
-    cache = RawCache.open(result.data_dir)
-    symbols = cache.nasdaq_symbols(result.holiday)
-    assert isinstance(symbols, set)
-    assert "AAPL" in symbols
 
 
 def test_fake_opener_raises_on_unknown_url(fake_opener) -> None:

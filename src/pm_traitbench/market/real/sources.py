@@ -11,7 +11,7 @@ from typing import Literal
 from pm_traitbench.enums import CommodityGroup, Family, InstrumentKind, RatingBand, Tenor
 from pm_traitbench.market.constants import COMMODITIES, FX_PAIRS, CommoditySpec, sector_label
 
-Source = Literal["fred", "yahoo", "nasdaq"]
+Source = Literal["fred", "yahoo"]
 
 
 @dataclass(frozen=True)
@@ -196,10 +196,6 @@ def _build_fx() -> list[RealInstrument]:
 
 REAL_INSTRUMENTS: tuple[RealInstrument, ...] = tuple(
     _build_equities() + _build_credit() + _build_curve() + _build_commodities() + _build_fx()
-)
-
-EARNINGS_TICKERS: tuple[str, ...] = tuple(
-    inst.series for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES
 )
 
 

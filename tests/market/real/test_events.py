@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from pm_traitbench.config import Config
-from pm_traitbench.enums import CommodityGroup, EventType, Family
+from pm_traitbench.enums import CommodityGroup, EventType
 from pm_traitbench.market.axis import SimAxis, build_axis
 from pm_traitbench.market.output import ProcessOutput
 from pm_traitbench.market.real.events import (
@@ -19,7 +19,7 @@ from pm_traitbench.market.real.events import (
     surprise_rows,
 )
 from pm_traitbench.market.real.fetch import RawCache
-from pm_traitbench.market.real.universe import build_real_universe, real_axis_dates
+from pm_traitbench.market.real.universe import build_real_universe
 from pm_traitbench.tables.schema import CalendarEvent
 
 _WINDOW_START = date(2018, 6, 4)
@@ -39,7 +39,7 @@ def _real_event_days(config: Config, result):
     axis = build_axis(config.timeline(), config.market.burn_in_days)
     spec = config.market.real.seeds["R1"]
     instruments = build_real_universe(config, cache, axis)
-    events = real_event_days(instruments, cache, spec, axis, config.calendar.start)
+    events = real_event_days(instruments, spec, axis, config.calendar.start)
     return axis, spec, instruments, events
 
 
@@ -52,21 +52,13 @@ def test_no_events_fall_in_burn_in(fake_cache) -> None:
     assert all(e.day >= axis.n_burn for e in events)
 
 
-def test_earnings_rows_are_registry_tickers_and_the_holiday_report_stays(fake_cache) -> None:
+def test_no_earnings_events_are_drawn(fake_cache) -> None:
+    """A real seed has no earnings feed, so it never draws an EARNINGS event."""
     config = Config()
     result = fake_cache(config)
-    axis, spec, instruments, events = _real_event_days(config, result)
+    _, _, _, events = _real_event_days(config, result)
 
-    earnings = [e for e in events if e.event == EventType.EARNINGS]
-    assert earnings
-
-    registry_ids = {i.instrument_id for i in instruments if i.family == Family.EQUITIES}
-    for e in earnings:
-        assert e.instrument_id in registry_ids
-
-    real_dates = real_axis_dates(spec, axis, config.calendar.start)
-    holiday_day = real_dates.index(result.holiday)
-    assert any(e.day == holiday_day and e.instrument_id == "EQ-R001" for e in earnings)
+    assert not any(e.event == EventType.EARNINGS for e in events)
 
 
 def test_cb_meeting_fires_once_per_fomc_date_for_the_usd_curve(fake_cache) -> None:
@@ -124,40 +116,14 @@ def test_macro_print_fires_on_nfp_dates_with_no_instrument(fake_cache) -> None:
     assert all(e.instrument_id is None for e in macro)
 
 
-def test_surprise_formulas_match_the_binding_examples() -> None:
+def test_cb_meeting_surprise_formula_matches_the_binding_example() -> None:
     config = Config()
     axis = SimAxis(dates=(date(2020, 1, 1), date(2020, 1, 2)), n_burn=0)
-
-    earnings_rows = surprise_rows(
-        [RealEvent(instrument_id="EQ-TEST", event=EventType.EARNINGS, day=1)],
-        ProcessOutput(prices={"EQ-TEST": np.array([100.0, 100.0 * np.exp(0.10)])}),
-        spy_log_return=np.array([0.0, 0.01]),
-        betas={"EQ-TEST": 1.0},
-        y10_bp=np.zeros(2),
-        axis=axis,
-        seed="S",
-        config=config,
-    )
-    assert earnings_rows[0].surprise == pytest.approx(1.0)
-    assert earnings_rows[0].affected == "equities"
-
-    negative_earnings_rows = surprise_rows(
-        [RealEvent(instrument_id="EQ-TEST", event=EventType.EARNINGS, day=1)],
-        ProcessOutput(prices={"EQ-TEST": np.array([100.0, 100.0 * np.exp(-0.02)])}),
-        spy_log_return=np.zeros(2),
-        betas={"EQ-TEST": 1.0},
-        y10_bp=np.zeros(2),
-        axis=axis,
-        seed="S",
-        config=config,
-    )
-    assert negative_earnings_rows[0].surprise == pytest.approx(-0.4)
 
     cb_rows = surprise_rows(
         [RealEvent(instrument_id="RT-USD", event=EventType.CB_MEETING, day=1)],
         ProcessOutput(),
         spy_log_return=np.zeros(2),
-        betas={},
         y10_bp=np.array([100.0, 104.0]),
         axis=axis,
         seed="S",
@@ -165,6 +131,22 @@ def test_surprise_formulas_match_the_binding_examples() -> None:
     )
     assert cb_rows[0].surprise == pytest.approx(-0.5)
     assert cb_rows[0].affected == "rates"
+
+
+def test_unsupported_event_type_raises() -> None:
+    config = Config()
+    axis = SimAxis(dates=(date(2020, 1, 1), date(2020, 1, 2)), n_burn=0)
+
+    with pytest.raises(ValueError, match="earnings"):
+        surprise_rows(
+            [RealEvent(instrument_id="EQ-TEST", event=EventType.EARNINGS, day=1)],
+            ProcessOutput(prices={"EQ-TEST": np.array([100.0, 100.0])}),
+            spy_log_return=np.zeros(2),
+            y10_bp=np.zeros(2),
+            axis=axis,
+            seed="S",
+            config=config,
+        )
 
 
 def test_crop_report_surprise_sign_and_magnitude() -> None:
@@ -176,7 +158,6 @@ def test_crop_report_surprise_sign_and_magnitude() -> None:
         [RealEvent(instrument_id="CM-WHT", event=EventType.CROP_REPORT, day=1)],
         ProcessOutput(prices={"CM-WHT": np.array([100.0, 100.0 * np.exp(r_c)])}),
         spy_log_return=np.zeros(2),
-        betas={},
         y10_bp=np.zeros(2),
         axis=axis,
         seed="S",
@@ -201,7 +182,6 @@ def test_surprise_is_clipped_to_the_unit_range() -> None:
             }
         ),
         spy_log_return=np.zeros(2),
-        betas={},
         y10_bp=np.zeros(2),
         axis=axis,
         seed="S",
@@ -221,7 +201,6 @@ def test_macro_print_surprise_row_is_market_wide() -> None:
         [RealEvent(instrument_id=None, event=EventType.MACRO_PRINT, day=1)],
         ProcessOutput(),
         spy_log_return=np.array([0.0, r_spy]),
-        betas={},
         y10_bp=np.zeros(2),
         axis=axis,
         seed="S",

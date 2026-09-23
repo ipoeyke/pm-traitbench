@@ -133,7 +133,6 @@ history instead of simulating it. Its raw data comes from:
   bond yields for the credit spread, and daily FX rates.
 - Yahoo Finance's chart API: equity closes, continuous front-month futures
   for commodities, and the SPY reference series.
-- The Nasdaq earnings calendar: which tickers report on which day.
 - Fixed public dates: FOMC (Federal Reserve), WASDE (USDA) and Employment
   Situation (BLS) release schedules.
 
@@ -145,14 +144,13 @@ refuses to run against an incomplete cache.
 A real seed has no model target to check against, so its check is mostly
 structural: every price, spread and curve value must be finite and positive
 (a yield against its floor instead), no series may sit on a forward-filled
-value for longer than the fetch's fill limit, calendar row counts must match
-what the config implies, and consecutive earnings for one equity must be at
-least 40 trading days apart. These run before anything realised is computed,
-since a moment over bad data cannot be trusted. Once they pass, each regime
-span and family's realised annualised volatility and correlation with `z`
-are reported for information, not checked against a target, and a family
-index with zero variance over a span fails as `flat`; the days a yield
-curve tenor spent at its floor are likewise reported only.
+value for longer than the fetch's fill limit, and calendar row counts must
+match what the config implies. These run before anything realised is
+computed, since a moment over bad data cannot be trusted. Once they pass,
+each regime span and family's realised annualised volatility and
+correlation with `z` are reported for information, not checked against a
+target, and a family index with zero variance over a span fails as `flat`;
+the days a yield curve tenor spent at its floor are likewise reported only.
 
 Every real series keeps its exact historical day-over-day log change; only
 its starting level is rebased onto the same configured ranges a synthetic
@@ -176,6 +174,10 @@ Limitations from the model:
   not modelled: the inventory report event fires on every Wednesday.
 - An event's surprise is priced from the seed's own realised price or yield
   reaction, not from a reported consensus-versus-actual figure.
+- A real seed has no earnings feed, so it never draws an EARNINGS event: an
+  equity's street score only updates on the weekly revision day (plus any
+  consensus flip), never on an earnings-day jump, and a rule keyed to an
+  earnings signpost never fires on a real seed.
 
 To run the full split on real data rather than just the pilot, point
 `population.market_seeds` at a real seed too:

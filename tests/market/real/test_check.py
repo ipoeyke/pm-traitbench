@@ -13,7 +13,7 @@ from pm_traitbench.enums import EventType, Family, InstrumentKind, Regime, Tenor
 from pm_traitbench.errors import MarketCheckError
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.market.real.build import build_seed
-from pm_traitbench.market.real.check import _earnings_spacing_metrics, check_real_market
+from pm_traitbench.market.real.check import check_real_market
 from pm_traitbench.market.real.fetch import RawCache
 from pm_traitbench.market.real.universe import build_real_universe
 
@@ -111,52 +111,14 @@ def test_moved_expiry_date_fails(fake_cache) -> None:
     assert "count:contract_expiry" in str(excinfo.value)
 
 
-def test_earnings_rows_five_axis_days_apart_fails_naming_earnings_spacing(fake_cache) -> None:
+def test_no_earnings_rows_and_zero_earnings_count(fake_cache) -> None:
+    """A real seed has no earnings feed, so its calendar draws no EARNINGS row."""
     config = Config()
     result = fake_cache(config)
     instruments, market = _build(config, result)
 
-    calendar = list(market.calendar)
-    earnings = [(i, row) for i, row in enumerate(calendar) if row.event == EventType.EARNINGS]
-    anchor_row = earnings[0][1]
-    anchor_instrument = anchor_row.instrument_id
-    anchor_t = market.axis.index(anchor_row.date)
-    close_t = anchor_t + 5 if anchor_t + 5 < market.axis.n_days else anchor_t - 5
-    close_date = market.axis.dates[close_t]
-
-    other_idx, other_row = next(
-        (i, row) for i, row in earnings if row.instrument_id != anchor_instrument
-    )
-    calendar[other_idx] = other_row.model_copy(
-        update={"instrument_id": anchor_instrument, "date": close_date}
-    )
-    modified = dataclasses.replace(market, calendar=calendar)
-
-    with pytest.raises(MarketCheckError) as excinfo:
-        check_real_market(modified, instruments, config)
-    assert "earnings_spacing" in str(excinfo.value)
-    assert anchor_instrument in str(excinfo.value)
-
-
-def test_equity_with_fewer_than_two_earnings_rows_passes_earnings_spacing_with_zero(
-    fake_cache,
-) -> None:
-    config = Config()
-    result = fake_cache(config)
-    instruments, market = _build(config, result)
-
-    target = next(i for i in instruments if i.family == Family.EQUITIES)
-    calendar = [
-        row
-        for row in market.calendar
-        if not (row.event == EventType.EARNINGS and row.instrument_id == target.instrument_id)
-    ]
-    modified = dataclasses.replace(market, calendar=calendar)
-
-    metrics = _earnings_spacing_metrics(modified, instruments)
-    entry = next(m for m in metrics if m.metric == f"earnings_spacing:{target.instrument_id}")
-    assert entry.realised == 0.0
-    assert entry.passed is True
+    assert not any(row.event == EventType.EARNINGS for row in market.calendar)
+    assert market.drawn_events[EventType.EARNINGS] == 0
 
 
 def test_constant_rates_curve_over_a_span_fails_naming_flat_rates(fake_cache) -> None:

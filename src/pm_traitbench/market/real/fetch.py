@@ -1,6 +1,6 @@
-"""Raw-data fetch for the real market: FRED, Yahoo Finance and Nasdaq into a
-local cache with a sha256 manifest, so no other pipeline code ever touches
-the network.
+"""Raw-data fetch for the real market: FRED and Yahoo Finance into a local
+cache with a sha256 manifest, so no other pipeline code ever touches the
+network.
 """
 
 import hashlib
@@ -66,10 +66,6 @@ def yahoo_url(ticker: str, start: date, end: date) -> str:
     )
 
 
-def nasdaq_url(day: date) -> str:
-    return f"https://api.nasdaq.com/api/calendar/earnings?date={day.isoformat()}"
-
-
 def _weekdays_before(day: date, n: int) -> date:
     """Return the date `n` weekdays before `day` (`day` itself excluded)."""
     current = day
@@ -98,20 +94,6 @@ def fetch_range(config: Config) -> tuple[date, date]:
     starts = [_weekdays_before(spec.window_start, back) for spec in seeds.values()]
     ends = [real_window_end(spec, config.calendar.n_weeks) for spec in seeds.values()]
     return (min(starts), max(ends))
-
-
-def _nasdaq_days(config: Config) -> list[date]:
-    """Union of every referenced real seed's horizon weekdays, window start to end."""
-    seeds = _referenced_real_seeds(config)
-    days: set[date] = set()
-    for spec in seeds.values():
-        end = real_window_end(spec, config.calendar.n_weeks)
-        day = spec.window_start
-        while day <= end:
-            if day.weekday() < 5:
-                days.add(day)
-            day += timedelta(days=1)
-    return sorted(days)
 
 
 @dataclass(frozen=True)
@@ -212,23 +194,11 @@ def _validate_yahoo(body: bytes, label: str) -> None:
         raise StageIOError(f"malformed Yahoo response for ticker '{label}'")
 
 
-def _validate_nasdaq(body: bytes, label: str) -> None:
-    try:
-        payload = json.loads(body)
-        rows = payload["data"]["rows"]
-    except (KeyError, TypeError, ValueError) as e:
-        raise StageIOError(f"malformed Nasdaq response for date '{label}'") from e
-    if rows is not None and not isinstance(rows, list):
-        raise StageIOError(f"malformed Nasdaq response for date '{label}'")
-
-
 def _validate(rel_path: str, body: bytes, label: str) -> None:
     if rel_path.startswith("fred/"):
         _validate_fred(body, label)
     elif rel_path.startswith("yahoo/"):
         _validate_yahoo(body, label)
-    elif rel_path.startswith("nasdaq/"):
-        _validate_nasdaq(body, label)
 
 
 def _read_manifest(path: Path) -> Manifest:
@@ -284,7 +254,7 @@ def fetch_all(
         start, end = fetch_range(config)
         return Manifest(window=(start.isoformat(), end.isoformat()), entries=(), complete=True)
 
-    for sub in ("fred", "yahoo", "nasdaq"):
+    for sub in ("fred", "yahoo"):
         (root / sub).mkdir(parents=True, exist_ok=True)
 
     start, end = fetch_range(config)
@@ -295,9 +265,6 @@ def fetch_all(
         tasks.append((f"fred/{series}.csv", fred_url(series, start, end), series))
     for ticker in yahoo_tickers():
         tasks.append((f"yahoo/{ticker}.json", yahoo_url(ticker, start, end), ticker))
-    for day in _nasdaq_days(config):
-        label = day.isoformat()
-        tasks.append((f"nasdaq/{label}.json", nasdaq_url(day), label))
 
     # Which old entries are still trustworthy (same URL, same on-disk sha256):
     # computed once, since a file this run hasn't reached yet doesn't change.
@@ -419,11 +386,3 @@ class RawCache:
                 continue
             values[datetime.fromtimestamp(ts, tz=UTC).date()] = float(value)
         return values
-
-    def nasdaq_symbols(self, day: date) -> set[str]:
-        """The set of symbols reporting earnings on `day`."""
-        label = day.isoformat()
-        entry = self._entry(f"nasdaq/{label}.json", f"Nasdaq date '{label}'")
-        payload = json.loads((self._root / entry.path).read_text(encoding="utf-8"))
-        rows = payload["data"]["rows"] or []
-        return {row["symbol"] for row in rows}

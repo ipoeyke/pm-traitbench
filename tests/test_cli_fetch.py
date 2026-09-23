@@ -12,7 +12,6 @@ from pm_traitbench.cli import main
 def _isolate_to_one_fred_series(monkeypatch: pytest.MonkeyPatch, series: str) -> None:
     monkeypatch.setattr(fetch_module, "fred_series", lambda: [series])
     monkeypatch.setattr(fetch_module, "yahoo_tickers", lambda: [])
-    monkeypatch.setattr(fetch_module, "_nasdaq_days", lambda config: [])
 
 
 def test_fetch_market_writes_manifest_and_returns_0(

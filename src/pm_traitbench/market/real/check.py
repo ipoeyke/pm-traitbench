@@ -11,7 +11,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from pm_traitbench.config import REAL_FILL_LIMIT, Config
-from pm_traitbench.enums import EventType, Family, InstrumentKind
+from pm_traitbench.enums import Family, InstrumentKind
 from pm_traitbench.market.check import (
     CheckMetric,
     CheckReport,
@@ -150,46 +150,6 @@ def _fill_run_metrics(
     return metrics
 
 
-# Companies report quarterly, about 13 weeks apart; two earnings rows for the
-# same equity under 8 weeks (40 axis days) apart mean a duplicated or
-# misattributed feed row rather than a genuine second report.
-MIN_EARNINGS_GAP_DAYS = 40
-
-
-def _earnings_spacing_metrics(
-    market: SeedMarket, instruments: Sequence[Instrument]
-) -> list[CheckMetric]:
-    """Smallest axis-day gap between an equity's consecutive earnings rows."""
-    equity_ids = sorted(i.instrument_id for i in instruments if i.family == Family.EQUITIES)
-    axis_days: dict[str, list[int]] = {}
-    for row in market.calendar:
-        if row.event != EventType.EARNINGS:
-            continue
-        axis_days.setdefault(row.instrument_id, []).append(market.axis.index(row.date))
-
-    metrics = []
-    for instrument_id in equity_ids:
-        days = sorted(axis_days.get(instrument_id, []))
-        if len(days) < 2:
-            realised, passed = 0.0, True
-        else:
-            realised = float(min(b - a for a, b in zip(days, days[1:], strict=False)))
-            passed = realised >= MIN_EARNINGS_GAP_DAYS
-        metrics.append(
-            CheckMetric(
-                seed=market.seed,
-                regime=None,
-                family=Family.EQUITIES,
-                metric=f"earnings_spacing:{instrument_id}",
-                target=float(MIN_EARNINGS_GAP_DAYS),
-                realised=realised,
-                tolerance=0.0,
-                passed=passed,
-            )
-        )
-    return metrics
-
-
 def _realised_moment_metrics(
     market: SeedMarket, instruments: Sequence[Instrument]
 ) -> list[CheckMetric]:
@@ -267,7 +227,6 @@ def check_real_market(
     structural.extend(_floored_metrics(market, instrument_by_id, config))
     structural.extend(_fill_run_metrics(market, instrument_by_id))
     structural.extend(count_metrics(market, instruments))
-    structural.extend(_earnings_spacing_metrics(market, instruments))
 
     misses = [metric for metric in structural if not metric.passed]
     if misses:

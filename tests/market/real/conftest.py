@@ -11,9 +11,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pm_traitbench.config import Config, real_window_end, referenced_seeds
+from pm_traitbench.config import Config
 from pm_traitbench.enums import Family
-from pm_traitbench.market.real.fetch import fetch_all, fetch_range, fred_url, nasdaq_url, yahoo_url
+from pm_traitbench.market.real.fetch import fetch_all, fetch_range, fred_url, yahoo_url
 from pm_traitbench.market.real.sources import (
     REAL_INSTRUMENTS,
     REFERENCE_EQUITY,
@@ -22,12 +22,6 @@ from pm_traitbench.market.real.sources import (
 )
 
 _CREDIT_SERIES: frozenset[str] = frozenset({"DAAA", "DBAA"})
-# A quarter runs about 60-65 weekdays; picking each report from the middle of
-# its quarter keeps consecutive reports at least 40 weekdays (about 8 weeks)
-# apart - exactly 40 where the carry-forward band binds, not always with slack.
-_REPORT_BAND_LO = 20
-_REPORT_BAND_HI = 40
-_MIN_REPORT_GAP_WEEKDAYS = 40
 
 # Realistic starting yields (percent) so a curve tenor never nears the 0.0
 # floor; steps are scaled to about 0.05 percentage points a day.
@@ -69,40 +63,6 @@ def _weekdays(start: date, end: date) -> list[date]:
     return days
 
 
-def _quarter_bounds(day: date) -> tuple[date, date]:
-    q_start_month = 3 * ((day.month - 1) // 3) + 1
-    start = date(day.year, q_start_month, 1)
-    if q_start_month == 10:
-        end = date(day.year, 12, 31)
-    else:
-        end = date(day.year, q_start_month + 3, 1) - timedelta(days=1)
-    return start, end
-
-
-def _quarters_overlapping(start: date, end: date) -> list[tuple[date, date]]:
-    """Calendar quarters overlapping [start, end], each clipped to that range."""
-    quarters = []
-    q_start, q_end = _quarter_bounds(start)
-    while q_start <= end:
-        quarters.append((max(q_start, start), min(q_end, end)))
-        q_start, q_end = _quarter_bounds(q_end + timedelta(days=1))
-    return quarters
-
-
-def _clamped_band(n: int, lo: int = _REPORT_BAND_LO, hi: int = _REPORT_BAND_HI) -> tuple[int, int]:
-    """The `[lo, hi)` weekday-position band, clamped to fit a short quarter."""
-    hi = min(hi, n)
-    lo = min(lo, hi - 1) if hi > 0 else 0
-    return max(lo, 0), max(hi, lo + 1)
-
-
-def _pick_in_band(candidates: list[date], rng: np.random.Generator, lo: int, hi: int) -> date:
-    lo, hi = max(lo, 0), min(hi, len(candidates))
-    if hi <= lo:
-        lo, hi = 0, len(candidates)
-    return candidates[lo + int(rng.integers(0, hi - lo))]
-
-
 def _fred_csv(series: str, days: Sequence[date], values: dict[date, float]) -> bytes:
     """A FRED-shaped CSV: every day in `days` gets a row, missing days get an
     empty value, matching FRED's real holiday convention (e.g. '2018-07-04,').
@@ -136,15 +96,6 @@ def _yahoo_json(values: dict[date, float]) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
-def _nasdaq_json(symbols: list[str]) -> bytes:
-    payload = {
-        "data": {"asOf": None, "headers": {}, "rows": [{"symbol": s} for s in symbols] or None},
-        "message": None,
-        "status": {"rCode": 200},
-    }
-    return json.dumps(payload).encode("utf-8")
-
-
 @dataclass(frozen=True)
 class FakeCache:
     """A built fake raw cache: its data dir, the shared holiday-gap weekday, and
@@ -165,15 +116,7 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
     (its real convention), Yahoo omits the row entirely. Yahoo timestamps sit
     at 13:30 UTC. Every equity is generated as `beta * spy_return + noise`
     with a known beta, so a beta regression against SPY can be checked
-    against a known slope. The Nasdaq calendar covers every referenced real
-    seed's own window and has every equity ticker reporting once per
-    calendar quarter, each report at least 40 weekdays from its neighbours,
-    with the first equity ticker's report in the holiday's quarter moved
-    onto the holiday weekday itself (rather than any weekend date, since a
-    real cache never holds a weekend file), replacing rather than
-    duplicating that ticker's report for that quarter; only the following
-    quarter's band then carries forward to keep the spacing, never the
-    preceding one.
+    against a known slope.
     """
 
     def _build(config: Config) -> FakeCache:
@@ -181,24 +124,7 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
         start, end = fetch_range(config)
         weekdays = _weekdays(start, end)
 
-        used = set(referenced_seeds(config))
-        real_seeds = {name: spec for name, spec in config.market.real.seeds.items() if name in used}
-        nasdaq_day_set: set[date] = set()
-        quarters: list[tuple[date, date]] = []
-        # Where each seed's own quarters start in `quarters`, so the spacing
-        # carry-forward below never bridges two non-adjacent seed windows.
-        seed_starts: set[int] = set()
-        for spec in real_seeds.values():
-            window_end = real_window_end(spec, config.calendar.n_weeks)
-            nasdaq_day_set.update(_weekdays(spec.window_start, window_end))
-            seed_starts.add(len(quarters))
-            quarters.extend(_quarters_overlapping(spec.window_start, window_end))
-        nasdaq_days = sorted(nasdaq_day_set)
-
-        # Picked from the union of the seeds' own windows (not the wider
-        # fetch range, which can include a gap between non-adjacent windows
-        # that no seed's Nasdaq calendar covers).
-        holiday = nasdaq_days[len(nasdaq_days) // 2]
+        holiday = weekdays[len(weekdays) // 2]
         series_days = [day for day in weekdays if day != holiday]
 
         rng = np.random.default_rng(0)
@@ -259,48 +185,6 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
             walk = 100.0 + np.cumsum(rng.normal(0, 1, size=len(series_days)))
             values = dict(zip(series_days, walk, strict=True))
             files[yahoo_url(ticker, start, end)] = _yahoo_json(values)
-
-        equities = [inst.series for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES]
-        holiday_quarter_index = next(
-            (i for i, (q_start, q_end) in enumerate(quarters) if q_start <= holiday <= q_end),
-            None,
-        )
-        assert holiday_quarter_index is not None, "holiday falls outside the Nasdaq window"
-
-        symbols_by_date: dict[date, list[str]] = {}
-        target_ticker = equities[0]
-        for ticker in equities:
-            prev_pos: int | None = None
-            prev_len: int | None = None
-            for qi, (q_start, q_end) in enumerate(quarters):
-                if qi in seed_starts:
-                    prev_pos, prev_len = None, None
-                candidates = _weekdays(q_start, q_end)
-                n = len(candidates)
-                lo, hi = _clamped_band(n)
-                if prev_pos is not None:
-                    # Carry the previous position forward so this report stays
-                    # >= the minimum gap away.
-                    min_needed = _MIN_REPORT_GAP_WEEKDAYS - prev_len + prev_pos
-                    if min_needed > n - 1:
-                        raise AssertionError(
-                            f"quarter {qi} for {ticker} has only {n} weekdays, too few to "
-                            f"keep a >= {_MIN_REPORT_GAP_WEEKDAYS}-weekday gap from the "
-                            "previous report"
-                        )
-                    lo = max(lo, min_needed)
-                    hi = max(min(hi, n), lo + 1)
-                if ticker == target_ticker and qi == holiday_quarter_index:
-                    report_day = holiday
-                    pos = candidates.index(holiday)
-                else:
-                    report_day = _pick_in_band(candidates, rng, lo, hi)
-                    pos = candidates.index(report_day)
-                symbols_by_date.setdefault(report_day, []).append(ticker)
-                prev_pos, prev_len = pos, n
-
-        for day in nasdaq_days:
-            files[nasdaq_url(day)] = _nasdaq_json(symbols_by_date.get(day, []))
 
         fetch_all(config, data_dir, opener=_fake_opener(files), sleeper=lambda _: None)
         return FakeCache(data_dir=data_dir, holiday=holiday, betas=betas)

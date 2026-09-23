@@ -1,28 +1,26 @@
-"""Real-market calendar: fixed macro dates plus the Nasdaq earnings feed,
-priced into surprises from the seed's own simulated series.
+"""Real-market calendar: fixed macro dates priced into surprises from the
+seed's own simulated series.
 
 Event dates and targets carry no randomness: FOMC, WASDE and NFP dates are a
-public schedule, earnings dates come from the Nasdaq calendar, and inventory
-and crop reports follow a fixed weekday or that same public schedule.
-Surprise magnitude and sign come from the realised market move, so no
-sampling stream is used here.
+public schedule, and inventory and crop reports follow a fixed weekday or
+that same public schedule. A real seed has no earnings feed, so it never
+draws an EARNINGS event. Surprise magnitude and sign come from the realised
+market move, so no sampling stream is used here.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 
 import numpy as np
 
 from pm_traitbench.config import Config, RealSeedSpec
-from pm_traitbench.enums import CommodityGroup, EventType, Family, InstrumentKind
+from pm_traitbench.enums import CommodityGroup, EventType, InstrumentKind
 from pm_traitbench.market.axis import SimAxis
 from pm_traitbench.market.calendar import row_sort_key
 from pm_traitbench.market.check import EVENT_FAMILY
 from pm_traitbench.market.constants import ANNUALISATION_DAYS
 from pm_traitbench.market.output import ProcessOutput
-from pm_traitbench.market.real.fetch import RawCache
-from pm_traitbench.market.real.sources import REAL_INSTRUMENTS
 from pm_traitbench.market.real.universe import real_axis_dates
 from pm_traitbench.tables.schema import CalendarEvent, Instrument
 
@@ -65,12 +63,8 @@ NFP_DATES: tuple[date, ...] = (
     date(2019, 5, 3),
 )
 
-_TICKER_TO_INSTRUMENT_ID: dict[str, str] = {
-    inst.series: inst.instrument_id for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES
-}
-
-# The event types a real seed can draw; rating actions are never generated
-# for real seeds, so they always count as zero.
+# The event types a real seed can draw; rating actions and earnings are
+# never generated for real seeds, so they always count as zero.
 _COUNTED_EVENT_TYPES: tuple[EventType, ...] = tuple(EVENT_FAMILY)
 
 
@@ -85,7 +79,6 @@ class RealEvent:
 
 def real_event_days(
     instruments: Sequence[Instrument],
-    cache: RawCache,
     spec: RealSeedSpec,
     axis: SimAxis,
     calendar_start: date,
@@ -94,20 +87,14 @@ def real_event_days(
 
     Every axis day's real date is a weekday: `real_axis_dates` maps Monday to
     Monday, so the offset between `calendar_start` and `spec.window_start` is
-    a whole number of weeks. The Nasdaq feed is fetched for weekdays only, so
-    `cache.nasdaq_symbols` is only ever asked about a weekday too.
+    a whole number of weeks. A real seed draws no EARNINGS event, since it
+    has no earnings feed.
     """
     real_dates = real_axis_dates(spec, axis, calendar_start)
     horizon = range(axis.n_burn, axis.n_days)
     real_date_to_day = {real_dates[t]: t for t in horizon}
 
     events: list[RealEvent] = []
-
-    for t in horizon:
-        symbols = cache.nasdaq_symbols(real_dates[t]) & set(_TICKER_TO_INSTRUMENT_ID)
-        for symbol in sorted(symbols):
-            instrument_id = _TICKER_TO_INSTRUMENT_ID[symbol]
-            events.append(RealEvent(instrument_id=instrument_id, event=EventType.EARNINGS, day=t))
 
     curve_ids = [i.instrument_id for i in instruments if i.kind == InstrumentKind.SOVEREIGN_CURVE]
     for fomc_date in FOMC_DATES:
@@ -162,7 +149,6 @@ def surprise_rows(
     events: Sequence[RealEvent],
     output: ProcessOutput,
     spy_log_return: np.ndarray,
-    betas: Mapping[str, float],
     y10_bp: np.ndarray,
     axis: SimAxis,
     seed: str,
@@ -178,11 +164,7 @@ def surprise_rows(
         t = event.day
         jump_size = config.market.events[event.event].jump_size
 
-        if event.event == EventType.EARNINGS:
-            r_i = _log_return(output.prices[event.instrument_id], t)
-            beta = betas[event.instrument_id]
-            surprise = _clip((r_i - beta * spy_log_return[t]) / jump_size)
-        elif event.event == EventType.CB_MEETING:
+        if event.event == EventType.CB_MEETING:
             surprise = _clip(-(y10_bp[t] - y10_bp[t - 1]) / jump_size)
         elif event.event in (EventType.INVENTORY_REPORT, EventType.CROP_REPORT):
             r_c = _log_return(output.prices[event.instrument_id], t)
