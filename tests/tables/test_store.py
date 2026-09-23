@@ -9,6 +9,7 @@ from pm_traitbench.enums import (
     Action,
     AssetClass,
     DriftEventType,
+    EventType,
     Kind,
     Op,
     RuleScope,
@@ -19,6 +20,7 @@ from pm_traitbench.enums import (
 from pm_traitbench.errors import StageIOError, TableValidationError
 from pm_traitbench.tables.formats import FORMATS
 from pm_traitbench.tables.schema import (
+    CalendarEvent,
     DriftEvent,
     Mandate,
     Persona,
@@ -27,7 +29,14 @@ from pm_traitbench.tables.schema import (
     Trait,
     to_record,
 )
-from pm_traitbench.tables.specs import DRIFT_EVENTS, PERSONAS, RULES, TRAITS, TableSpec
+from pm_traitbench.tables.specs import (
+    DRIFT_EVENTS,
+    MARKET_CALENDAR,
+    PERSONAS,
+    RULES,
+    TRAITS,
+    TableSpec,
+)
 from pm_traitbench.tables.store import DataStore
 
 
@@ -93,6 +102,27 @@ def _drift_event(pm_id: str, date: datetime.date, trait_id: str) -> DriftEvent:
 
 def _key_of(spec: TableSpec, row) -> tuple:
     return tuple(getattr(row, field) for field in spec.key)
+
+
+def _calendar_events(date: datetime.date) -> list[CalendarEvent]:
+    return [
+        CalendarEvent(
+            seed="A",
+            date=date,
+            instrument_id="AAPL",
+            event=EventType.EARNINGS,
+            surprise=0.1,
+            affected="equities",
+        ),
+        CalendarEvent(
+            seed="A",
+            date=date,
+            instrument_id=None,
+            event=EventType.MACRO_PRINT,
+            surprise=0.2,
+            affected="all",
+        ),
+    ]
 
 
 def test_default_format_is_jsonl_for_every_table(tmp_path: Path) -> None:
@@ -316,3 +346,43 @@ def test_store_records_which_tables_it_wrote(tmp_path: Path) -> None:
     assert store.was_written(TRAITS)
     assert not store.was_written(RULES)
     assert not DataStore(tmp_path, OutputConfig()).was_written(TRAITS)
+
+
+def test_write_creates_subdirectory_for_market_table(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    rows = _calendar_events(datetime.date(2026, 3, 2))
+    path = store.write(MARKET_CALENDAR, rows)
+    assert path == tmp_path / "market" / "calendar.jsonl"
+    assert path.exists()
+
+
+def test_write_null_instrument_id_sorts_first_within_same_date(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    rows = _calendar_events(datetime.date(2026, 3, 2))
+    store.write(MARKET_CALENDAR, rows)
+    read_back = store.read(MARKET_CALENDAR)
+    assert [row.instrument_id for row in read_back] == [None, "AAPL"]
+
+
+def test_write_subdirectory_table_with_parquet_override(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig(tables={"market/calendar": "parquet"}))
+    rows = _calendar_events(datetime.date(2026, 3, 2))
+    path = store.write(MARKET_CALENDAR, rows)
+    assert path == tmp_path / "market" / "calendar.parquet"
+    read_back = store.read(MARKET_CALENDAR)
+    assert [row.instrument_id for row in read_back] == [None, "AAPL"]
+
+
+def test_write_run_metadata_merges_extra_keys(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    path = store.write_run_metadata("sampling", config, extra={"check": {"A": 1}})
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["check"] == {"A": 1}
+
+
+def test_write_run_metadata_extra_colliding_key_raises(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    with pytest.raises(ValueError, match="stage"):
+        store.write_run_metadata("sampling", config, extra={"stage": "oops"})

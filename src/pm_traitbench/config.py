@@ -10,8 +10,24 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from pm_traitbench.distributions import BetaSpec, Distribution, LogNormalSpec
-from pm_traitbench.enums import AssetClass, Regime
+from pm_traitbench.enums import (
+    HY_BANDS,
+    AssetClass,
+    CommodityGroup,
+    EventType,
+    ExpiryRule,
+    RatingBand,
+    Regime,
+)
 from pm_traitbench.errors import ConfigError
+from pm_traitbench.market.constants import (
+    COMMODITIES,
+    CREDIT_BAND_ORDER,
+    FX_PAIRS,
+    HORIZON_DAYS_PER_YEAR,
+    USD_PAIR,
+    largest_remainder,
+)
 from pm_traitbench.timeline import Timeline
 
 BIAS_PARAMS: tuple[str, ...] = (
@@ -425,6 +441,961 @@ class OutputConfig(BaseModel):
     )
 
 
+@dataclass(frozen=True)
+class RegimeParams:
+    driver_mean: float
+    vol_multiplier: float
+    mean_reversion_kappa: float
+
+
+class MarketUniverseConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    n_equities: int = Field(
+        80,
+        gt=0,
+        json_schema_extra={"basis": "design", "note": "size of the simulated equity universe"},
+    )
+    n_sectors: int = Field(
+        10,
+        ge=1,
+        le=99,
+        json_schema_extra={
+            "basis": "design",
+            "note": "number of equity sectors to spread names across",
+        },
+    )
+    n_credit_issuers: int = Field(
+        48,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": "size of the simulated credit issuer universe",
+        },
+    )
+    credit_band_shares: dict[RatingBand, float] = Field(
+        default_factory=lambda: {
+            RatingBand.AA: 0.15,
+            RatingBand.A: 0.25,
+            RatingBand.BBB: 0.30,
+            RatingBand.BB: 0.20,
+            RatingBand.B: 0.10,
+        },
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "an investment-grade-heavy mix in the spirit of the ICE BofA US Corporate "
+                "and High Yield indices, with the high-yield share raised; the index fact "
+                "sheets would verify it."
+            ),
+        },
+    )
+    curves: tuple[str, ...] = Field(
+        ("USD", "EUR", "GBP", "JPY"),
+        json_schema_extra={"basis": "design", "note": "sovereign curves in the simulated universe"},
+    )
+    commodities: dict[CommodityGroup, int] = Field(
+        default_factory=lambda: {
+            CommodityGroup.ENERGY: 6,
+            CommodityGroup.INDUSTRIAL_METALS: 4,
+            CommodityGroup.PRECIOUS: 3,
+            CommodityGroup.AGRICULTURE: 7,
+        },
+        json_schema_extra={
+            "basis": "design",
+            "note": "how many commodities of each group's code table are simulated",
+        },
+    )
+    fx_pairs: tuple[str, ...] = Field(
+        (
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "USDCHF",
+            "USDCAD",
+            "EURGBP",
+            "EURJPY",
+            "AUDJPY",
+        ),
+        json_schema_extra={"basis": "design", "note": "FX pairs in the simulated universe"},
+    )
+    equity_beta_range: tuple[float, float] = Field(
+        (0.6, 1.4),
+        json_schema_extra={
+            "basis": "guess",
+            "note": "about the 10th to 90th percentile of large-cap equity betas",
+        },
+    )
+    credit_duration_range: tuple[float, float] = Field(
+        (3.0, 8.0),
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "high-yield index duration is about 4 and investment-grade about 7; the "
+                "index fact sheets would verify it."
+            ),
+        },
+    )
+    expiry_rule: ExpiryRule = Field(
+        ExpiryRule.MONTHLY_THIRD_FRIDAY,
+        json_schema_extra={"basis": "design", "note": "futures and options expiry convention"},
+    )
+
+    @field_validator("credit_band_shares")
+    @classmethod
+    def _check_credit_band_shares(cls, value: dict[RatingBand, float]) -> dict[RatingBand, float]:
+        if set(value) != set(RatingBand):
+            raise ValueError(f"credit_band_shares keys must be exactly {set(RatingBand)}")
+        if any(share < 0 for share in value.values()):
+            raise ValueError("credit_band_shares must be non-negative")
+        if abs(sum(value.values()) - 1.0) > 1e-9:
+            raise ValueError("credit_band_shares must sum to 1")
+        ig_bands = set(RatingBand) - HY_BANDS
+        if not any(value[band] > 0 for band in ig_bands):
+            raise ValueError("credit_band_shares must have a positive investment-grade share")
+        return value
+
+    @field_validator("curves")
+    @classmethod
+    def _check_curves(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("curves must not be empty")
+        if len(set(value)) != len(value):
+            raise ValueError(f"curves must not repeat an entry: {list(value)}")
+        return value
+
+    @field_validator("commodities")
+    @classmethod
+    def _check_commodities(cls, value: dict[CommodityGroup, int]) -> dict[CommodityGroup, int]:
+        if set(value) != set(CommodityGroup):
+            raise ValueError(f"commodities keys must be exactly {set(CommodityGroup)}")
+        for group, n in value.items():
+            max_n = len(COMMODITIES[group])
+            if not (0 <= n <= max_n):
+                raise ValueError(f"commodities[{group}] must be between 0 and {max_n}")
+        if sum(value.values()) == 0:
+            raise ValueError("commodities must include at least one commodity")
+        return value
+
+    @field_validator("fx_pairs")
+    @classmethod
+    def _check_fx_pairs(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("fx_pairs must not be empty")
+        unknown = set(value) - set(FX_PAIRS)
+        if unknown:
+            raise ValueError(f"fx_pairs has unknown pair(s): {sorted(unknown)}")
+        if len(set(value)) != len(value):
+            raise ValueError(f"fx_pairs must not repeat an entry: {list(value)}")
+        if not set(value) & set(USD_PAIR.values()):
+            raise ValueError("fx_pairs must include at least one USD pair")
+        return value
+
+    @field_validator("equity_beta_range", "credit_duration_range")
+    @classmethod
+    def _check_positive_range(cls, value: tuple[float, float]) -> tuple[float, float]:
+        lo, hi = value
+        if not (0 < lo <= hi):
+            raise ValueError("range must have 0 < lo <= hi")
+        return value
+
+    @model_validator(mode="after")
+    def _check_credit_band_allocation(self) -> "MarketUniverseConfig":
+        counts = largest_remainder(
+            self.n_credit_issuers, self.credit_band_shares, CREDIT_BAND_ORDER
+        )
+        ig_bands = set(RatingBand) - HY_BANDS
+        if sum(counts[band] for band in ig_bands) == 0:
+            raise ValueError(
+                "n_credit_issuers and credit_band_shares leave zero investment-grade issuers"
+            )
+        return self
+
+
+class MarketRegimesConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    driver_mean: dict[Regime, float] = Field(
+        default_factory=lambda: {
+            Regime.RANGE: 0.00,
+            Regime.RISK_OFF: -0.09,
+            Regime.RISK_ON: 0.06,
+        },
+        json_schema_extra={"basis": "design", "note": "mean daily driver level by regime"},
+    )
+    vol_multiplier: dict[Regime, float] = Field(
+        default_factory=lambda: {
+            Regime.RANGE: 1.0,
+            Regime.RISK_OFF: 1.6,
+            Regime.RISK_ON: 0.95,
+        },
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "VIX medians of 17.0, 27.6 and 16.3 for range, risk-off and risk-on, "
+                "conditioned on the trailing 60-day equity return, FRED VIXCLS and "
+                "NASDAQCOM."
+            ),
+        },
+    )
+    mean_reversion_kappa: dict[Regime, float] = Field(
+        default_factory=lambda: {
+            Regime.RANGE: 0.05,
+            Regime.RISK_OFF: 0.0,
+            Regime.RISK_ON: 0.0,
+        },
+        json_schema_extra={
+            "basis": "design",
+            "note": "range regime pulls toward its mean with a half-life of about 14 days",
+        },
+    )
+
+    @field_validator("driver_mean", "vol_multiplier", "mean_reversion_kappa")
+    @classmethod
+    def _check_regime_keys(cls, value: dict[Regime, float]) -> dict[Regime, float]:
+        if set(value) != set(Regime):
+            raise ValueError(f"must have exactly the three regimes: {set(Regime)}")
+        return value
+
+    @field_validator("vol_multiplier")
+    @classmethod
+    def _check_vol_multiplier_positive(cls, value: dict[Regime, float]) -> dict[Regime, float]:
+        if any(v <= 0 for v in value.values()):
+            raise ValueError("vol_multiplier must be positive")
+        return value
+
+    @field_validator("mean_reversion_kappa")
+    @classmethod
+    def _check_kappa_range(cls, value: dict[Regime, float]) -> dict[Regime, float]:
+        if any(not (0 <= v < 1) for v in value.values()):
+            raise ValueError("mean_reversion_kappa must be in [0, 1)")
+        return value
+
+    def params(self, regime: Regime) -> RegimeParams:
+        return RegimeParams(
+            driver_mean=self.driver_mean[regime],
+            vol_multiplier=self.vol_multiplier[regime],
+            mean_reversion_kappa=self.mean_reversion_kappa[regime],
+        )
+
+
+class EquityFamilyConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    market_vol: float = Field(
+        0.16,
+        gt=0,
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "S&P 500 realised volatility 2016-2026 is 18.1 percent, and 15.2 percent "
+                "excluding 2020; the VIX median 1990-2026 is 17.6, FRED SP500."
+            ),
+        },
+    )
+    idio_vol: float = Field(
+        0.25,
+        gt=0,
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "Campbell, Lettau, Malkiel and Xu 2023 estimate of average idiosyncratic "
+                "equity volatility."
+            ),
+        },
+    )
+
+
+class RatesFamilyConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    level_vol_bp: dict[str, float] = Field(
+        default_factory=lambda: {"USD": 90.0, "GBP": 90.0, "EUR": 70.0, "JPY": 30.0},
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "USD 10-year realised vol of daily changes 1990-2026 is 92bp a year, FRED "
+                "DGS10; GBP, EUR and JPY are guesses scaled to their lower yield levels; "
+                "OECD long-term rate series on FRED (IRLTLT01GBM156N, IRLTLT01DEM156N, "
+                "IRLTLT01JPM156N) would verify them."
+            ),
+        },
+    )
+    slope_vol_bp: float = Field(
+        60.0,
+        gt=0,
+        json_schema_extra={
+            "basis": "sourced",
+            "note": "the 2s10s spread's realised volatility 2000-2026 is 62bp a year, FRED T10Y2Y.",
+        },
+    )
+    driver_corr: float = Field(
+        0.3,
+        ge=-1,
+        le=1,
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "the correlation between the 10-year yield change and the equity return "
+                "is 0.34 for 2000-2020 and 0.26 for 2000-2026, the post-2000 regime of "
+                "Campbell, Pflueger and Viceira 2020; it turned negative in 2022. FRED "
+                "DGS10, NASDAQCOM."
+            ),
+        },
+    )
+
+    @field_validator("level_vol_bp")
+    @classmethod
+    def _check_level_vol_bp_positive(cls, value: dict[str, float]) -> dict[str, float]:
+        if any(v <= 0 for v in value.values()):
+            raise ValueError("level_vol_bp must be positive")
+        return value
+
+
+class CreditFamilyConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    factor_vol: float = Field(
+        0.25,
+        gt=0,
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "daily log OAS change volatility 2023-2026 is 0.23 for investment grade "
+                "and 0.33 for high yield, FRED BAMLC0A0CM and BAMLH0A0HYM2."
+            ),
+        },
+    )
+    hy_vol_multiplier: float = Field(
+        1.4,
+        gt=0,
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "ratio of the high-yield to investment-grade daily log OAS change "
+                "volatility, 0.33 over 0.23, FRED BAMLH0A0HYM2 and BAMLC0A0CM."
+            ),
+        },
+    )
+    driver_corr: float = Field(
+        -0.5,
+        ge=-1,
+        le=1,
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "investment-grade and high-yield spreads correlate with the S&P 500 at "
+                "-0.43 and -0.62 respectively, 2023-2026, FRED."
+            ),
+        },
+    )
+    asymmetry: float = Field(
+        1.1,
+        ge=1,
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "the mean widening step over the mean tightening step of the daily log "
+                "OAS 2023-2026 is 1.04 to 1.11, with skew 0.5 to 0.9, FRED."
+            ),
+        },
+    )
+    issuer_vol: float = Field(
+        0.15,
+        gt=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "issuer-level OAS is not public; set to about half the index volatility.",
+        },
+    )
+
+
+class CommodityFamilyConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    group_vol: dict[CommodityGroup, float] = Field(
+        default_factory=lambda: {
+            CommodityGroup.ENERGY: 0.40,
+            CommodityGroup.INDUSTRIAL_METALS: 0.21,
+            CommodityGroup.PRECIOUS: 0.15,
+            CommodityGroup.AGRICULTURE: 0.23,
+        },
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "WTI daily realised volatility 2000-2026 is 47 percent, and 37 percent "
+                "excluding 2020, FRED DCOILWTICO; copper monthly volatility is 21 "
+                "percent, FRED PCOPPUSDM; wheat and maize monthly volatility are 25 and "
+                "21 percent, FRED PWHEAMTUSDM and PMAIZMTUSDM; precious is a guess at "
+                "gold's usual 15 percent."
+            ),
+        },
+    )
+    driver_corr: dict[CommodityGroup, float] = Field(
+        default_factory=lambda: {
+            CommodityGroup.ENERGY: 0.15,
+            CommodityGroup.INDUSTRIAL_METALS: 0.3,
+            CommodityGroup.PRECIOUS: -0.1,
+            CommodityGroup.AGRICULTURE: 0.0,
+        },
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "WTI's correlation with the S&P 500 is 0.15 daily 2016-2026; copper's "
+                "correlation with the NASDAQ is 0.30 monthly; wheat is -0.01 and maize is "
+                "0.06, FRED; precious is a guess."
+            ),
+        },
+    )
+    curve_slope: dict[CommodityGroup, float] = Field(
+        default_factory=lambda: {
+            CommodityGroup.ENERGY: -0.05,
+            CommodityGroup.INDUSTRIAL_METALS: 0.01,
+            CommodityGroup.PRECIOUS: 0.03,
+            CommodityGroup.AGRICULTURE: 0.04,
+        },
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "average annual roll yield by commodity group, Erb and Harvey 2006 and "
+                "Gorton and Rouwenhorst 2006; negative is backwardation."
+            ),
+        },
+    )
+    group_share: float = Field(
+        0.6,
+        gt=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "share of group variance versus idiosyncratic variance per commodity, "
+                "about 0.5-0.7."
+            ),
+        },
+    )
+
+    @field_validator("group_vol", "driver_corr", "curve_slope")
+    @classmethod
+    def _check_commodity_group_keys(
+        cls, value: dict[CommodityGroup, float]
+    ) -> dict[CommodityGroup, float]:
+        if set(value) != set(CommodityGroup):
+            raise ValueError(f"must cover every commodity group: {set(CommodityGroup)}")
+        return value
+
+    @field_validator("group_vol")
+    @classmethod
+    def _check_group_vol_positive(
+        cls, value: dict[CommodityGroup, float]
+    ) -> dict[CommodityGroup, float]:
+        if any(v <= 0 for v in value.values()):
+            raise ValueError("group_vol must be positive")
+        return value
+
+    @field_validator("driver_corr")
+    @classmethod
+    def _check_commodity_driver_corr_range(
+        cls, value: dict[CommodityGroup, float]
+    ) -> dict[CommodityGroup, float]:
+        if any(not (-1 <= v <= 1) for v in value.values()):
+            raise ValueError("driver_corr must be within [-1, 1]")
+        return value
+
+
+class FxFamilyConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    currency_vol: dict[str, float] = Field(
+        default_factory=lambda: {
+            "EUR": 0.09,
+            "GBP": 0.09,
+            "JPY": 0.10,
+            "AUD": 0.12,
+            "CHF": 0.10,
+            "CAD": 0.08,
+        },
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "realised volatility of EURUSD, GBPUSD, USDJPY, AUDUSD, USDCHF and "
+                "USDCAD 2000-2026, FRED DEXUSEU, DEXUSUK, DEXJPUS, DEXUSAL, DEXSZUS, "
+                "DEXCAUS."
+            ),
+        },
+    )
+    driver_corr: dict[str, float] = Field(
+        default_factory=lambda: {
+            "EUR": 0.1,
+            "GBP": 0.2,
+            "JPY": -0.1,
+            "AUD": 0.3,
+            "CHF": 0.0,
+            "CAD": 0.25,
+        },
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "correlation with the S&P 500 2016-2026 is 0.11, 0.21, -0.09, 0.30, 0.02 "
+                "and 0.24 for EUR, GBP, JPY, AUD, CHF and CAD, FRED."
+            ),
+        },
+    )
+
+    @field_validator("currency_vol", "driver_corr")
+    @classmethod
+    def _check_fx_currency_keys(cls, value: dict[str, float]) -> dict[str, float]:
+        if set(value) != set(USD_PAIR):
+            raise ValueError(f"must cover every non-USD currency: {set(USD_PAIR)}")
+        return value
+
+    @field_validator("currency_vol")
+    @classmethod
+    def _check_currency_vol_positive(cls, value: dict[str, float]) -> dict[str, float]:
+        if any(v <= 0 for v in value.values()):
+            raise ValueError("currency_vol must be positive")
+        return value
+
+    @field_validator("driver_corr")
+    @classmethod
+    def _check_fx_driver_corr_range(cls, value: dict[str, float]) -> dict[str, float]:
+        if any(not (-1 <= v <= 1) for v in value.values()):
+            raise ValueError("driver_corr must be within [-1, 1]")
+        return value
+
+
+class MarketFamiliesConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    equity: EquityFamilyConfig = Field(default_factory=EquityFamilyConfig)
+    rates: RatesFamilyConfig = Field(default_factory=RatesFamilyConfig)
+    credit: CreditFamilyConfig = Field(default_factory=CreditFamilyConfig)
+    commodity: CommodityFamilyConfig = Field(default_factory=CommodityFamilyConfig)
+    fx: FxFamilyConfig = Field(default_factory=FxFamilyConfig)
+    student_t_df: int = Field(
+        4,
+        ge=3,
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "S&P 500 daily kurtosis 2016-2026 is about 20, FRED SP500; a t "
+                "distribution with 4 degrees of freedom already has infinite kurtosis."
+            ),
+        },
+    )
+
+
+class MarketLevelsConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    equity_price_range: tuple[float, float] = Field(
+        (10.0, 400.0),
+        json_schema_extra={
+            "basis": "design",
+            "note": "starting price range for simulated equities",
+        },
+    )
+    curve_start: dict[str, tuple[float, float, float, float]] = Field(
+        default_factory=lambda: {
+            "USD": (4.0, 3.9, 4.1, 4.4),
+            "EUR": (2.4, 2.3, 2.5, 2.8),
+            "GBP": (4.2, 4.0, 4.2, 4.6),
+            "JPY": (0.4, 0.5, 1.0, 2.0),
+        },
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "approximate 2026 sovereign yield curve shape by currency, in percent "
+                "for 2Y/5Y/10Y/30Y"
+            ),
+        },
+    )
+    credit_base_spread_bp: dict[RatingBand, float] = Field(
+        default_factory=lambda: {
+            RatingBand.AA: 50,
+            RatingBand.A: 70,
+            RatingBand.BBB: 105,
+            RatingBand.BB: 180,
+            RatingBand.B: 305,
+        },
+        json_schema_extra={
+            "basis": "sourced",
+            "note": (
+                "ICE BofA OAS medians 2023-09 to 2026-09 by rating band, FRED "
+                "BAMLC0A2CAA, BAMLC0A3CA, BAMLC0A4CBBB, BAMLH0A1HYBB, BAMLH0A2HYB."
+            ),
+        },
+    )
+    fx_start: dict[str, float] = Field(
+        default_factory=lambda: {
+            "EURUSD": 1.10,
+            "GBPUSD": 1.28,
+            "USDJPY": 150.0,
+            "AUDUSD": 0.66,
+            "USDCHF": 0.88,
+            "USDCAD": 1.36,
+        },
+        json_schema_extra={"basis": "design", "note": "starting level for each simulated FX pair"},
+    )
+    yield_floor_pct: float = Field(
+        0.0,
+        json_schema_extra={
+            "basis": "design",
+            "note": "floor below which simulated sovereign yields cannot fall",
+        },
+    )
+
+    @field_validator("equity_price_range")
+    @classmethod
+    def _check_equity_price_range(cls, value: tuple[float, float]) -> tuple[float, float]:
+        lo, hi = value
+        if not (0 < lo < hi):
+            raise ValueError("equity_price_range must have 0 < lo < hi")
+        return value
+
+    @field_validator("credit_base_spread_bp")
+    @classmethod
+    def _check_credit_base_spread_bp(
+        cls, value: dict[RatingBand, float]
+    ) -> dict[RatingBand, float]:
+        if set(value) != set(RatingBand):
+            raise ValueError(f"credit_base_spread_bp keys must be exactly {set(RatingBand)}")
+        if any(v <= 0 for v in value.values()):
+            raise ValueError("credit_base_spread_bp must be positive")
+        return value
+
+    @field_validator("fx_start")
+    @classmethod
+    def _check_fx_start(cls, value: dict[str, float]) -> dict[str, float]:
+        unknown = set(value) - set(FX_PAIRS)
+        if unknown:
+            raise ValueError(f"fx_start has unknown pair(s): {sorted(unknown)}")
+        if any(v <= 0 for v in value.values()):
+            raise ValueError("fx_start must be positive")
+        return value
+
+
+class EventSpec(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    per_year: float = Field(ge=0)
+    jump_size: float = Field(ge=0)
+    placement: Literal["grid", "poisson"]
+    jitter_days: int = Field(0, ge=0)
+    basis: Basis
+    note: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check_grid_jitter(self) -> "EventSpec":
+        if self.placement == "grid":
+            if self.per_year <= 0:
+                raise ValueError("grid placement requires per_year > 0")
+            if HORIZON_DAYS_PER_YEAR / self.per_year <= 2 * self.jitter_days:
+                raise ValueError("jitter_days is too large to keep jittered grid dates unique")
+        return self
+
+
+_MARKET_EVENT_TYPES: tuple[EventType, ...] = (
+    EventType.EARNINGS,
+    EventType.RATING_DOWNGRADE,
+    EventType.RATING_UPGRADE,
+    EventType.CB_MEETING,
+    EventType.INVENTORY_REPORT,
+    EventType.CROP_REPORT,
+    EventType.MACRO_PRINT,
+)
+
+
+def _default_market_events() -> dict[EventType, EventSpec]:
+    return {
+        EventType.EARNINGS: EventSpec(
+            per_year=4,
+            jump_size=0.05,
+            placement="grid",
+            jitter_days=5,
+            basis="sourced",
+            note=(
+                "Dubinsky, Johannes, Kaeck and Seeger 2019 estimate of typical "
+                "earnings-day option-implied jump size."
+            ),
+        ),
+        EventType.RATING_DOWNGRADE: EventSpec(
+            per_year=0.2,
+            jump_size=0.20,
+            placement="poisson",
+            basis="guess",
+            note=(
+                "Frequency is a guess; the direction of the spread reaction follows "
+                "Hand, Holthausen and Leftwich 1992."
+            ),
+        ),
+        EventType.RATING_UPGRADE: EventSpec(
+            per_year=0.1,
+            jump_size=0.20,
+            placement="poisson",
+            basis="guess",
+            note="Frequency and magnitude are a guess.",
+        ),
+        EventType.CB_MEETING: EventSpec(
+            per_year=8,
+            jump_size=8.0,
+            placement="grid",
+            basis="sourced",
+            note=(
+                "Eight scheduled FOMC meetings a year; jump size is in basis points on "
+                "the curve level, following Gurkaynak, Sack and Swanson 2005 on "
+                "policy-surprise magnitude."
+            ),
+        ),
+        EventType.INVENTORY_REPORT: EventSpec(
+            per_year=52,
+            jump_size=0.012,
+            placement="grid",
+            basis="sourced",
+            note=(
+                "WTI's Wednesday realised volatility is 3.15 percent versus 2.93 "
+                "percent on other days, FRED DCOILWTICO."
+            ),
+        ),
+        EventType.CROP_REPORT: EventSpec(
+            per_year=12,
+            jump_size=0.03,
+            placement="grid",
+            basis="sourced",
+            note=(
+                "USDA WASDE monthly report; jump size follows Adjemian 2012 on price "
+                "reaction magnitude."
+            ),
+        ),
+        EventType.MACRO_PRINT: EventSpec(
+            per_year=12,
+            jump_size=1.0,
+            placement="grid",
+            basis="design",
+            note=(
+                "monthly macro data releases; jump size is a driver standard "
+                "deviation, not a price percentage."
+            ),
+        ),
+    }
+
+
+class MarketConsensusConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    street_window_days: int = Field(
+        20,
+        gt=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "trailing window for the street consensus view; also its EMA "
+                "half-life in trading days"
+            ),
+        },
+    )
+    positioning_window_multiple: int = Field(
+        3,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "positioning window as a multiple of the street window; that "
+                "window is also its EMA half-life in trading days"
+            ),
+        },
+    )
+    revision_weekday: int = Field(
+        2,
+        ge=0,
+        le=4,
+        json_schema_extra={
+            "basis": "design",
+            "note": "0 is Monday; consensus revises midweek, Wednesday.",
+        },
+    )
+    view_threshold: float = Field(
+        0.25,
+        gt=0,
+        lt=0.5,
+        json_schema_extra={
+            "basis": "design",
+            "note": "keeps twice the threshold inside [-1, 1] for the flip test",
+        },
+    )
+    flips_per_instrument_year: float = Field(
+        2.0,
+        ge=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "rate of street view flips per instrument per year",
+        },
+    )
+    positioning_thresholds: tuple[float, float] = Field(
+        (20.0, 80.0),
+        json_schema_extra={
+            "basis": "design",
+            "note": "positioning percentile bands for crowded short and crowded long",
+        },
+    )
+    report_weekday: int = Field(
+        4,
+        ge=0,
+        le=4,
+        json_schema_extra={
+            "basis": "sourced",
+            "note": "0 is Monday; CFTC Commitment of Traders reports release on Fridays.",
+        },
+    )
+
+    @field_validator("positioning_thresholds")
+    @classmethod
+    def _check_positioning_thresholds(cls, value: tuple[float, float]) -> tuple[float, float]:
+        lo, hi = value
+        if not (0 <= lo < hi <= 100):
+            raise ValueError("positioning_thresholds must satisfy 0 <= lo < hi <= 100")
+        return value
+
+
+class MarketCheckConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    vol_tolerance: float = Field(
+        0.30,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": "allowed relative slack on model-implied vol targets",
+        },
+    )
+    corr_tolerance_se: float = Field(
+        4.0,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "about 1 in 16,000 false alarms per test in Fisher-z space, which "
+                "stabilises the variance of a correlation estimate near +-1"
+            ),
+        },
+    )
+    min_round_level_tests: float = Field(
+        3.0,
+        ge=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": "minimum mean round-level crossings per instrument to check",
+        },
+    )
+    round_level_band: float = Field(
+        0.002,
+        gt=0,
+        lt=0.05,
+        json_schema_extra={
+            "basis": "design",
+            "note": "width of the band around a round level counted as a test",
+        },
+    )
+
+
+def _default_market_seeds() -> dict[str, tuple[Regime, Regime, Regime]]:
+    return {
+        "A": (Regime.RANGE, Regime.RISK_OFF, Regime.RISK_ON),
+        "B": (Regime.RISK_ON, Regime.RANGE, Regime.RISK_OFF),
+        "C": (Regime.RISK_OFF, Regime.RISK_ON, Regime.RANGE),
+    }
+
+
+class MarketConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    seeds: dict[str, tuple[Regime, Regime, Regime]] = Field(
+        default_factory=_default_market_seeds,
+        json_schema_extra={
+            "basis": "design",
+            "note": "each market seed cycles the three regimes in a distinct order",
+        },
+    )
+    boundary_weeks: tuple[int, int] = Field(
+        (16, 30),
+        json_schema_extra={
+            "basis": "design",
+            "note": "weeks at which a market seed's regime changes",
+        },
+    )
+    burn_in_days: int = Field(
+        60,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": "days of warm-up simulated before the first published day",
+        },
+    )
+    universe: MarketUniverseConfig = Field(default_factory=MarketUniverseConfig)
+    regimes: MarketRegimesConfig = Field(default_factory=MarketRegimesConfig)
+    families: MarketFamiliesConfig = Field(default_factory=MarketFamiliesConfig)
+    levels: MarketLevelsConfig = Field(default_factory=MarketLevelsConfig)
+    events: dict[EventType, EventSpec] = Field(default_factory=_default_market_events)
+    consensus: MarketConsensusConfig = Field(default_factory=MarketConsensusConfig)
+    check: MarketCheckConfig = Field(default_factory=MarketCheckConfig)
+
+    @field_validator("seeds")
+    @classmethod
+    def _check_seeds(
+        cls, value: dict[str, tuple[Regime, Regime, Regime]]
+    ) -> dict[str, tuple[Regime, Regime, Regime]]:
+        for name, regimes in value.items():
+            if set(regimes) != set(Regime):
+                raise ValueError(
+                    f"seed '{name}' must list each regime exactly once: {list(regimes)}"
+                )
+        return value
+
+    @field_validator("boundary_weeks")
+    @classmethod
+    def _check_boundary_weeks(cls, value: tuple[int, int]) -> tuple[int, int]:
+        first, last = value
+        if first >= last:
+            raise ValueError("boundary_weeks must be strictly increasing")
+        return value
+
+    @field_validator("events")
+    @classmethod
+    def _check_events_keys(cls, value: dict[EventType, EventSpec]) -> dict[EventType, EventSpec]:
+        if set(value) != set(_MARKET_EVENT_TYPES):
+            raise ValueError(f"events keys must be exactly {_MARKET_EVENT_TYPES}")
+        return value
+
+    @model_validator(mode="after")
+    def _check_cross_references(self) -> "MarketConfig":
+        missing_curves = set(self.universe.curves) - set(self.levels.curve_start)
+        if missing_curves:
+            raise ValueError(f"levels.curve_start missing curve(s): {sorted(missing_curves)}")
+        missing_level_vol = set(self.universe.curves) - set(self.families.rates.level_vol_bp)
+        if missing_level_vol:
+            raise ValueError(
+                f"families.rates.level_vol_bp missing curve(s): {sorted(missing_level_vol)}"
+            )
+        used_currencies = {
+            currency
+            for pair in self.universe.fx_pairs
+            for currency in FX_PAIRS[pair]
+            if currency != "USD"
+        }
+        missing_vol = used_currencies - set(self.families.fx.currency_vol)
+        if missing_vol:
+            raise ValueError(
+                f"families.fx.currency_vol missing currency(ies): {sorted(missing_vol)}"
+            )
+        missing_start = {USD_PAIR[currency] for currency in used_currencies} - set(
+            self.levels.fx_start
+        )
+        if missing_start:
+            raise ValueError(f"levels.fx_start missing pair(s): {sorted(missing_start)}")
+        return self
+
+
 class Config(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -437,6 +1408,7 @@ class Config(BaseModel):
     drift: DriftConfig = Field(default_factory=DriftConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    market: MarketConfig = Field(default_factory=MarketConfig)
 
     @model_validator(mode="after")
     def _check_week_ranges_within_calendar(self) -> "Config":
@@ -450,6 +1422,20 @@ class Config(BaseModel):
         for path, (first, last) in ranges.items():
             if not (1 <= first <= last <= n_weeks):
                 raise ValueError(f"{path} must fall within 1..{n_weeks}")
+        return self
+
+    @model_validator(mode="after")
+    def _check_market_consistency(self) -> "Config":
+        missing_seeds = set(self.population.market_seeds) - set(self.market.seeds)
+        if missing_seeds:
+            raise ValueError(
+                "market.seeds missing seed(s) used by population.market_seeds: "
+                f"{sorted(missing_seeds)}"
+            )
+        first, last = self.market.boundary_weeks
+        n_weeks = self.calendar.n_weeks
+        if not (1 <= first < last <= n_weeks - 1):
+            raise ValueError(f"market.boundary_weeks must fall within 1..{n_weeks - 1}")
         return self
 
     def timeline(self) -> Timeline:

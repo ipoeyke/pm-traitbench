@@ -35,3 +35,9 @@ class SamplingError(PmTraitbenchError):
     """Raised when a sampling operation cannot produce a valid result."""
 
     exit_code = 1
+
+
+class MarketCheckError(PmTraitbenchError):
+    """Raised when a generated market misses its own regime targets."""
+
+    exit_code = 1

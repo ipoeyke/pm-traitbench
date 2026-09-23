@@ -116,11 +116,24 @@ def test_one_split_may_be_empty():
 
 
 def test_large_population_widens_ids_to_four_digits():
-    config = _config(
-        asset_classes=list(AssetClass),
-        market_seeds=["A", "B", "C", "D", "E"],
-        pilot_per_cell=0,
-        full_per_cell=13,
+    config = Config.model_validate(
+        {
+            "population": {
+                "asset_classes": list(AssetClass),
+                "market_seeds": ["A", "B", "C", "D", "E"],
+                "pilot_per_cell": 0,
+                "full_per_cell": 13,
+            },
+            "market": {
+                "seeds": {
+                    "A": ["range", "risk_off", "risk_on"],
+                    "B": ["risk_on", "range", "risk_off"],
+                    "C": ["risk_off", "risk_on", "range"],
+                    "D": ["range", "risk_on", "risk_off"],
+                    "E": ["risk_off", "range", "risk_on"],
+                }
+            },
+        }
     )
     slots = build_population(config)
     assert len(slots) >= 1000

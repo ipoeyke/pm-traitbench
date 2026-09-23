@@ -12,6 +12,7 @@ import subprocess
 from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -42,6 +43,12 @@ def _git_commit() -> str | None:
 
 def _row_key(spec: TableSpec, row: BaseModel) -> tuple:
     return tuple(getattr(row, field) for field in spec.key)
+
+
+def _sort_key(spec: TableSpec, row: BaseModel) -> tuple:
+    # A null key component (for example a market-wide event's instrument_id)
+    # sorts first and never collides with a non-null component of another type.
+    return tuple((0, "") if v is None else (1, v) for v in _row_key(spec, row))
 
 
 def _check_duplicate_keys(spec: TableSpec, rows: Sequence[BaseModel]) -> None:
@@ -79,14 +86,14 @@ class DataStore:
                 )
 
         _check_duplicate_keys(spec, rows)
-        keyed = sorted(((_row_key(spec, row), row) for row in rows), key=lambda item: item[0])
+        keyed = sorted(((_sort_key(spec, row), row) for row in rows), key=lambda item: item[0])
 
         target = self.path(spec)
         tmp_path = target.with_name(target.name + ".tmp")
         fmt = FORMATS[self.format_name(spec)]
         records = [to_record(row) for _, row in keyed]
 
-        self._data_dir.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
         try:
             fmt.write(records, spec.model, tmp_path)
             os.replace(tmp_path, target)
@@ -135,7 +142,9 @@ class DataStore:
             message += f"; found {found} instead"
         return message
 
-    def write_run_metadata(self, stage_name: str, config: Config) -> Path:
+    def write_run_metadata(
+        self, stage_name: str, config: Config, extra: dict[str, Any] | None = None
+    ) -> Path:
         metadata = {
             "stage": stage_name,
             "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
@@ -144,6 +153,11 @@ class DataStore:
             "root_seed": config.seed.root,
             "config": config.model_dump(mode="json"),
         }
+        if extra:
+            collisions = sorted(set(extra) & set(metadata))
+            if collisions:
+                raise ValueError(f"run metadata extra key(s) collide with fixed keys: {collisions}")
+            metadata.update(extra)
         metadata_dir = self._data_dir / "run_metadata"
         metadata_dir.mkdir(parents=True, exist_ok=True)
         path = metadata_dir / f"{stage_name}.json"

@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from pm_traitbench.config import Config
 from pm_traitbench.errors import StageIOError
@@ -16,7 +17,7 @@ class Stage:
     number: int
     name: str
     help: str
-    run: Callable[[Config, DataStore], None]
+    run: Callable[[Config, DataStore], dict[str, Any] | None]
     reads: tuple[TableSpec, ...] = ()
     writes: tuple[TableSpec, ...] = ()
 
@@ -36,7 +37,7 @@ def run_stage(stage: Stage, config: Config, store: DataStore, *, force: bool = F
             "use --force to overwrite"
         )
 
-    stage.run(config, store)
+    extra = stage.run(config, store)
 
     # Existence is not enough: under force an older file would pass for a fresh one.
     unwritten = [spec.name for spec in stage.writes if not store.was_written(spec)]
@@ -45,4 +46,4 @@ def run_stage(stage: Stage, config: Config, store: DataStore, *, force: bool = F
             f"stage '{stage.name}' did not write expected table(s): {', '.join(unwritten)}"
         )
 
-    store.write_run_metadata(stage.name, config)
+    store.write_run_metadata(stage.name, config, extra)

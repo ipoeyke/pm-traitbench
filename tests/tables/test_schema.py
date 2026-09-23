@@ -6,19 +6,35 @@ from pydantic import ValidationError
 from pm_traitbench.enums import (
     Action,
     AssetClass,
+    CommodityGroup,
     DriftEventType,
+    EventType,
+    ExpiryRule,
+    Family,
+    InstrumentKind,
     Kind,
     Op,
+    Positioning,
+    RatingBand,
     Regime,
     RuleScope,
     RuleSource,
     Split,
+    StreetView,
+    Tenor,
     Typicality,
 )
+from pm_traitbench.tables.introspect import columns
 from pm_traitbench.tables.schema import (
+    CalendarEvent,
+    ConsensusRow,
+    CurvePoint,
     DriftEvent,
+    Instrument,
     Mandate,
     Persona,
+    Price,
+    RegimeSpan,
     Rule,
     StatedProfile,
     Trait,
@@ -26,7 +42,21 @@ from pm_traitbench.tables.schema import (
     to_record,
 )
 
-ROW_MODELS = [Mandate, StatedProfile, Persona, Trait, Rule, DriftEvent]
+ROW_MODELS = [
+    Mandate,
+    StatedProfile,
+    Persona,
+    Trait,
+    Rule,
+    DriftEvent,
+    Instrument,
+    Price,
+    CurvePoint,
+    ConsensusRow,
+    CalendarEvent,
+    RegimeSpan,
+]
+MARKET_ROW_MODELS = [Instrument, Price, CurvePoint, ConsensusRow, CalendarEvent, RegimeSpan]
 
 
 def _mandate(**overrides) -> Mandate:
@@ -407,3 +437,393 @@ def test_multiplier_field() -> None:
     assert multiplier_field(Regime.RANGE) == "mult_range"
     assert multiplier_field(Regime.RISK_OFF) == "mult_risk_off"
     assert multiplier_field(Regime.RISK_ON) == "mult_risk_on"
+
+
+# --- market row model fixtures ---
+
+
+def _equity(**overrides) -> Instrument:
+    fields = dict(
+        instrument_id="EQ-AAPL",
+        family=Family.EQUITIES,
+        kind=InstrumentKind.EQUITY,
+        name="Apple Inc.",
+        currency="USD",
+        sector="technology",
+        rating_band=None,
+        commodity_group=None,
+        duration_years=None,
+        beta=1.2,
+        expiry_rule=None,
+    )
+    fields.update(overrides)
+    return Instrument(**fields)
+
+
+def _credit_issuer(**overrides) -> Instrument:
+    fields = dict(
+        instrument_id="CR-XYZ",
+        family=Family.CREDIT,
+        kind=InstrumentKind.CREDIT_ISSUER,
+        name="XYZ Corp",
+        currency="USD",
+        sector="industrials",
+        rating_band=RatingBand.BBB,
+        commodity_group=None,
+        duration_years=5.0,
+        beta=None,
+        expiry_rule=None,
+    )
+    fields.update(overrides)
+    return Instrument(**fields)
+
+
+def _sovereign_curve(**overrides) -> Instrument:
+    fields = dict(
+        instrument_id="SV-US",
+        family=Family.RATES,
+        kind=InstrumentKind.SOVEREIGN_CURVE,
+        name="US Treasury Curve",
+        currency="USD",
+        sector=None,
+        rating_band=None,
+        commodity_group=None,
+        duration_years=None,
+        beta=None,
+        expiry_rule=None,
+    )
+    fields.update(overrides)
+    return Instrument(**fields)
+
+
+def _commodity(**overrides) -> Instrument:
+    fields = dict(
+        instrument_id="CM-CL",
+        family=Family.COMMODITIES,
+        kind=InstrumentKind.COMMODITY,
+        name="WTI Crude",
+        currency="USD",
+        sector=None,
+        rating_band=None,
+        commodity_group=CommodityGroup.ENERGY,
+        duration_years=None,
+        beta=None,
+        expiry_rule=ExpiryRule.MONTHLY_THIRD_FRIDAY,
+    )
+    fields.update(overrides)
+    return Instrument(**fields)
+
+
+def _fx_pair(**overrides) -> Instrument:
+    fields = dict(
+        instrument_id="FX-EURUSD",
+        family=Family.FX,
+        kind=InstrumentKind.FX_PAIR,
+        name="EUR/USD",
+        currency="USD",
+        sector=None,
+        rating_band=None,
+        commodity_group=None,
+        duration_years=None,
+        beta=None,
+        expiry_rule=None,
+    )
+    fields.update(overrides)
+    return Instrument(**fields)
+
+
+_INSTRUMENT_BUILDERS = {
+    InstrumentKind.EQUITY: _equity,
+    InstrumentKind.CREDIT_ISSUER: _credit_issuer,
+    InstrumentKind.SOVEREIGN_CURVE: _sovereign_curve,
+    InstrumentKind.COMMODITY: _commodity,
+    InstrumentKind.FX_PAIR: _fx_pair,
+}
+
+
+def _price(**overrides) -> Price:
+    fields = dict(
+        seed="A",
+        date=datetime.date(2026, 1, 5),
+        instrument_id="EQ-AAPL",
+        price=150.0,
+        spread_bp=None,
+    )
+    fields.update(overrides)
+    return Price(**fields)
+
+
+def _curve_point(**overrides) -> CurvePoint:
+    fields = dict(
+        seed="A", date=datetime.date(2026, 1, 5), curve_id="SV-US", tenor=Tenor.Y10, level=4.25
+    )
+    fields.update(overrides)
+    return CurvePoint(**fields)
+
+
+def _consensus_row(**overrides) -> ConsensusRow:
+    fields = dict(
+        seed="A",
+        date=datetime.date(2026, 1, 5),
+        instrument_id="EQ-AAPL",
+        street_score=0.4,
+        street_view=StreetView.OVERWEIGHT,
+        positioning_pct=62.0,
+        positioning=Positioning.CROWDED_LONG,
+    )
+    fields.update(overrides)
+    return ConsensusRow(**fields)
+
+
+def _calendar_event(**overrides) -> CalendarEvent:
+    fields = dict(
+        seed="A",
+        date=datetime.date(2026, 1, 5),
+        instrument_id="EQ-AAPL",
+        event=EventType.EARNINGS,
+        surprise=0.3,
+        affected=Family.EQUITIES.value,
+    )
+    fields.update(overrides)
+    return CalendarEvent(**fields)
+
+
+def _regime_span(**overrides) -> RegimeSpan:
+    fields = dict(
+        seed="A",
+        regime=Regime.RANGE,
+        date_start=datetime.date(2026, 1, 1),
+        date_end=datetime.date(2026, 1, 31),
+    )
+    fields.update(overrides)
+    return RegimeSpan(**fields)
+
+
+# --- Instrument: valid rows and kind invariants ---
+
+
+@pytest.mark.parametrize("kind", list(InstrumentKind))
+def test_instrument_valid_per_kind(kind: InstrumentKind) -> None:
+    instrument = _INSTRUMENT_BUILDERS[kind]()
+    assert instrument.kind == kind
+
+
+_INSTRUMENT_EXTRA_FIELD_CASES = [
+    (InstrumentKind.EQUITY, "rating_band", RatingBand.BBB),
+    (InstrumentKind.CREDIT_ISSUER, "beta", 1.1),
+    (InstrumentKind.SOVEREIGN_CURVE, "sector", "government"),
+    (InstrumentKind.COMMODITY, "sector", "energy"),
+    (InstrumentKind.FX_PAIR, "beta", 1.0),
+]
+
+
+@pytest.mark.parametrize(("kind", "field", "value"), _INSTRUMENT_EXTRA_FIELD_CASES)
+def test_instrument_rejects_extra_optional_field(
+    kind: InstrumentKind, field: str, value: object
+) -> None:
+    with pytest.raises(ValidationError):
+        _INSTRUMENT_BUILDERS[kind](**{field: value})
+
+
+_INSTRUMENT_MISSING_FIELD_CASES = [
+    (InstrumentKind.EQUITY, "beta"),
+    (InstrumentKind.CREDIT_ISSUER, "duration_years"),
+    (InstrumentKind.COMMODITY, "expiry_rule"),
+]
+
+
+@pytest.mark.parametrize(("kind", "field"), _INSTRUMENT_MISSING_FIELD_CASES)
+def test_instrument_rejects_missing_required_field(kind: InstrumentKind, field: str) -> None:
+    with pytest.raises(ValidationError):
+        _INSTRUMENT_BUILDERS[kind](**{field: None})
+
+
+def test_instrument_rejects_family_kind_mismatch() -> None:
+    with pytest.raises(ValidationError):
+        _equity(family=Family.CREDIT)
+
+
+# --- Price ---
+
+
+def test_price_valid() -> None:
+    assert _price().price == 150.0
+
+
+def test_price_rejects_non_positive_price() -> None:
+    with pytest.raises(ValidationError):
+        _price(price=0.0)
+
+
+def test_price_rejects_spread_on_non_credit_instrument() -> None:
+    with pytest.raises(ValidationError):
+        _price(spread_bp=120.0)
+
+
+def test_price_rejects_missing_spread_on_credit_instrument() -> None:
+    with pytest.raises(ValidationError):
+        _price(instrument_id="CR-XYZ", spread_bp=None)
+
+
+def test_price_rejects_non_positive_spread_on_credit_instrument() -> None:
+    with pytest.raises(ValidationError):
+        _price(instrument_id="CR-XYZ", spread_bp=-5.0)
+
+
+def test_price_credit_instrument_valid() -> None:
+    price = _price(instrument_id="CR-XYZ", spread_bp=120.0)
+    assert price.spread_bp == 120.0
+
+
+# --- CurvePoint ---
+
+
+def test_curve_point_valid() -> None:
+    assert _curve_point().tenor == Tenor.Y10
+
+
+# --- ConsensusRow ---
+
+
+def test_consensus_row_valid() -> None:
+    assert _consensus_row().street_view == StreetView.OVERWEIGHT
+
+
+def test_consensus_row_rejects_street_score_out_of_range() -> None:
+    with pytest.raises(ValidationError):
+        _consensus_row(street_score=1.2)
+
+
+def test_consensus_row_rejects_negative_positioning_pct() -> None:
+    with pytest.raises(ValidationError):
+        _consensus_row(positioning_pct=-1.0)
+
+
+# --- CalendarEvent ---
+
+
+def test_calendar_event_earnings_valid() -> None:
+    assert _calendar_event().surprise == 0.3
+
+
+def test_calendar_event_macro_print_valid() -> None:
+    event = _calendar_event(
+        instrument_id=None, event=EventType.MACRO_PRINT, surprise=0.2, affected="all"
+    )
+    assert event.instrument_id is None
+
+
+def test_calendar_event_contract_expiry_valid() -> None:
+    assert _calendar_event(event=EventType.CONTRACT_EXPIRY, surprise=None).surprise is None
+
+
+def test_calendar_event_rating_downgrade_valid() -> None:
+    assert _calendar_event(event=EventType.RATING_DOWNGRADE, surprise=-0.3).surprise == -0.3
+
+
+def test_calendar_event_rating_upgrade_valid() -> None:
+    assert _calendar_event(event=EventType.RATING_UPGRADE, surprise=0.3).surprise == 0.3
+
+
+def test_calendar_event_rejects_surprise_on_contract_expiry() -> None:
+    with pytest.raises(ValidationError):
+        _calendar_event(event=EventType.CONTRACT_EXPIRY, surprise=0.1)
+
+
+def test_calendar_event_rejects_missing_surprise_on_earnings() -> None:
+    with pytest.raises(ValidationError):
+        _calendar_event(event=EventType.EARNINGS, surprise=None)
+
+
+def test_calendar_event_rejects_positive_surprise_on_rating_downgrade() -> None:
+    with pytest.raises(ValidationError):
+        _calendar_event(event=EventType.RATING_DOWNGRADE, surprise=0.2)
+
+
+def test_calendar_event_rejects_negative_surprise_on_rating_upgrade() -> None:
+    with pytest.raises(ValidationError):
+        _calendar_event(event=EventType.RATING_UPGRADE, surprise=-0.2)
+
+
+def test_calendar_event_rejects_instrument_id_on_macro_print() -> None:
+    with pytest.raises(ValidationError):
+        _calendar_event(
+            event=EventType.MACRO_PRINT,
+            surprise=0.1,
+            affected=Family.EQUITIES.value,
+            instrument_id="EQ-AAPL",
+        )
+
+
+def test_calendar_event_rejects_null_instrument_id_on_earnings() -> None:
+    with pytest.raises(ValidationError):
+        _calendar_event(event=EventType.EARNINGS, instrument_id=None, affected="all")
+
+
+def test_calendar_event_rejects_affected_all_with_instrument() -> None:
+    with pytest.raises(ValidationError):
+        _calendar_event(affected="all")
+
+
+def test_calendar_event_rejects_invalid_affected_value() -> None:
+    with pytest.raises(ValidationError):
+        _calendar_event(affected="bonds")
+
+
+def test_calendar_event_rejects_surprise_out_of_range() -> None:
+    with pytest.raises(ValidationError):
+        _calendar_event(surprise=1.5)
+
+
+# --- RegimeSpan ---
+
+
+def test_regime_span_valid() -> None:
+    span = _regime_span()
+    assert span.date_start <= span.date_end
+
+
+def test_regime_span_rejects_start_after_end() -> None:
+    with pytest.raises(ValidationError):
+        _regime_span(date_start=datetime.date(2026, 2, 1), date_end=datetime.date(2026, 1, 1))
+
+
+# --- Tenor ordering ---
+
+
+def test_tenor_values_in_order() -> None:
+    assert [tenor.value for tenor in Tenor] == [
+        "2Y",
+        "5Y",
+        "10Y",
+        "30Y",
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "M5",
+        "M6",
+        "M7",
+        "M8",
+        "M9",
+        "M10",
+        "M11",
+        "M12",
+    ]
+
+
+# --- round-trip and introspection ---
+
+
+def test_to_record_calendar_event_null_instrument_id_is_none() -> None:
+    event = _calendar_event(
+        instrument_id=None, event=EventType.MACRO_PRINT, surprise=0.2, affected="all"
+    )
+    record = to_record(event)
+    assert record["instrument_id"] is None
+
+
+def test_market_models_survive_columns_introspection() -> None:
+    for model in MARKET_ROW_MODELS:
+        infos = columns(model)
+        assert len(infos) == len(model.model_fields)
