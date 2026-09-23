@@ -144,20 +144,25 @@ refuses to run against an incomplete cache.
 A real seed has no model target to check against, so its check is mostly
 structural: every price, spread and curve value must be finite and positive
 (a yield against its floor instead), no series may sit on a forward-filled
-value for longer than the fetch's fill limit, and calendar row counts must
-match what the config implies. These run before anything realised is
-computed, since a moment over bad data cannot be trusted. Once they pass,
-each regime span and family's realised annualised volatility and
-correlation with `z` are reported for information, not checked against a
-target, and a family index with zero variance over a span fails as `flat`;
-the days a yield curve tenor spent at its floor are likewise reported only.
+value for longer than the fetch's fill limit, and calendar row counts are
+checked against the seed's own drawn events and flips, plus exact expiry
+and positioning dates. These run before anything realised is computed,
+since a moment over bad data cannot be trusted. Once they pass, each
+regime span and family's realised annualised volatility and correlation
+with `z` are reported for information, not checked against a target, and a
+family index with zero variance over a span fails as `flat`; the days a
+yield curve tenor spent at its floor are likewise reported only.
 
-Every real series keeps its exact historical day-over-day log change; only
-its starting level is rebased onto the same configured ranges a synthetic
-seed uses, its instrument id is the fixed anonymised registry (`EQ-R001`,
-not a ticker), and every date is remapped onto the simulated calendar's own
-axis. This disguise hides levels, names and dates, but not the return
-pattern itself, which is real history.
+Every real series keeps its historical day-over-day change (log for
+prices; level for yields, which are then floored). Credit prices and
+commodity M2-M12 are derived. Only its starting level is rebased onto the
+same configured ranges a synthetic seed uses, its instrument id is the
+fixed anonymised registry (`EQ-R001`, not a ticker), and every date is
+remapped onto the simulated calendar's own axis. This disguise hides
+levels, names and dates, but not the return pattern itself, which is real
+history. An event's surprise is its own series' daily move scaled by that
+series' own historical daily sd, so ordinary days stay small and the size
+of a genuine outlier is preserved.
 
 Limitations from the model:
 
@@ -169,15 +174,19 @@ Limitations from the model:
   contract-roll dates, which do not line up with the calendar's third-Friday
   contract-expiry rows.
 - A missing observation (a holiday) forward-fills from the prior value, up
-  to a capped run length; a longer gap fails the fetch.
+  to a capped run length; a longer gap fails the market stage.
 - The EIA petroleum status report's own holiday-shifted release dates are
-  not modelled: the inventory report event fires on every Wednesday.
+  not modelled: the inventory report event fires on every Wednesday, and a
+  report that lands on a market holiday scores a zero surprise.
 - An event's surprise is priced from the seed's own realised price or yield
   reaction, not from a reported consensus-versus-actual figure.
 - A real seed has no earnings feed, so it never draws an EARNINGS event: an
   equity's street score only updates on the weekly revision day (plus any
   consensus flip), never on an earnings-day jump, and a rule keyed to an
   earnings signpost never fires on a real seed.
+
+The real window a seed replays is recorded in the run metadata and the
+config itself, for operators only; never pass either to a model under test.
 
 To run the full split on real data rather than just the pilot, point
 `population.market_seeds` at a real seed too:
@@ -189,8 +198,11 @@ population:
 ```
 
 Add further real seeds under `market.real.seeds`, each with its own
-`window_start` and `regime_starts`, to give the full split more than one
-market seed.
+`window_start`, `regime_starts`, and the `basis` and `note` fields every
+config leaf requires. A seed's window (`window_start` through the horizon
+it implies) must fall inside the FOMC/WASDE/NFP date coverage, 2018-06-04
+to 2019-05-31; replaying a later or longer window needs those date lists
+extended first.
 
 ## Development
 

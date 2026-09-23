@@ -1,6 +1,7 @@
 """Tests for the market stage: universe, per-seed generation, check and table writes."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -8,11 +9,13 @@ import pytest
 from pm_traitbench import pipeline
 from pm_traitbench.cli import main
 from pm_traitbench.config import Config, load_config
+from pm_traitbench.enums import Family, InstrumentKind
 from pm_traitbench.errors import MarketCheckError, StageIOError
 from pm_traitbench.market.real.fetch import cache_dir
-from pm_traitbench.market.stage import MARKET_STAGE, referenced_seeds
+from pm_traitbench.market.stage import MARKET_STAGE, _merge_instruments, referenced_seeds
 from pm_traitbench.market.synthetic.check import check_market as real_check_market
 from pm_traitbench.stages import run_stage
+from pm_traitbench.tables.schema import Instrument
 from pm_traitbench.tables.specs import MARKET_INSTRUMENTS, MARKET_PRICES, MARKET_TABLES
 from pm_traitbench.tables.store import DataStore
 from tests.market.real.conftest import fake_cache  # noqa: F401
@@ -49,6 +52,32 @@ def test_instruments_contain_both_universes_with_shared_commodity_deduped(fake_c
     assert ids.count("CM-CRD") == 1
 
 
+def _equity_instrument(instrument_id: str, name: str) -> Instrument:
+    return Instrument(
+        instrument_id=instrument_id,
+        family=Family.EQUITIES,
+        kind=InstrumentKind.EQUITY,
+        name=name,
+        currency="USD",
+        sector="sector_01",
+        rating_band=None,
+        commodity_group=None,
+        duration_years=None,
+        beta=1.0,
+        expiry_rule=None,
+    )
+
+
+def test_merge_instruments_raises_when_the_same_id_has_different_facts() -> None:
+    synthetic = _equity_instrument("EQ-SAME", "synthetic version")
+    real = _equity_instrument("EQ-SAME", "real version")
+
+    with pytest.raises(
+        MarketCheckError, match="instrument 'EQ-SAME' differs between real and synthetic"
+    ):
+        _merge_instruments([synthetic], [real])
+
+
 def test_prices_have_rows_for_both_the_real_and_synthetic_seed(fake_cache) -> None:
     config = _demo_config()
     result = fake_cache(config)
@@ -72,7 +101,7 @@ def test_run_stage_writes_run_metadata_with_check_for_every_seed(fake_cache) -> 
     assert "R1" in metadata["check"]
     assert "A" in metadata["check"]
     assert metadata["raw_manifest"]["files"] > 0
-    assert len(metadata["raw_manifest"]["window"]) == 2
+    assert "window" not in metadata["raw_manifest"]
 
 
 def test_synthetic_only_config_writes_no_raw_manifest(tmp_path: Path) -> None:
@@ -199,7 +228,7 @@ def test_tampered_cache_fails_naming_the_file(fake_cache) -> None:
     tampered = cache_dir(result.data_dir) / "fred" / "DGS10.csv"
     tampered.write_text(tampered.read_text(encoding="utf-8") + "extra garbage\n", encoding="utf-8")
 
-    with pytest.raises(StageIOError, match=str(tampered)):
+    with pytest.raises(StageIOError, match=re.escape(str(tampered))):
         run_stage(MARKET_STAGE, config, store)
 
     assert not (result.data_dir / "market").exists()

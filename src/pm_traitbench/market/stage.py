@@ -1,5 +1,6 @@
-"""Market stage: simulate the instrument universe and every configured market seed's
-full state, check each against what the config implies, then write the six market tables.
+"""Market stage: build the instrument universe and every configured market seed's
+full state, real or simulated, check each against what the config implies, then
+write the six market tables.
 """
 
 from datetime import date
@@ -59,7 +60,7 @@ def _merge_instruments(synthetic: list[Instrument], real: list[Instrument]) -> l
 
 
 def run(config: Config, store: DataStore) -> dict[str, Any]:
-    """Simulate every referenced market seed and write the six market tables.
+    """Build or simulate every referenced market seed and write the six market tables.
 
     The synthetic universe, axis and driver shocks are shared across every
     synthetic seed and built only if one is referenced; the real universe is
@@ -130,17 +131,14 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
 
     extras: dict[str, Any] = {"check": reports}
     if cache is not None:
-        extras["raw_manifest"] = {
-            "window": list(cache.manifest.window),
-            "files": len(cache.manifest.entries),
-        }
+        extras["raw_manifest"] = {"files": len(cache.manifest.entries)}
     return extras
 
 
 MARKET_STAGE = Stage(
     number=2,
     name="market",
-    help="simulate prices, curves, consensus, calendar and regimes per market seed",
+    help="build or simulate prices, curves, consensus, calendar and regimes per market seed",
     run=run,
     reads=(),
     writes=MARKET_TABLES,
