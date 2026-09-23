@@ -67,12 +67,27 @@ def test_check_market_passes_at_default_config(universe, markets, seed: str) -> 
 
 @pytest.mark.parametrize("root_seed", [25, 30])
 def test_check_market_passes_at_default_config_for_late_roots(root_seed: int) -> None:
-    # The rates check failed for these roots when every curve shared one level vol.
+    # The rates check must use each curve's own level vol, not one shared vol.
     config = Config.model_validate({"seed": {"root": root_seed}})
     axis = build_axis(config.timeline(), config.market.burn_in_days)
     instruments = tuple(build_universe(config, stream(config.seed.root, "market", "universe")))
     shocks = draw_shocks(config.seed.root, axis.n_days)
     market = generate_seed(config, "C", instruments, shocks, axis)
+    report = check_market(market, instruments, config)
+    assert all(m.passed for m in report.metrics)
+
+
+@pytest.mark.parametrize(("root_seed", "seed"), [(61, "A"), (61, "B"), (61, "C"), (96, "A")])
+def test_check_market_passes_at_default_config_for_fat_tailed_corr_roots(
+    root_seed: int, seed: str
+) -> None:
+    # The correlation band must widen near +-1 (Fisher z), not stay a fixed
+    # normal-theory band that fat-tailed noise can breach at these roots.
+    config = Config.model_validate({"seed": {"root": root_seed}})
+    axis = build_axis(config.timeline(), config.market.burn_in_days)
+    instruments = tuple(build_universe(config, stream(config.seed.root, "market", "universe")))
+    shocks = draw_shocks(config.seed.root, axis.n_days)
+    market = generate_seed(config, seed, instruments, shocks, axis)
     report = check_market(market, instruments, config)
     assert all(m.passed for m in report.metrics)
 

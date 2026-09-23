@@ -103,9 +103,11 @@ against what the config implies. For every regime and family it compares
 the realised annualised volatility of an equal-weight family index
 against its model-implied value within a relative tolerance, and the
 index's realised correlation with `z` against its model-implied
-correlation within 4 standard errors of the estimate; credit's index is
-the investment-grade issuers' spread, and rates' is the mean 10Y yield
-change, not a price. Sampled event types and consensus flips are checked
+correlation within 4 standard errors of the estimate in Fisher-z space,
+which keeps that error band from collapsing to nearly nothing as the
+correlation approaches +-1; credit's index is the investment-grade
+issuers' spread, and rates' is the mean 10Y yield change, not a price.
+Sampled event types and consensus flips are checked
 by count, against how many the config implies were drawn; contract
 expiries and the weekly positioning report, both deterministic rather
 than sampled, are checked against their exact dates instead. Round-level

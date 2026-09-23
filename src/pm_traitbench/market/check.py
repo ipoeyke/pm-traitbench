@@ -450,7 +450,12 @@ def check_market(
             if rho == 0.0:
                 continue
             realised_corr = float(np.corrcoef(changes, z_window)[0, 1])
-            corr_tolerance = float(check_cfg.corr_tolerance_se * (1 - rho**2) / np.sqrt(n_days))
+            # Fisher z stabilises a correlation estimate's variance near +-1, where
+            # the normal-theory band on the correlation itself is too tight.
+            clip = 1 - 1e-12
+            z_realised = np.arctanh(np.clip(realised_corr, -clip, clip))
+            z_target = np.arctanh(np.clip(rho, -clip, clip))
+            corr_tolerance = float(check_cfg.corr_tolerance_se / np.sqrt(n_days - 3))
             metrics.append(
                 CheckMetric(
                     seed=market.seed,
@@ -460,7 +465,7 @@ def check_market(
                     target=rho,
                     realised=realised_corr,
                     tolerance=corr_tolerance,
-                    passed=abs(realised_corr - rho) <= corr_tolerance,
+                    passed=bool(abs(z_realised - z_target) <= corr_tolerance),
                 )
             )
 

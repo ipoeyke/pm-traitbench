@@ -1188,7 +1188,10 @@ class MarketConsensusConfig(BaseModel):
         gt=0,
         json_schema_extra={
             "basis": "guess",
-            "note": "trailing window for the street consensus view",
+            "note": (
+                "trailing window for the street consensus view; also its EMA "
+                "half-life in trading days"
+            ),
         },
     )
     positioning_window_multiple: int = Field(
@@ -1196,7 +1199,10 @@ class MarketConsensusConfig(BaseModel):
         gt=0,
         json_schema_extra={
             "basis": "design",
-            "note": "positioning window as a multiple of the street window",
+            "note": (
+                "positioning window as a multiple of the street window; that "
+                "window is also its EMA half-life in trading days"
+            ),
         },
     )
     revision_weekday: int = Field(
@@ -1268,8 +1274,8 @@ class MarketCheckConfig(BaseModel):
         json_schema_extra={
             "basis": "design",
             "note": (
-                "about 1 in 16,000 false alarms per test for a normal-distributed "
-                "correlation estimate"
+                "about 1 in 16,000 false alarms per test in Fisher-z space, which "
+                "stabilises the variance of a correlation estimate near +-1"
             ),
         },
     )
