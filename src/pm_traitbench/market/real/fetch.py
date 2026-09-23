@@ -4,6 +4,7 @@ the network.
 """
 
 import hashlib
+import http.client
 import json
 import os
 import time
@@ -12,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 
 from pm_traitbench.config import (
     REAL_FETCH_BUFFER_DAYS,
@@ -152,6 +153,8 @@ class Manifest:
 def _fetch_with_retry(
     opener: Opener, sleeper: Callable[[float], None], interval: float, url: str, label: str
 ) -> bytes:
+    # REAL_RETRIES counts attempts (including the first), not additional retries:
+    # the last attempt raises instead of sleeping and trying again.
     attempt = 0
     while True:
         try:
@@ -163,8 +166,14 @@ def _fetch_with_retry(
             sleeper(interval * 2**attempt)
             attempt += 1
             continue
-        except URLError as e:
-            raise StageIOError(f"{label}: fetch failed ({e.reason})") from e
+        except (OSError, http.client.IncompleteRead) as e:
+            # Timeouts, connection resets, incomplete reads and other transient
+            # network failures (URLError is itself an OSError) retry like a 5xx.
+            if attempt >= REAL_RETRIES - 1:
+                raise StageIOError(f"{label}: fetch failed ({e})") from e
+            sleeper(interval * 2**attempt)
+            attempt += 1
+            continue
         sleeper(interval)
         return body
 
@@ -205,11 +214,18 @@ def _validate(rel_path: str, body: bytes, label: str) -> None:
         _validate_nasdaq(body, label)
 
 
+def _read_manifest(path: Path) -> Manifest:
+    try:
+        return Manifest.from_json(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+        raise StageIOError(f"corrupt manifest at {path}: {e}") from e
+
+
 def _load_old_manifest(data_dir: Path) -> Manifest | None:
     path = cache_dir(data_dir) / "manifest.json"
     if not path.exists():
         return None
-    return Manifest.from_json(path.read_text(encoding="utf-8"))
+    return _read_manifest(path)
 
 
 def fetch_all(
@@ -248,7 +264,10 @@ def fetch_all(
     for rel_path, url, label in tasks:
         full_path = root / rel_path
         old_entry = old_by_path.get(rel_path)
-        if not force and old_entry is not None and full_path.exists():
+        # A kept file must match both the manifest sha256 and the URL it was
+        # fetched from; a changed fetch window changes the URL even when a
+        # coincidentally identical file is still on disk.
+        if not force and old_entry is not None and old_entry.url == url and full_path.exists():
             actual = hashlib.sha256(full_path.read_bytes()).hexdigest()
             if actual == old_entry.sha256:
                 entries.append(old_entry)
@@ -293,7 +312,7 @@ class RawCache:
         manifest_path = root / "manifest.json"
         if not manifest_path.exists():
             raise StageIOError(f"no raw market cache at {root}; run fetch-market first")
-        manifest = Manifest.from_json(manifest_path.read_text(encoding="utf-8"))
+        manifest = _read_manifest(manifest_path)
         for entry in manifest.entries:
             path = root / entry.path
             if not path.exists():
@@ -304,14 +323,17 @@ class RawCache:
         return cls(root, manifest)
 
     def fred(self, series: str) -> dict[date, float]:
-        """FRED values by date, skipping the '.' marker for a missing observation."""
+        """FRED values by date, skipping a missing observation: an empty value
+        (FRED's actual holiday convention, e.g. '2018-07-04,') or a '.' marker.
+        """
         text = (self._root / "fred" / f"{series}.csv").read_text(encoding="utf-8")
         values: dict[date, float] = {}
         for line in text.splitlines()[1:]:
             if not line:
                 continue
             day_str, value_str = line.split(",", 1)
-            if value_str == ".":
+            value_str = value_str.strip()
+            if value_str in ("", "."):
                 continue
             values[date.fromisoformat(day_str)] = float(value_str)
         return values

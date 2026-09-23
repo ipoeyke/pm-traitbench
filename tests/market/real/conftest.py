@@ -2,9 +2,8 @@
 used instead of the network by every test in this package.
 """
 
-import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -13,16 +12,7 @@ import pytest
 
 from pm_traitbench.config import Config
 from pm_traitbench.enums import Family
-from pm_traitbench.market.real.fetch import (
-    Manifest,
-    ManifestEntry,
-    cache_dir,
-    fetch_all,
-    fetch_range,
-    fred_url,
-    nasdaq_url,
-    yahoo_url,
-)
+from pm_traitbench.market.real.fetch import fetch_all, fetch_range, fred_url, nasdaq_url, yahoo_url
 from pm_traitbench.market.real.sources import REAL_INSTRUMENTS, fred_series, yahoo_tickers
 
 
@@ -74,9 +64,15 @@ def _quarters_overlapping(start: date, end: date) -> list[tuple[date, date]]:
     return quarters
 
 
-def _fred_csv(series: str, values: dict[date, float]) -> bytes:
+def _fred_csv(series: str, days: Sequence[date], values: dict[date, float]) -> bytes:
+    """A FRED-shaped CSV: every day in `days` gets a row, missing days get an
+    empty value, matching FRED's real holiday convention (e.g. '2018-07-04,').
+    """
     lines = [f"observation_date,{series}"]
-    lines.extend(f"{day.isoformat()},{values[day]:.4f}" for day in sorted(values))
+    for day in days:
+        value = values.get(day)
+        value_str = f"{value:.4f}" if value is not None else ""
+        lines.append(f"{day.isoformat()},{value_str}")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -114,10 +110,14 @@ def _nasdaq_json(symbols: list[str]) -> bytes:
 def fake_cache(tmp_path: Path) -> Callable[[Config], Path]:
     """Build a deterministic fake raw cache for `config`'s real seeds and return its data dir.
 
-    Covers SPY and every registry series over the fetch range, with one shared
-    holiday gap, Yahoo timestamps at 13:30 UTC, and a Nasdaq calendar where
-    every equity ticker reports once per calendar quarter (plus one forced
-    Saturday report, to exercise the weekend case).
+    Covers SPY and every registry series over the fetch range. FRED and Yahoo
+    share one holiday-gap weekday: FRED keeps the row with an empty value
+    (its real convention), Yahoo omits the row entirely. Yahoo timestamps sit
+    at 13:30 UTC. The Nasdaq calendar has every equity ticker reporting once
+    per calendar quarter, with one ticker's report in the holiday's quarter
+    moved onto the holiday weekday itself (replacing, not duplicating, that
+    ticker's report for that quarter) rather than any weekend date, since a
+    real cache never holds a weekend file.
     """
 
     def _build(config: Config) -> Path:
@@ -133,7 +133,7 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], Path]:
         for series in fred_series():
             walk = 100.0 + np.cumsum(rng.normal(0, 1, size=len(series_days)))
             values = dict(zip(series_days, walk, strict=True))
-            files[fred_url(series, start, end)] = _fred_csv(series, values)
+            files[fred_url(series, start, end)] = _fred_csv(series, weekdays, values)
 
         for ticker in yahoo_tickers():
             walk = 100.0 + np.cumsum(rng.normal(0, 1, size=len(series_days)))
@@ -147,40 +147,27 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], Path]:
 
         equities = [inst.series for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES]
         quarters = _quarters_overlapping(first_seed.window_start, window_end)
-        symbols_by_date: dict[date, list[str]] = {}
-        for ticker in equities:
-            for q_start, q_end in quarters:
-                candidates = _weekdays(q_start, q_end)
-                report_day = candidates[int(rng.integers(0, len(candidates)))]
-                symbols_by_date.setdefault(report_day, []).append(ticker)
+        holiday_quarter_index = next(
+            (i for i, (q_start, q_end) in enumerate(quarters) if q_start <= holiday <= q_end),
+            None,
+        )
+        assert holiday_quarter_index is not None, "holiday falls outside the Nasdaq window"
 
-        # Force exactly one report onto a Saturday, to exercise the weekend case.
-        saturday = first_seed.window_start
-        while saturday.weekday() != 5:
-            saturday += timedelta(days=1)
-        symbols_by_date.setdefault(saturday, []).append(equities[0])
+        symbols_by_date: dict[date, list[str]] = {}
+        target_ticker = equities[0]
+        for ticker in equities:
+            for qi, (q_start, q_end) in enumerate(quarters):
+                if ticker == target_ticker and qi == holiday_quarter_index:
+                    report_day = holiday
+                else:
+                    candidates = _weekdays(q_start, q_end)
+                    report_day = candidates[int(rng.integers(0, len(candidates)))]
+                symbols_by_date.setdefault(report_day, []).append(ticker)
 
         for day in nasdaq_days:
             files[nasdaq_url(day)] = _nasdaq_json(symbols_by_date.get(day, []))
 
-        manifest = fetch_all(config, data_dir, opener=_fake_opener(files), sleeper=lambda _: None)
-
-        # The Saturday file falls outside fetch_all's own weekday-only day list,
-        # so add it directly through fetch.py's own manifest entry and writer.
-        root = cache_dir(data_dir)
-        body = _nasdaq_json(symbols_by_date[saturday])
-        rel_path = f"nasdaq/{saturday.isoformat()}.json"
-        (root / rel_path).write_bytes(body)
-        entry = ManifestEntry(
-            path=rel_path,
-            url=nasdaq_url(saturday),
-            retrieved_at=datetime.now(UTC).isoformat(),
-            sha256=hashlib.sha256(body).hexdigest(),
-            size=len(body),
-        )
-        manifest = Manifest(window=manifest.window, entries=manifest.entries + (entry,))
-        (root / "manifest.json").write_text(manifest.to_json(), encoding="utf-8")
-
+        fetch_all(config, data_dir, opener=_fake_opener(files), sleeper=lambda _: None)
         return data_dir
 
     return _build

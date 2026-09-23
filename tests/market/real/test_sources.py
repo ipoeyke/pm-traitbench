@@ -2,12 +2,61 @@
 
 from collections import Counter
 
-from pm_traitbench.enums import Family
+from pm_traitbench.enums import CommodityGroup, Family, RatingBand
 from pm_traitbench.market.real.sources import (
     REAL_INSTRUMENTS,
     fred_series,
     yahoo_tickers,
 )
+
+_EXPECTED_EQUITY_TICKERS: tuple[str, ...] = (
+    "AAPL", "MSFT", "INTC", "CSCO",
+    "JNJ", "PFE", "MRK", "UNH",
+    "JPM", "BAC", "WFC", "GS",
+    "AMZN", "HD", "MCD", "NKE",
+    "PG", "KO", "PEP", "WMT",
+    "XOM", "CVX", "COP", "SLB",
+    "BA", "CAT", "HON", "UNP",
+    "APD", "ECL", "NEM", "SHW",
+    "NEE", "DUK", "SO", "D",
+    "VZ", "T", "DIS", "CMCSA",
+)  # fmt: skip
+
+_EXPECTED_COMMODITY_TICKERS: dict[str, str] = {
+    "CM-CRD": "CL=F",
+    "CM-BRN": "BZ=F",
+    "CM-HOL": "HO=F",
+    "CM-GSL": "RB=F",
+    "CM-GLD": "GC=F",
+    "CM-SLV": "SI=F",
+    "CM-PLT": "PL=F",
+    "CM-CPR": "HG=F",
+    "CM-WHT": "ZW=F",
+    "CM-CRN": "ZC=F",
+    "CM-SOY": "ZS=F",
+    "CM-SGR": "SB=F",
+    "CM-COF": "KC=F",
+    "CM-CTN": "CT=F",
+    "CM-CCO": "CC=F",
+}
+
+_EXPECTED_COMMODITY_GROUPS: dict[str, CommodityGroup] = {
+    "CM-CRD": CommodityGroup.ENERGY,
+    "CM-BRN": CommodityGroup.ENERGY,
+    "CM-HOL": CommodityGroup.ENERGY,
+    "CM-GSL": CommodityGroup.ENERGY,
+    "CM-GLD": CommodityGroup.PRECIOUS,
+    "CM-SLV": CommodityGroup.PRECIOUS,
+    "CM-PLT": CommodityGroup.PRECIOUS,
+    "CM-CPR": CommodityGroup.INDUSTRIAL_METALS,
+    "CM-WHT": CommodityGroup.AGRICULTURE,
+    "CM-CRN": CommodityGroup.AGRICULTURE,
+    "CM-SOY": CommodityGroup.AGRICULTURE,
+    "CM-SGR": CommodityGroup.AGRICULTURE,
+    "CM-COF": CommodityGroup.AGRICULTURE,
+    "CM-CTN": CommodityGroup.AGRICULTURE,
+    "CM-CCO": CommodityGroup.AGRICULTURE,
+}
 
 
 def test_family_counts_match_the_registry() -> None:
@@ -19,21 +68,21 @@ def test_family_counts_match_the_registry() -> None:
     assert counts[Family.FX] == 6
 
 
-def test_equities_spread_across_ten_sectors_of_four() -> None:
-    sectors = Counter(inst.sector for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES)
-    assert len(sectors) == 10
-    assert set(sectors.values()) == {4}
-
-
-def test_equity_id_format() -> None:
+def test_equity_ticker_to_id_order_matches_the_registry() -> None:
     equities = [inst for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES]
-    ids = [inst.instrument_id for inst in equities]
-    assert ids[0] == "EQ-R001"
-    assert ids[-1] == "EQ-R040"
+    assert [inst.series for inst in equities] == list(_EXPECTED_EQUITY_TICKERS)
+    assert [inst.instrument_id for inst in equities] == [f"EQ-R{i:03d}" for i in range(1, 41)]
     for inst in equities:
         assert inst.name == inst.instrument_id
         assert inst.currency == "USD"
         assert inst.source == "yahoo"
+
+
+def test_equity_sector_groups_are_four_tickers_each_in_order() -> None:
+    equities = [inst for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES]
+    sectors = [inst.sector for inst in equities]
+    assert sectors == [f"sector_{(i // 4) + 1:02d}" for i in range(40)]
+    assert Counter(sectors) == {f"sector_{n:02d}": 4 for n in range(1, 11)}
 
 
 def test_credit_registry_entries() -> None:
@@ -43,8 +92,11 @@ def test_credit_registry_entries() -> None:
         assert inst.spread_base == "DGS20"
         assert inst.name == inst.instrument_id
         assert inst.currency == "USD"
+        assert inst.sector == "sector_01"
     assert credit["CR-R-IG-001"].series == "DAAA"
     assert credit["CR-R-IG-002"].series == "DBAA"
+    assert credit["CR-R-IG-001"].rating_band == RatingBand.AA
+    assert credit["CR-R-IG-002"].rating_band == RatingBand.BBB
 
 
 def test_curve_registry_entry() -> None:
@@ -56,17 +108,17 @@ def test_curve_registry_entry() -> None:
     assert curve.source == "fred"
 
 
-def test_commodity_registry_tickers() -> None:
+def test_commodity_ids_and_groups_match_exactly() -> None:
     commodities = {
-        inst.series: inst.instrument_id
-        for inst in REAL_INSTRUMENTS
-        if inst.family == Family.COMMODITIES
+        inst.instrument_id: inst for inst in REAL_INSTRUMENTS if inst.family == Family.COMMODITIES
     }
-    expected = {
-        "CL=F", "BZ=F", "HO=F", "RB=F", "GC=F", "SI=F", "PL=F", "HG=F",
-        "ZW=F", "ZC=F", "ZS=F", "SB=F", "KC=F", "CT=F", "CC=F",
-    }  # fmt: skip
-    assert set(commodities) == expected
+    assert set(commodities) == set(_EXPECTED_COMMODITY_TICKERS)
+    for instrument_id, ticker in _EXPECTED_COMMODITY_TICKERS.items():
+        assert commodities[instrument_id].series == ticker
+        assert (
+            commodities[instrument_id].commodity_group == _EXPECTED_COMMODITY_GROUPS[instrument_id]
+        )
+        assert commodities[instrument_id].source == "yahoo"
 
 
 def test_fx_registry_entries() -> None:
@@ -78,7 +130,11 @@ def test_fx_registry_entries() -> None:
     assert fx["FX-USDCHF"].series == "DEXSZUS"
     assert fx["FX-USDCAD"].series == "DEXCAUS"
     assert fx["FX-USDJPY"].currency == "JPY"
+    assert fx["FX-USDCHF"].currency == "CHF"
+    assert fx["FX-USDCAD"].currency == "CAD"
     assert fx["FX-EURUSD"].currency == "USD"
+    assert fx["FX-GBPUSD"].currency == "USD"
+    assert fx["FX-AUDUSD"].currency == "USD"
     for inst in fx.values():
         assert inst.source == "fred"
 

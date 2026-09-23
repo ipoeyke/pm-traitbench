@@ -1,13 +1,15 @@
 """Tests for the real-market raw-data fetch and its manifest cache."""
 
-from datetime import date, timedelta
+import http.client
+import json
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
 import pytest
 
 import pm_traitbench.market.real.fetch as fetch_module
-from pm_traitbench.config import REAL_REQUEST_INTERVAL_S, Config
+from pm_traitbench.config import REAL_REQUEST_INTERVAL_S, REAL_RETRIES, Config
 from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.real.fetch import (
     RawCache,
@@ -33,6 +35,23 @@ def _isolate_to_one_yahoo_ticker(monkeypatch: pytest.MonkeyPatch, ticker: str) -
     monkeypatch.setattr(fetch_module, "_nasdaq_days", lambda config: [])
 
 
+def _weekdays_of(start: date, end: date) -> list[date]:
+    days = []
+    day = start
+    while day <= end:
+        if day.weekday() < 5:
+            days.append(day)
+        day += timedelta(days=1)
+    return days
+
+
+def _holiday_of(config: Config) -> date:
+    """The fixture's one shared holiday-gap weekday (see tests/market/real/conftest.py)."""
+    start, end = fetch_range(config)
+    weekdays = _weekdays_of(start, end)
+    return weekdays[len(weekdays) // 2]
+
+
 def test_fred_url_matches_the_binding_form() -> None:
     url = fred_url("DGS10", date(2018, 6, 4), date(2019, 6, 3))
     assert url == (
@@ -44,11 +63,12 @@ def test_yahoo_url_matches_the_binding_form() -> None:
     start = date(2018, 6, 4)
     end = date(2018, 6, 5)
     url = yahoo_url("AAPL", start, end)
-    assert url.startswith("https://query1.finance.yahoo.com/v8/finance/chart/AAPL?period1=")
-    assert url.endswith("&interval=1d")
-    period1 = int(url.split("period1=")[1].split("&")[0])
-    period2 = int(url.split("period2=")[1].split("&")[0])
-    assert period2 - period1 == 2 * 86400
+    expected_period1 = int(datetime(2018, 6, 4, tzinfo=UTC).timestamp())
+    expected_period2 = int(datetime(2018, 6, 6, tzinfo=UTC).timestamp())
+    assert url == (
+        "https://query1.finance.yahoo.com/v8/finance/chart/AAPL"
+        f"?period1={expected_period1}&period2={expected_period2}&interval=1d"
+    )
 
 
 def test_nasdaq_url_matches_the_binding_form() -> None:
@@ -104,15 +124,48 @@ def test_second_fetch_with_force_refetches_every_file(fake_cache) -> None:
         calls.append(url)
         return bodies_by_url[url]
 
-    # fetch_all's own task list drives what it re-requests; the fixture's one
-    # extra out-of-band weekend Nasdaq file isn't part of it.
-    expected = (
-        len(fetch_module.fred_series())
-        + len(fetch_module.yahoo_tickers())
-        + len(fetch_module._nasdaq_days(config))
-    )
     fetch_all(config, data_dir, force=True, opener=_opener, sleeper=lambda _: None)
-    assert len(calls) == expected
+    assert len(calls) == len(old.entries)
+
+
+def test_kept_file_must_match_both_sha256_and_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A changed fetch window changes a series' URL; a stale-window file refetches
+    without --force even if its bytes still happen to match the old manifest sha256.
+    """
+    _isolate_to_one_fred_series(monkeypatch, "DGS2")
+    config = Config()
+    body = b"observation_date,DGS2\n2018-01-02,2.0\n"
+    fetch_all(config, tmp_path, opener=lambda url: body, sleeper=lambda _: None)
+
+    spec = next(iter(config.market.real.seeds.values()))
+    shifted_spec = spec.model_copy(
+        update={
+            "window_start": spec.window_start - timedelta(weeks=1),
+            "regime_starts": tuple(
+                (regime, start - timedelta(weeks=1)) for regime, start in spec.regime_starts
+            ),
+        }
+    )
+    shifted_config = config.model_copy(
+        update={
+            "market": config.market.model_copy(
+                update={
+                    "real": config.market.real.model_copy(update={"seeds": {"R1": shifted_spec}})
+                }
+            )
+        }
+    )
+
+    calls = {"n": 0}
+
+    def _opener(url: str) -> bytes:
+        calls["n"] += 1
+        return body
+
+    fetch_all(shifted_config, tmp_path, opener=_opener, sleeper=lambda _: None)
+    assert calls["n"] == 1
 
 
 def test_transient_429s_retry_then_succeed_with_backoff(
@@ -143,12 +196,16 @@ def test_five_5xx_responses_raise_stage_io_error_naming_the_series(
 ) -> None:
     _isolate_to_one_fred_series(monkeypatch, "DGS2")
     config = Config()
+    calls = {"n": 0}
 
     def _opener(url: str) -> bytes:
+        calls["n"] += 1
         raise HTTPError(url, 503, "Service Unavailable", hdrs=None, fp=None)
 
-    with pytest.raises(StageIOError, match="DGS2"):
+    with pytest.raises(StageIOError, match="DGS2") as exc_info:
         fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
+    assert calls["n"] == REAL_RETRIES
+    assert "503" in str(exc_info.value)
 
 
 def test_non_retryable_http_error_raises_immediately(
@@ -167,12 +224,60 @@ def test_non_retryable_http_error_raises_immediately(
     assert calls["n"] == 1
 
 
-def test_url_error_raises_immediately(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_url_error_retries_like_5xx_then_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_to_one_fred_series(monkeypatch, "DGS2")
+    config = Config()
+    calls = {"n": 0}
+
+    def _opener(url: str) -> bytes:
+        calls["n"] += 1
+        raise URLError("connection refused")
+
+    with pytest.raises(StageIOError, match="DGS2"):
+        fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
+    assert calls["n"] == REAL_RETRIES
+
+
+def test_timeout_retries_then_succeeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _isolate_to_one_fred_series(monkeypatch, "DGS2")
+    config = Config()
+    body = b"observation_date,DGS2\n2018-01-02,2.0\n"
+    calls = {"n": 0}
+
+    def _opener(url: str) -> bytes:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise TimeoutError("timed out")
+        return body
+
+    manifest = fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
+    assert calls["n"] == 3
+    assert len(manifest.entries) == 1
+
+
+def test_connection_reset_retries_like_5xx_then_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _isolate_to_one_fred_series(monkeypatch, "DGS2")
     config = Config()
 
     def _opener(url: str) -> bytes:
-        raise URLError("connection refused")
+        raise ConnectionResetError("connection reset by peer")
+
+    with pytest.raises(StageIOError, match="DGS2"):
+        fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
+
+
+def test_incomplete_read_retries_like_5xx_then_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_to_one_fred_series(monkeypatch, "DGS2")
+    config = Config()
+
+    def _opener(url: str) -> bytes:
+        raise http.client.IncompleteRead(b"partial")
 
     with pytest.raises(StageIOError, match="DGS2"):
         fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
@@ -233,34 +338,83 @@ def test_raw_cache_open_fails_on_tampered_file_naming_its_path(fake_cache) -> No
     assert str(tampered_path) in str(exc_info.value)
 
 
+def test_fetch_all_raises_on_corrupt_manifest_naming_its_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_to_one_fred_series(monkeypatch, "DGS2")
+    config = Config()
+    manifest_path = fetch_module.cache_dir(tmp_path) / "manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("not json", encoding="utf-8")
+
+    with pytest.raises(StageIOError) as exc_info:
+        fetch_all(config, tmp_path, opener=lambda url: b"unused", sleeper=lambda _: None)
+    assert str(manifest_path) in str(exc_info.value)
+
+
+def test_raw_cache_open_raises_on_corrupt_manifest_naming_its_path(tmp_path: Path) -> None:
+    manifest_path = fetch_module.cache_dir(tmp_path) / "manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text('{"window": ["a", "b"]}', encoding="utf-8")  # missing "entries"
+
+    with pytest.raises(StageIOError) as exc_info:
+        RawCache.open(tmp_path)
+    assert str(manifest_path) in str(exc_info.value)
+
+
 def test_fred_skips_missing_marker(fake_cache) -> None:
     config = Config()
     data_dir = fake_cache(config)
+    holiday = _holiday_of(config)
+    start, end = fetch_range(config)
+    weekdays = _weekdays_of(start, end)
+
     cache = RawCache.open(data_dir)
     values = cache.fred("DGS2")
-    assert values
-    assert all(isinstance(v, float) for v in values.values())
+    assert holiday not in values
+    assert len(values) == len(weekdays) - 1
+    for day in weekdays:
+        if day != holiday:
+            assert isinstance(values[day], float)
 
 
-def test_yahoo_maps_timestamps_to_utc_dates(fake_cache) -> None:
+def test_yahoo_maps_a_known_timestamp_and_skips_a_null_adjclose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_to_one_yahoo_ticker(monkeypatch, "AAPL")
     config = Config()
-    data_dir = fake_cache(config)
-    cache = RawCache.open(data_dir)
-    values = cache.yahoo("SPY")
-    assert values
-    for day in values:
-        assert isinstance(day, date)
+    known_ts = int(datetime(2018, 6, 4, 13, 30, tzinfo=UTC).timestamp())
+    null_ts = int(datetime(2018, 6, 5, 13, 30, tzinfo=UTC).timestamp())
+    body = json.dumps(
+        {
+            "chart": {
+                "result": [
+                    {
+                        "timestamp": [known_ts, null_ts],
+                        "indicators": {
+                            "adjclose": [{"adjclose": [123.45, None]}],
+                            "quote": [{}],
+                        },
+                    }
+                ],
+                "error": None,
+            }
+        }
+    ).encode("utf-8")
+
+    fetch_all(config, tmp_path, opener=lambda url: body, sleeper=lambda _: None)
+    cache = RawCache.open(tmp_path)
+    values = cache.yahoo("AAPL")
+    assert values == {date(2018, 6, 4): 123.45}
 
 
 def test_nasdaq_symbols_returns_the_set(fake_cache) -> None:
     config = Config()
     data_dir = fake_cache(config)
+    holiday = _holiday_of(config)
+
     cache = RawCache.open(data_dir)
-    spec = next(iter(config.market.real.seeds.values()))
-    saturday = spec.window_start
-    while saturday.weekday() != 5:
-        saturday += timedelta(days=1)
-    symbols = cache.nasdaq_symbols(saturday)
+    symbols = cache.nasdaq_symbols(holiday)
     assert isinstance(symbols, set)
     assert len(symbols) > 0
 
