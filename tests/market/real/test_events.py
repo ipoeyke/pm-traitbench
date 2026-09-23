@@ -28,7 +28,7 @@ from pm_traitbench.tables.schema import CalendarEvent, Instrument
 _WINDOW_START = date(2018, 6, 4)
 _WINDOW_END = date(2019, 5, 31)
 
-_AAPL_CIK = next(i.cik for i in REAL_INSTRUMENTS if i.series == "AAPL")
+_AAPL_CIK = next(i.ciks[0] for i in REAL_INSTRUMENTS if i.series == "AAPL")
 
 
 def _equity_instrument(instrument_id: str = "EQ-R001", beta: float = 1.0) -> Instrument:
@@ -58,8 +58,8 @@ class _FakeEarningsCache:
         self._filings = filings
         self._yahoo = yahoo
 
-    def edgar_filings(self, cik: str) -> list[EdgarFiling]:
-        return self._filings.get(cik, [])
+    def edgar_filings(self, ciks) -> list[EdgarFiling]:
+        return [filing for cik in ciks for filing in self._filings.get(cik, [])]
 
     def yahoo(self, ticker: str) -> dict[date, float]:
         return self._yahoo.get(ticker, {})

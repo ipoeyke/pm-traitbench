@@ -90,8 +90,8 @@ NFP_DATES: tuple[date, ...] = (
 _COUNTED_EVENT_TYPES: tuple[EventType, ...] = tuple(EVENT_FAMILY)
 
 _SERIES_BY_ID: dict[str, str] = {inst.instrument_id: inst.series for inst in REAL_INSTRUMENTS}
-_CIK_BY_ID: dict[str, str] = {
-    inst.instrument_id: inst.cik for inst in REAL_INSTRUMENTS if inst.cik is not None
+_CIKS_BY_ID: dict[str, tuple[str, ...]] = {
+    inst.instrument_id: inst.ciks for inst in REAL_INSTRUMENTS if inst.ciks
 }
 
 # A results 8-K filed from 16:00 local time on counts as reported the next
@@ -167,12 +167,12 @@ def real_event_days(
 
     equity_ids = [i.instrument_id for i in instruments if i.family == Family.EQUITIES]
     for instrument_id in equity_ids:
-        cik = _CIK_BY_ID.get(instrument_id)
-        if cik is None:
+        ciks = _CIKS_BY_ID.get(instrument_id)
+        if not ciks:
             continue
         values = cache.yahoo(_SERIES_BY_ID[instrument_id])
         days: set[int] = set()
-        for filing in cache.edgar_filings(cik):
+        for filing in cache.edgar_filings(ciks):
             if filing.form != "8-K" or "2.02" not in filing.items:
                 continue
             day = _earnings_event_day(filing.accepted, real_dates, last_day, values)

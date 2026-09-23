@@ -25,6 +25,7 @@ from pm_traitbench.market.real.fetch import (
 from pm_traitbench.market.real.sources import REAL_INSTRUMENTS
 
 _AAPL = next(inst for inst in REAL_INSTRUMENTS if inst.series == "AAPL")
+_DIS = next(inst for inst in REAL_INSTRUMENTS if inst.series == "DIS")
 
 
 def _isolate_to_one_fred_series(monkeypatch: pytest.MonkeyPatch, series: str) -> None:
@@ -709,7 +710,7 @@ def test_raw_cache_edgar_filings_raises_for_an_unlisted_cik(fake_cache) -> None:
     result = fake_cache(config)
     cache = RawCache.open(result.data_dir)
     with pytest.raises(StageIOError, match="9999999999"):
-        cache.edgar_filings("9999999999")
+        cache.edgar_filings(("9999999999",))
 
 
 def test_raw_cache_edgar_filings_merges_main_and_older_files(fake_cache) -> None:
@@ -717,7 +718,7 @@ def test_raw_cache_edgar_filings_merges_main_and_older_files(fake_cache) -> None
     result = fake_cache(config)
     cache = RawCache.open(result.data_dir)
 
-    filings = cache.edgar_filings(_AAPL.cik)
+    filings = cache.edgar_filings(_AAPL.ciks)
     assert len(filings) == 7
     assert all(f.form == "8-K" for f in filings)
     assert sum(1 for f in filings if "2.02" in f.items) == 5
@@ -725,6 +726,18 @@ def test_raw_cache_edgar_filings_merges_main_and_older_files(fake_cache) -> None
         assert f.accepted.tzinfo is not None
         assert f.accepted.utcoffset().total_seconds() == 0
         assert f.accepted.hour == 20 and f.accepted.minute == 30
+
+
+def test_raw_cache_edgar_filings_merges_across_multiple_registrants(fake_cache) -> None:
+    """A reorganised equity lists more than one CIK; edgar_filings merges all of them."""
+    config = Config()
+    result = fake_cache(config)
+    cache = RawCache.open(result.data_dir)
+
+    assert len(_DIS.ciks) == 2
+    single_cik_filings = cache.edgar_filings(_DIS.ciks[:1])
+    both_ciks_filings = cache.edgar_filings(_DIS.ciks)
+    assert len(both_ciks_filings) == 2 * len(single_cik_filings)
 
 
 def test_raw_cache_open_fails_on_tampered_file_naming_its_path(fake_cache) -> None:

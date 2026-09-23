@@ -230,34 +230,37 @@ def fake_cache(tmp_path: Path) -> Callable[..., FakeCache]:
         # above the 3-report coverage floor) in the main "recent" file, plus
         # a 2.02 and a non-2.02 8-K before window_start in a separate older
         # file (exercising the filings.files merge path; excluded from
-        # coverage since they fall in the burn-in, not the horizon).
+        # coverage since they fall in the burn-in, not the horizon). Built
+        # per CIK, so a reorganised equity listing more than one registrant
+        # gets a full main+older set for each.
         window_starts = _referenced_window_starts(config)
         for inst in REAL_INSTRUMENTS:
             if inst.family != Family.EQUITIES:
                 continue
-            older_filings: list[tuple[date, str, str]] = []
-            recent_filings: list[tuple[date, str, str]] = []
-            for window_start in window_starts:
-                older_filings.append((window_start - timedelta(days=40), "8-K", "5.02"))
-                older_filings.append((window_start - timedelta(days=20), "8-K", "2.02,9.01"))
-                for offset in (45, 136, 227, 318):
-                    recent_filings.append(
-                        (window_start + timedelta(days=offset), "8-K", "2.02,9.01")
-                    )
-                recent_filings.append((window_start + timedelta(days=200), "8-K", "5.02"))
-            older_filings.sort()
-            recent_filings.sort()
+            for cik in inst.ciks:
+                older_filings: list[tuple[date, str, str]] = []
+                recent_filings: list[tuple[date, str, str]] = []
+                for window_start in window_starts:
+                    older_filings.append((window_start - timedelta(days=40), "8-K", "5.02"))
+                    older_filings.append((window_start - timedelta(days=20), "8-K", "2.02,9.01"))
+                    for offset in (45, 136, 227, 318):
+                        recent_filings.append(
+                            (window_start + timedelta(days=offset), "8-K", "2.02,9.01")
+                        )
+                    recent_filings.append((window_start + timedelta(days=200), "8-K", "5.02"))
+                older_filings.sort()
+                recent_filings.sort()
 
-            older_name = f"CIK{inst.cik}-submissions-001.json"
-            files[edgar_followup_url(older_name)] = _edgar_older_json(older_filings)
-            files_list = [
-                {
-                    "name": older_name,
-                    "filingFrom": start.isoformat(),
-                    "filingTo": (min(window_starts) - timedelta(days=1)).isoformat(),
-                }
-            ]
-            files[edgar_url(inst.cik)] = _edgar_main_json(recent_filings, files_list)
+                older_name = f"CIK{cik}-submissions-001.json"
+                files[edgar_followup_url(older_name)] = _edgar_older_json(older_filings)
+                files_list = [
+                    {
+                        "name": older_name,
+                        "filingFrom": start.isoformat(),
+                        "filingTo": (min(window_starts) - timedelta(days=1)).isoformat(),
+                    }
+                ]
+                files[edgar_url(cik)] = _edgar_main_json(recent_filings, files_list)
 
         fetch_all(config, data_dir, opener=_fake_opener(files), sleeper=lambda _: None)
         return FakeCache(data_dir=data_dir, holiday=holiday, betas=betas)

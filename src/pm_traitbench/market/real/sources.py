@@ -29,7 +29,7 @@ class RealInstrument:
     rating_band: RatingBand | None = None
     commodity_group: CommodityGroup | None = None
     spread_base: str | None = None
-    cik: str | None = None
+    ciks: tuple[str, ...] = ()
 
 
 REFERENCE_EQUITY = "SPY"
@@ -57,17 +57,25 @@ _EQUITY_TICKERS: tuple[str, ...] = (
 )  # fmt: skip
 
 # SEC EDGAR CIKs, looked up once from https://www.sec.gov/files/company_tickers.json.
-_EQUITY_CIKS: dict[str, str] = {
-    "AAPL": "0000320193", "MSFT": "0000789019", "INTC": "0000050863", "CSCO": "0000858877",
-    "JNJ": "0000200406", "PFE": "0000078003", "MRK": "0000310158", "UNH": "0000731766",
-    "JPM": "0000019617", "BAC": "0000070858", "WFC": "0000072971", "GS": "0000886982",
-    "AMZN": "0001018724", "HD": "0000354950", "MCD": "0000063908", "NKE": "0000320187",
-    "PG": "0000080424", "KO": "0000021344", "PEP": "0000077476", "WMT": "0000104169",
-    "XOM": "0002115436", "CVX": "0000093410", "COP": "0001163165", "SLB": "0000087347",
-    "BA": "0000012927", "CAT": "0000018230", "HON": "0000773840", "UNP": "0000100885",
-    "APD": "0000002969", "ECL": "0000031462", "NEM": "0001164727", "SHW": "0000089800",
-    "NEE": "0000753308", "DUK": "0001326160", "SO": "0000092122", "D": "0000715957",
-    "VZ": "0000732712", "T": "0000732717", "DIS": "0001744489", "CMCSA": "0001166691",
+# A company that reorganised under a new holding company lists both
+# registrants: DIS lists its pre- and post-March-2019 CIKs, since SEC's
+# current ticker map otherwise only surfaces the successor entity, which
+# has no filing history before the reorganisation.
+_EQUITY_CIKS: dict[str, tuple[str, ...]] = {
+    "AAPL": ("0000320193",), "MSFT": ("0000789019",), "INTC": ("0000050863",),
+    "CSCO": ("0000858877",), "JNJ": ("0000200406",), "PFE": ("0000078003",),
+    "MRK": ("0000310158",), "UNH": ("0000731766",), "JPM": ("0000019617",),
+    "BAC": ("0000070858",), "WFC": ("0000072971",), "GS": ("0000886982",),
+    "AMZN": ("0001018724",), "HD": ("0000354950",), "MCD": ("0000063908",),
+    "NKE": ("0000320187",), "PG": ("0000080424",), "KO": ("0000021344",),
+    "PEP": ("0000077476",), "WMT": ("0000104169",), "XOM": ("0000034088",),
+    "CVX": ("0000093410",), "COP": ("0001163165",), "SLB": ("0000087347",),
+    "BA": ("0000012927",), "CAT": ("0000018230",), "HON": ("0000773840",),
+    "UNP": ("0000100885",), "APD": ("0000002969",), "ECL": ("0000031462",),
+    "NEM": ("0001164727",), "SHW": ("0000089800",), "NEE": ("0000753308",),
+    "DUK": ("0001326160",), "SO": ("0000092122",), "D": ("0000715957",),
+    "VZ": ("0000732712",), "T": ("0000732717",), "DIS": ("0001001039", "0001744489"),
+    "CMCSA": ("0001166691",),
 }  # fmt: skip
 
 
@@ -85,7 +93,7 @@ def _build_equities() -> list[RealInstrument]:
                 source="yahoo",
                 series=ticker,
                 sector=sector_label(i // 4 + 1),
-                cik=_EQUITY_CIKS[ticker],
+                ciks=_EQUITY_CIKS[ticker],
             )
         )
     return instruments

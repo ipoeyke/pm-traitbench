@@ -10,7 +10,7 @@ import os
 import re
 import time
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -374,9 +374,8 @@ def fetch_all(
         url = yahoo_url(ticker, start, end)
         tasks.append((f"yahoo/{ticker}.json", url, ticker, _DEFAULT_HEADERS))
     for inst in REAL_INSTRUMENTS:
-        if inst.cik is None:
-            continue
-        tasks.append((f"edgar/CIK{inst.cik}.json", edgar_url(inst.cik), inst.cik, edgar_headers))
+        for cik in inst.ciks:
+            tasks.append((f"edgar/CIK{cik}.json", edgar_url(cik), cik, edgar_headers))
 
     # Which old entries are still trustworthy (same URL, same on-disk sha256):
     # computed once, since a file this run hasn't reached yet doesn't change.
@@ -551,19 +550,23 @@ class RawCache:
             values[datetime.fromtimestamp(ts, tz=UTC).date()] = float(value)
         return values
 
-    def edgar_filings(self, cik: str) -> list[EdgarFiling]:
-        """Every filing for `cik`: its main submissions file merged with every
-        cached older file for that CIK, found in the manifest by path prefix.
+    def edgar_filings(self, ciks: Sequence[str]) -> list[EdgarFiling]:
+        """Every filing across every CIK in `ciks`: each one's main submissions
+        file merged with its own cached older files, found in the manifest by
+        path prefix. A company that reorganised under a new holding company
+        lists more than one CIK.
         """
-        entry = self._entry(f"edgar/CIK{cik}.json", f"EDGAR CIK '{cik}'")
-        main = json.loads((self._root / entry.path).read_text(encoding="utf-8"))
-        filings = _parse_edgar_filings(main["filings"]["recent"])
+        filings: list[EdgarFiling] = []
+        for cik in ciks:
+            entry = self._entry(f"edgar/CIK{cik}.json", f"EDGAR CIK '{cik}'")
+            main = json.loads((self._root / entry.path).read_text(encoding="utf-8"))
+            filings.extend(_parse_edgar_filings(main["filings"]["recent"]))
 
-        prefix = f"edgar/CIK{cik}-"
-        for path in sorted(self._entries_by_path):
-            if not path.startswith(prefix):
-                continue
-            older_entry = self._entries_by_path[path]
-            older = json.loads((self._root / older_entry.path).read_text(encoding="utf-8"))
-            filings.extend(_parse_edgar_filings(older))
+            prefix = f"edgar/CIK{cik}-"
+            for path in sorted(self._entries_by_path):
+                if not path.startswith(prefix):
+                    continue
+                older_entry = self._entries_by_path[path]
+                older = json.loads((self._root / older_entry.path).read_text(encoding="utf-8"))
+                filings.extend(_parse_edgar_filings(older))
         return filings

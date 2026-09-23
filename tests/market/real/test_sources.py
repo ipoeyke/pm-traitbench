@@ -78,17 +78,22 @@ def test_equity_ticker_to_id_order_matches_the_registry() -> None:
         assert inst.source == "yahoo"
 
 
-def test_every_equity_has_a_ten_digit_cik_and_no_two_repeat() -> None:
+def test_every_equity_has_at_least_one_ten_digit_cik_and_no_cik_repeats() -> None:
     equities = [inst for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES]
-    ciks = [inst.cik for inst in equities]
-    assert all(cik is not None for cik in ciks)
-    assert all(len(cik) == 10 and cik.isdigit() for cik in ciks)
-    assert len(ciks) == len(set(ciks))
+    assert all(len(inst.ciks) >= 1 for inst in equities)
+    all_ciks = [cik for inst in equities for cik in inst.ciks]
+    assert all(len(cik) == 10 and cik.isdigit() for cik in all_ciks)
+    assert len(all_ciks) == len(set(all_ciks))
 
 
-def test_non_equity_instruments_have_no_cik() -> None:
+def test_non_equity_instruments_have_no_ciks() -> None:
     non_equities = [inst for inst in REAL_INSTRUMENTS if inst.family != Family.EQUITIES]
-    assert all(inst.cik is None for inst in non_equities)
+    assert all(inst.ciks == () for inst in non_equities)
+
+
+def test_reorganised_equity_lists_both_registrants() -> None:
+    dis = next(inst for inst in REAL_INSTRUMENTS if inst.series == "DIS")
+    assert dis.ciks == ("0001001039", "0001744489")
 
 
 def test_equity_sector_groups_are_four_tickers_each_in_order() -> None:
