@@ -117,9 +117,8 @@ def test_dropped_positioning_report_row_raises_naming_the_count_metric(universe,
 
 
 def test_duplicated_and_missing_expiry_with_same_total_raises(universe, markets) -> None:
-    # Same total row count for the commodity, but one month's expiry is duplicated
-    # onto another month's date, leaving that other month uncovered: a stale
-    # total-count check would pass this; the per-date check must not.
+    # A duplicated expiry date leaves another month uncovered while the row
+    # count stays the same, so the check must compare exact dates, not counts.
     config, instruments, _, _ = universe
     market = markets["A"]
     commodity = next(i for i in instruments if i.family == Family.COMMODITIES)
@@ -189,9 +188,9 @@ class TestRoundLevelTestCount:
         assert round_level_test_count(series, 1.0, 0.02) == 0
 
     def test_a_nearest_level_of_zero_is_replaced_by_one_step(self) -> None:
-        # Both closes round to a raw nearest level of 0 (a yield near the floor).
-        # With the fix, the level is the step (1.0) and the wide band [0.3, 1.7]
-        # correctly puts 0.4 inside it; a zero-width band at 0 could never do so.
+        # Both closes round to a raw nearest level of 0 (a yield near the floor):
+        # the level used is the step (1.0), not 0, so the band [0.3, 1.7] can
+        # still contain a close; a zero-width band at 0 never could.
         series = np.array([0.1, 0.4])
         assert round_level_test_count(series, 1.0, 0.7) == 1
 

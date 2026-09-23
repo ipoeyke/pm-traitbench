@@ -52,12 +52,13 @@ off realism for a model whose moments can be checked in closed form:
 - A regime sets a driver mean, a vol multiplier, and a mean-reversion
   speed that is zero outside the range regime: switching regimes shifts
   `z`'s average level and scales every family's volatility, and in range
-  it also adds a pull back toward nearby round levels, rather than
-  changing the shape of the process.
+  it also adds a pull back toward nearby round levels.
 - No vol clustering inside a regime: volatility is constant within a
   regime span, with no GARCH-style clustering on top of the regime switch.
 - Rates are level and slope only: the sovereign curve is two factors, not
   a richer term-structure model, with fixed offsets giving the other tenors.
+  Level vol is set per currency, and published yields are floored at
+  `yield_floor_pct`, so a low-yield curve can sit at the floor.
 - Credit is one factor times a rating base times issuer noise: no issuer
   defaults, a static rating band per issuer for the whole run, and issuer
   volatility is a guess since issuer-level OAS series are not public.
@@ -70,19 +71,19 @@ off realism for a model whose moments can be checked in closed form:
   no drift term, and there is no carry from interest-rate differentials.
 - Consensus is a lagged moving average plus scripted flips: the street
   view tracks a trend-following average of recent price moves with
-  occasional random direction flips. Positioning is built the same way
-  for every instrument, a slower-moving percentile score for crowding;
-  credit is the one family with no public positioning data to check it
-  against, so its score is a survey analogue rather than a proxy for a
-  reported one.
-- One sampled event type per family: earnings for equities, a rating
-  action for credit issuers, central bank meetings for sovereign curves,
-  and an inventory or crop report for energy and agriculture commodities;
-  industrial metals, precious metals and FX carry no idiosyncratic event
-  of their own. A market-wide macro print, tied to no family, adds
-  directly to the common driver `z`. Contract expiries and the weekly
-  positioning report are separate, deterministic calendar rows, not
-  sampled events.
+  occasional random direction flips, and both the street and positioning
+  half-lives are measured in trading days, not update counts. Positioning
+  is built the same way for every instrument, a slower-moving percentile
+  score for crowding; credit is the one family with no public positioning
+  data to check it against, so its score is a survey analogue rather than
+  a proxy for a reported one.
+- One sampled event class per instrument (earnings for equities, rating
+  actions for credit issuers, central-bank meetings for curves, inventory
+  reports for energy, crop reports for agriculture) plus a market-wide
+  macro print, tied to no family, that adds directly to the common driver
+  `z`; industrial metals, precious metals and FX carry no idiosyncratic
+  event of their own. Contract expiries and the weekly positioning report
+  are separate, deterministic calendar rows, not sampled events.
 - No holidays or intraday data: the axis is every weekday, one close per
   instrument per day, with no exchange holiday calendar.
 
@@ -93,7 +94,9 @@ window. Where no reliable public source exists, the config says so and
 marks the value a guess: the investment-grade/high-yield credit mix and
 credit duration ranges, the equity beta range, credit issuer volatility,
 the commodity group-versus-idiosyncratic variance share, the rating-action
-event frequencies, and the consensus window and flip rate.
+event frequencies, the consensus window and flip rate, and rates level
+vol (USD is sourced, but a single field basis cannot mark only the other
+currencies a guess).
 
 Before writing its tables, the market stage checks each generated seed
 against what the config implies. For every regime and family it compares
@@ -110,8 +113,9 @@ tests (a close crossing into or through the band around a round level)
 are counted as a family mean per instrument, for equities, commodities,
 FX pairs and sovereign 10Y yields, during the range regime, with level
 crossings between two closes also counted as a test. Drift is not
-checked: its standard error over a 14-22 week regime span exceeds the
-drift itself, so no seed could pass a drift check by chance alone.
+checked: a drift check over one regime span would pass or fail mostly by
+chance, because the standard error of drift over 14-22 weeks exceeds the
+drift itself.
 
 ## Development
 

@@ -94,9 +94,10 @@ def _exact_credit_band_counts(n: int, shares: dict[RatingBand, Fraction]) -> dic
 
 def test_credit_band_counts_break_exact_remainder_ties_by_band_order() -> None:
     # 45 x (.35, .15, .15, .20, .15) floors to 15, 6, 6, 9, 6 (sum 42); AA, A,
-    # BBB and B tie at a remainder of exactly 0.75, so the 3 spare seats go to
-    # the first three of the tied bands in band order: AA, A, BBB. A float
-    # rounding of 0.35 * 45 previously broke this exact tie by accident.
+    # BBB and B tie at a remainder of exactly 0.75, so the 3 spare seats must
+    # go to the first three tied bands in band order: AA, A, BBB. The split
+    # must round the remainder before ranking, or float noise in 0.35 * 45
+    # can separate an exact tie and break the order.
     shares = {
         RatingBand.AA: Fraction(35, 100),
         RatingBand.A: Fraction(15, 100),
