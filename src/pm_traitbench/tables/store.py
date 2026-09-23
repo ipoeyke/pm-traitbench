@@ -66,6 +66,10 @@ class DataStore:
         self._output = output
         self._written: set[str] = set()
 
+    @property
+    def data_dir(self) -> Path:
+        return self._data_dir
+
     def format_name(self, spec: TableSpec) -> str:
         """Resolve the format name for a table: its own override, else the global format."""
         return self._output.tables.get(spec.name, self._output.format)

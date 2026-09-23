@@ -173,3 +173,4 @@ MARKET_WIDE_EVENTS: frozenset[EventType] = frozenset(
     {EventType.MACRO_PRINT, EventType.POSITIONING_REPORT}
 )
 HY_BANDS: frozenset[RatingBand] = frozenset({RatingBand.BB, RatingBand.B})
+IG_BANDS: frozenset[RatingBand] = frozenset(RatingBand) - HY_BANDS

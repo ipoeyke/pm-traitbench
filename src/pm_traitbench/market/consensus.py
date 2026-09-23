@@ -23,7 +23,7 @@ from pm_traitbench.enums import (
 from pm_traitbench.market.axis import SimAxis
 from pm_traitbench.market.calendar import RngFor
 from pm_traitbench.market.constants import ANNUALISATION_DAYS, FX_PAIRS, HORIZON_DAYS_PER_YEAR
-from pm_traitbench.market.processes.common import ProcessOutput
+from pm_traitbench.market.output import ProcessOutput
 from pm_traitbench.tables.schema import CalendarEvent, ConsensusRow, Instrument
 
 

@@ -1,4 +1,4 @@
-"""End-to-end tests for the CLI: the sample stage run through main()."""
+"""End-to-end tests for the CLI: the pipeline stages run through main()."""
 
 from pathlib import Path
 
@@ -6,9 +6,10 @@ import pytest
 
 from pm_traitbench import pipeline
 from pm_traitbench.cli import build_parser, main
-from pm_traitbench.config import OutputConfig
-from pm_traitbench.tables.specs import DRIFT_EVENTS, PERSONAS, RULES, TRAITS
+from pm_traitbench.config import OutputConfig, load_config
+from pm_traitbench.tables.specs import DRIFT_EVENTS, MARKET_TABLES, PERSONAS, RULES, TRAITS
 from pm_traitbench.tables.store import DataStore
+from tests.market.real.conftest import fake_cache  # noqa: F401
 
 _DEMO_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "demo.yaml"
 _TABLES = (PERSONAS, TRAITS, RULES, DRIFT_EVENTS)
@@ -89,3 +90,20 @@ def test_non_mapping_config_yaml_exits_2_with_error_message(
     captured = capsys.readouterr()
     assert result == 2
     assert captured.err.startswith("error:")
+
+
+def test_sample_then_market_run_through_the_cli_against_a_fetched_cache(fake_cache) -> None:
+    """The demo config's pilot seed is real: `market` needs a raw cache fetched
+    first, then `sample` and `market` both write their tables through the CLI.
+    """
+    config = load_config(_DEMO_CONFIG)
+    result = fake_cache(config)
+    data_dir = result.data_dir
+
+    assert main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(data_dir)]) == 0
+    assert main(["market", "--config", str(_DEMO_CONFIG), "--data-dir", str(data_dir)]) == 0
+
+    for spec in (*_TABLES, *MARKET_TABLES):
+        assert (data_dir / f"{spec.name}.jsonl").exists()
+    assert (data_dir / "run_metadata" / "sample.json").exists()
+    assert (data_dir / "run_metadata" / "market.json").exists()

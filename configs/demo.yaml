@@ -1,11 +1,13 @@
 # Small population for smoke runs: 4 pilot and 4 full commodities PMs.
+# The pilot runs on the real market seed R1: run `fetch-market` before `market`.
 population:
   asset_classes: [commodities]
   market_seeds: [A]
+  pilot_market_seeds: [R1]
   pilot_per_cell: 1
   full_per_cell: 1
 
-# Small market universe to keep the market stage cheap in a smoke run.
+# Small market universe to keep the synthetic full split cheap in a smoke run.
 market:
   universe:
     n_equities: 20

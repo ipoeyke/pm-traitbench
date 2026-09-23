@@ -14,6 +14,7 @@ from pm_traitbench.config import (
     DriftConfig,
     EventSpec,
     MarketConfig,
+    RealSeedSpec,
     RegimeParams,
     load_config,
 )
@@ -32,8 +33,11 @@ def test_config_builds_with_defaults() -> None:
     config = Config()
     assert config.seed.root == 20260105
     assert config.population.pilot_per_cell == 2
-    assert config.population.pilot_market_seed_count == 1
+    assert config.population.pilot_market_seeds == ("R1",)
     assert config.population.full_per_cell == 3
+    assert config.market.real.seeds["R1"].window_start == date(2018, 6, 4)
+    expected_agent = "pm-traitbench admin@example.com"
+    assert config.market.real.sec_user_agent == expected_agent
     assert config.mandate.book_size_min == 50e6
     assert config.mandate.book_size_max == 2e9
     assert config.drift.bias_update_weeks == (18, 30)
@@ -82,8 +86,9 @@ def test_yaml_override_of_one_bias_entry_field_keeps_others(tmp_path: Path) -> N
         ({"market_seeds": ["A", "A"]}, "market_seeds"),
         ({"market_seeds": []}, "market_seeds"),
         ({"market_seeds": ["A", " "]}, "market_seeds"),
-        ({"pilot_market_seed_count": 4}, "pilot_market_seed_count"),
-        ({"pilot_market_seed_count": 0}, "pilot_market_seed_count"),
+        ({"pilot_market_seed_count": 1}, "pilot_market_seed_count"),
+        ({"pilot_market_seeds": []}, "pilot_market_seeds"),
+        ({"pilot_market_seeds": ["Z"]}, "pilot_market_seeds"),
         ({"pilot_per_cell": 0, "full_per_cell": 0}, "per_cell"),
     ],
 )
@@ -331,6 +336,16 @@ def test_bias_spec_empty_note_raises() -> None:
         )
 
 
+def test_sec_user_agent_without_at_sign_raises() -> None:
+    with pytest.raises(ValidationError, match="sec_user_agent"):
+        Config.model_validate({"market": {"real": {"sec_user_agent": "pm-traitbench contact"}}})
+
+
+def test_sec_user_agent_without_space_raises() -> None:
+    with pytest.raises(ValidationError, match="sec_user_agent"):
+        Config.model_validate({"market": {"real": {"sec_user_agent": "pm-traitbench@example.com"}}})
+
+
 def test_dump_with_basis_covers_every_leaf() -> None:
     config = Config()
     rows = config.dump_with_basis()
@@ -374,6 +389,13 @@ def test_dump_with_basis_covers_every_leaf() -> None:
 
     walk(config, "")
     assert paths == expected_paths
+
+
+def test_dump_with_basis_tolerates_empty_real_seeds() -> None:
+    config = Config.model_validate(
+        {"population": {"pilot_market_seeds": ["A"]}, "market": {"real": {"seeds": {}}}}
+    )
+    config.dump_with_basis()
 
 
 @pytest.mark.parametrize("revive_first", [38, 40])
@@ -420,9 +442,169 @@ def test_market_seed_with_two_regimes_raises() -> None:
 def test_population_market_seed_not_in_market_seeds_raises() -> None:
     with pytest.raises(
         ValidationError,
-        match=r"market\.seeds missing seed\(s\) used by population\.market_seeds: \['D'\]",
+        match=r"population\.market_seeds references seed\(s\) not in market\.seeds or "
+        r"market\.real\.seeds: \['D'\]",
     ):
         Config.model_validate({"population": {"market_seeds": ["A", "B", "D"]}})
+
+
+def test_pilot_market_seed_defined_nowhere_raises() -> None:
+    with pytest.raises(
+        ValidationError,
+        match=r"population\.pilot_market_seeds references seed\(s\) not in market\.seeds or "
+        r"market\.real\.seeds: \['Z'\]",
+    ):
+        Config.model_validate({"population": {"pilot_market_seeds": ["Z"]}})
+
+
+def test_seed_name_in_both_synthetic_and_real_seeds_raises() -> None:
+    with pytest.raises(
+        ValidationError,
+        match=r"seed name\(s\) in both market\.seeds and market\.real\.seeds: \['R1'\]",
+    ):
+        Config.model_validate({"market": {"seeds": {"R1": ["range", "risk_off", "risk_on"]}}})
+
+
+def _real_seed_kwargs(**overrides) -> dict:
+    kwargs = {
+        "window_start": date(2018, 6, 4),
+        "regime_starts": (
+            (Regime.RANGE, date(2018, 6, 4)),
+            (Regime.RISK_OFF, date(2018, 10, 1)),
+            (Regime.RISK_ON, date(2018, 12, 26)),
+        ),
+        "basis": "design",
+        "note": "test",
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_real_seed_window_start_not_a_monday_raises() -> None:
+    with pytest.raises(ValidationError, match="window_start must be a Monday"):
+        RealSeedSpec(**_real_seed_kwargs(window_start=date(2018, 6, 5)))
+
+
+def test_real_seed_regime_starts_out_of_order_raises() -> None:
+    with pytest.raises(ValidationError, match="regime_starts dates must be strictly ascending"):
+        RealSeedSpec(
+            **_real_seed_kwargs(
+                regime_starts=(
+                    (Regime.RANGE, date(2018, 6, 4)),
+                    (Regime.RISK_ON, date(2018, 12, 26)),
+                    (Regime.RISK_OFF, date(2018, 10, 1)),
+                )
+            )
+        )
+
+
+def test_real_seed_first_regime_start_not_window_start_raises() -> None:
+    with pytest.raises(ValidationError, match="regime_starts must begin at window_start"):
+        RealSeedSpec(
+            **_real_seed_kwargs(
+                regime_starts=(
+                    (Regime.RANGE, date(2018, 6, 11)),
+                    (Regime.RISK_OFF, date(2018, 10, 1)),
+                    (Regime.RISK_ON, date(2018, 12, 26)),
+                )
+            )
+        )
+
+
+def test_real_seed_repeated_regime_raises() -> None:
+    with pytest.raises(ValidationError, match="must list each regime exactly once"):
+        RealSeedSpec(
+            **_real_seed_kwargs(
+                regime_starts=(
+                    (Regime.RANGE, date(2018, 6, 4)),
+                    (Regime.RANGE, date(2018, 10, 1)),
+                    (Regime.RISK_ON, date(2018, 12, 26)),
+                )
+            )
+        )
+
+
+def test_real_seed_regime_start_after_window_end_raises() -> None:
+    with pytest.raises(ValidationError, match=r"must fall within \[2018-06-04, 2019-06-03\)"):
+        Config.model_validate(
+            {
+                "market": {
+                    "real": {
+                        "seeds": {
+                            "R1": _real_seed_kwargs(
+                                regime_starts=(
+                                    (Regime.RANGE, date(2018, 6, 4)),
+                                    (Regime.RISK_OFF, date(2018, 10, 1)),
+                                    (Regime.RISK_ON, date(2019, 6, 3)),
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        )
+
+
+def test_real_seed_regime_start_on_saturday_raises() -> None:
+    with pytest.raises(ValidationError, match="must fall on a weekday"):
+        RealSeedSpec(
+            **_real_seed_kwargs(
+                regime_starts=(
+                    (Regime.RANGE, date(2018, 6, 4)),
+                    (Regime.RISK_OFF, date(2018, 9, 29)),  # a Saturday
+                    (Regime.RISK_ON, date(2018, 12, 26)),
+                )
+            )
+        )
+
+
+def test_real_seed_window_outside_event_date_coverage_raises() -> None:
+    with pytest.raises(
+        ValidationError,
+        match=r"window 2018-06-11 to 2019-06-07 falls outside the FOMC/WASDE/NFP date "
+        r"coverage 2018-06-04 to 2019-05-31",
+    ):
+        Config.model_validate(
+            {
+                "market": {
+                    "real": {
+                        "seeds": {
+                            "R1": _real_seed_kwargs(
+                                window_start=date(2018, 6, 11),
+                                regime_starts=(
+                                    (Regime.RANGE, date(2018, 6, 11)),
+                                    (Regime.RISK_OFF, date(2018, 10, 8)),
+                                    (Regime.RISK_ON, date(2019, 1, 2)),
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+        )
+
+
+def test_real_seed_window_outside_coverage_is_accepted_when_not_referenced() -> None:
+    config = Config.model_validate(
+        {
+            "population": {"pilot_market_seeds": ["A"]},
+            "market": {
+                "real": {
+                    "seeds": {
+                        "R1": _real_seed_kwargs(
+                            window_start=date(2018, 6, 11),
+                            regime_starts=(
+                                (Regime.RANGE, date(2018, 6, 11)),
+                                (Regime.RISK_OFF, date(2018, 10, 8)),
+                                (Regime.RISK_ON, date(2019, 1, 2)),
+                            ),
+                        )
+                    }
+                }
+            },
+        }
+    )
+    assert config.market.real.seeds["R1"].window_start == date(2018, 6, 11)
 
 
 @pytest.mark.parametrize(

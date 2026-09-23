@@ -30,9 +30,18 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# A fixture imported from another test module's conftest and reused as a
+# parameter name looks like a redefinition to ruff, but is how pytest shares it.
+"tests/market/test_stage.py" = ["F811"]
+"tests/test_end_to_end.py" = ["F811"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
+markers = [
+    "network: needs the real network; skipped unless --run-network is passed",
+]
 
 [dependency-groups]
 dev = [
