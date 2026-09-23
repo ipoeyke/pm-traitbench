@@ -22,6 +22,12 @@ from pm_traitbench.market.real.sources import (
 )
 
 _CREDIT_SERIES: frozenset[str] = frozenset({"DAAA", "DBAA"})
+# A quarter runs about 60-65 weekdays; picking each report from the middle of
+# its quarter keeps consecutive reports at least 40 weekdays (about 8 weeks)
+# apart, comfortably clear of a duplicated or misattributed feed row.
+_REPORT_BAND_LO = 20
+_REPORT_BAND_HI = 40
+_MIN_REPORT_GAP_WEEKDAYS = 40
 
 
 def _fake_opener(files: dict[str, bytes]) -> Callable[[str], bytes]:
@@ -70,6 +76,20 @@ def _quarters_overlapping(start: date, end: date) -> list[tuple[date, date]]:
         quarters.append((max(q_start, start), min(q_end, end)))
         q_start, q_end = _quarter_bounds(q_end + timedelta(days=1))
     return quarters
+
+
+def _clamped_band(n: int, lo: int = _REPORT_BAND_LO, hi: int = _REPORT_BAND_HI) -> tuple[int, int]:
+    """The `[lo, hi)` weekday-position band, clamped to fit a short quarter."""
+    hi = min(hi, n)
+    lo = min(lo, hi - 1) if hi > 0 else 0
+    return max(lo, 0), max(hi, lo + 1)
+
+
+def _pick_in_band(candidates: list[date], rng: np.random.Generator, lo: int, hi: int) -> date:
+    lo, hi = max(lo, 0), min(hi, len(candidates))
+    if hi <= lo:
+        lo, hi = 0, len(candidates)
+    return candidates[lo + int(rng.integers(0, hi - lo))]
 
 
 def _fred_csv(series: str, days: Sequence[date], values: dict[date, float]) -> bytes:
@@ -136,10 +156,12 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
     with a known beta, so a beta regression against SPY can be checked
     against a known slope. The Nasdaq calendar covers every referenced real
     seed's own window and has every equity ticker reporting once per
-    calendar quarter, with the first equity ticker's report in the
-    holiday's quarter moved onto the holiday weekday itself (replacing, not
-    duplicating, that ticker's report for that quarter) rather than any
-    weekend date, since a real cache never holds a weekend file.
+    calendar quarter, each report at least 40 weekdays from its neighbours,
+    with the first equity ticker's report in the holiday's quarter moved
+    onto the holiday weekday itself (replacing, not duplicating, that
+    ticker's report for that quarter, and shifting its neighbouring
+    quarters' reports to keep the spacing) rather than any weekend date,
+    since a real cache never holds a weekend file.
     """
 
     def _build(config: Config) -> FakeCache:
@@ -228,13 +250,28 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
         symbols_by_date: dict[date, list[str]] = {}
         target_ticker = equities[0]
         for ticker in equities:
+            prev_pos: int | None = None
+            prev_len: int | None = None
             for qi, (q_start, q_end) in enumerate(quarters):
+                candidates = _weekdays(q_start, q_end)
+                n = len(candidates)
+                lo, hi = _clamped_band(n)
+                if prev_pos is not None:
+                    # Carry the previous quarter's position forward so this
+                    # quarter's report stays >= the minimum gap away, even
+                    # after a pinned holiday report pushed the previous one
+                    # outside the plain band.
+                    lo = max(lo, _MIN_REPORT_GAP_WEEKDAYS - prev_len + prev_pos)
+                    lo = min(lo, n - 1)
+                    hi = max(min(hi, n), lo + 1)
                 if ticker == target_ticker and qi == holiday_quarter_index:
                     report_day = holiday
+                    pos = candidates.index(holiday)
                 else:
-                    candidates = _weekdays(q_start, q_end)
-                    report_day = candidates[int(rng.integers(0, len(candidates)))]
+                    report_day = _pick_in_band(candidates, rng, lo, hi)
+                    pos = candidates.index(report_day)
                 symbols_by_date.setdefault(report_day, []).append(ticker)
+                prev_pos, prev_len = pos, n
 
         for day in nasdaq_days:
             files[nasdaq_url(day)] = _nasdaq_json(symbols_by_date.get(day, []))
