@@ -164,8 +164,14 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
         rng = np.random.default_rng(0)
         files: dict[str, bytes] = {}
 
+        # Corporate yields (DAAA, DBAA) always sit above the 20Y Treasury they're
+        # spread against; a large fixed offset keeps that true for a real seed's
+        # whole window without changing the draw count for any other series.
+        credit_spread_offset = {"DAAA": 1000.0, "DBAA": 1000.0}
+
         for series in fred_series():
             walk = 100.0 + np.cumsum(rng.normal(0, 1, size=len(series_days)))
+            walk = walk + credit_spread_offset.get(series, 0.0)
             values = dict(zip(series_days, walk, strict=True))
             files[fred_url(series, start, end)] = _fred_csv(series, weekdays, values)
 
