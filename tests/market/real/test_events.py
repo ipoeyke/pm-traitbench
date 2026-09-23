@@ -7,11 +7,13 @@ import pytest
 
 from pm_traitbench.config import Config
 from pm_traitbench.enums import CommodityGroup, EventType
+from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.axis import SimAxis, build_axis
 from pm_traitbench.market.output import ProcessOutput
 from pm_traitbench.market.real.events import (
     FOMC_DATES,
     NFP_DATES,
+    SURPRISE_SD_SCALE,
     WASDE_DATES,
     RealEvent,
     drawn_counts,
@@ -116,102 +118,125 @@ def test_macro_print_fires_on_nfp_dates_with_no_instrument(fake_cache) -> None:
     assert all(e.instrument_id is None for e in macro)
 
 
-def test_cb_meeting_surprise_formula_matches_the_binding_example() -> None:
-    config = Config()
-    axis = SimAxis(dates=(date(2020, 1, 1), date(2020, 1, 2)), n_burn=0)
+_AXIS_3D = SimAxis(dates=(date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 3)), n_burn=0)
 
-    cb_rows = surprise_rows(
-        [RealEvent(instrument_id="RT-USD", event=EventType.CB_MEETING, day=1)],
-        ProcessOutput(),
-        spy_log_return=np.zeros(2),
-        y10_bp=np.array([100.0, 104.0]),
-        axis=axis,
-        seed="S",
-        config=config,
-    )
-    assert cb_rows[0].surprise == pytest.approx(-0.5)
-    assert cb_rows[0].affected == "rates"
+
+def _sd_ratio_pair(move: float, k: float) -> tuple[float, float]:
+    """Two daily changes whose sample sd (ddof=1) is `abs(move) / k`, with the
+    first change equal to `move`.
+    """
+    return move, move * (1 - np.sqrt(2) / k)
 
 
 def test_unsupported_event_type_raises() -> None:
-    config = Config()
-    axis = SimAxis(dates=(date(2020, 1, 1), date(2020, 1, 2)), n_burn=0)
-
     with pytest.raises(ValueError, match="earnings"):
         surprise_rows(
             [RealEvent(instrument_id="EQ-TEST", event=EventType.EARNINGS, day=1)],
-            ProcessOutput(prices={"EQ-TEST": np.array([100.0, 100.0])}),
-            spy_log_return=np.zeros(2),
-            y10_bp=np.zeros(2),
-            axis=axis,
+            ProcessOutput(prices={"EQ-TEST": np.array([100.0, 100.0, 100.0])}),
+            spy_log_return=np.zeros(3),
+            y10_bp=np.zeros(3),
+            axis=_AXIS_3D,
             seed="S",
-            config=config,
         )
 
 
-def test_crop_report_surprise_sign_and_magnitude() -> None:
-    config = Config()
-    axis = SimAxis(dates=(date(2020, 1, 1), date(2020, 1, 2)), n_burn=0)
-    jump_size = config.market.events[EventType.CROP_REPORT].jump_size
-    r_c = 0.015
+def test_cb_meeting_move_of_exactly_one_sd_scores_one_third() -> None:
+    d0, d1 = _sd_ratio_pair(-1.0, 1.0)  # move = -d0 = 1.0, a positive rate cut is good
+    y10_bp = np.array([100.0, 100.0 + d0, 100.0 + d0 + d1])
     rows = surprise_rows(
-        [RealEvent(instrument_id="CM-WHT", event=EventType.CROP_REPORT, day=1)],
-        ProcessOutput(prices={"CM-WHT": np.array([100.0, 100.0 * np.exp(r_c)])}),
-        spy_log_return=np.zeros(2),
-        y10_bp=np.zeros(2),
-        axis=axis,
+        [RealEvent(instrument_id="RT-USD", event=EventType.CB_MEETING, day=1)],
+        ProcessOutput(),
+        spy_log_return=np.zeros(3),
+        y10_bp=y10_bp,
+        axis=_AXIS_3D,
         seed="S",
-        config=config,
     )
-    assert rows[0].surprise == pytest.approx(r_c / jump_size)
+    assert rows[0].surprise == pytest.approx(1 / SURPRISE_SD_SCALE)
+    assert rows[0].affected == "rates"
+
+
+def test_inventory_report_move_of_exactly_one_sd_scores_one_third() -> None:
+    d0, d1 = _sd_ratio_pair(1.0, 1.0)
+    prices = 100.0 * np.exp(np.array([0.0, d0, d0 + d1]))
+    rows = surprise_rows(
+        [RealEvent(instrument_id="CM-CRD", event=EventType.INVENTORY_REPORT, day=1)],
+        ProcessOutput(prices={"CM-CRD": prices}),
+        spy_log_return=np.zeros(3),
+        y10_bp=np.zeros(3),
+        axis=_AXIS_3D,
+        seed="S",
+    )
+    assert rows[0].surprise == pytest.approx(1 / SURPRISE_SD_SCALE)
     assert rows[0].affected == "commodities"
 
 
-def test_surprise_is_clipped_to_the_unit_range() -> None:
-    config = Config()
-    axis = SimAxis(dates=(date(2020, 1, 1), date(2020, 1, 2)), n_burn=0)
+def test_crop_report_move_of_exactly_minus_one_sd_scores_minus_one_third() -> None:
+    d0, d1 = _sd_ratio_pair(-1.0, 1.0)
+    prices = 100.0 * np.exp(np.array([0.0, d0, d0 + d1]))
     rows = surprise_rows(
-        [
-            RealEvent(instrument_id="CM-CRD", event=EventType.INVENTORY_REPORT, day=1),
-            RealEvent(instrument_id="CM-WHT", event=EventType.CROP_REPORT, day=1),
-        ],
-        ProcessOutput(
-            prices={
-                "CM-CRD": np.array([100.0, 100.0 * np.exp(1.0)]),
-                "CM-WHT": np.array([100.0, 100.0 * np.exp(-1.0)]),
-            }
-        ),
-        spy_log_return=np.zeros(2),
-        y10_bp=np.zeros(2),
-        axis=axis,
+        [RealEvent(instrument_id="CM-WHT", event=EventType.CROP_REPORT, day=1)],
+        ProcessOutput(prices={"CM-WHT": prices}),
+        spy_log_return=np.zeros(3),
+        y10_bp=np.zeros(3),
+        axis=_AXIS_3D,
         seed="S",
-        config=config,
     )
-    by_instrument = {r.instrument_id: r for r in rows}
-    assert by_instrument["CM-CRD"].surprise == 1.0
-    assert by_instrument["CM-WHT"].surprise == -1.0
-    assert by_instrument["CM-WHT"].affected == "commodities"
+    assert rows[0].surprise == pytest.approx(-1 / SURPRISE_SD_SCALE)
+    assert rows[0].affected == "commodities"
 
 
-def test_macro_print_surprise_row_is_market_wide() -> None:
-    config = Config()
-    axis = SimAxis(dates=(date(2020, 1, 1), date(2020, 1, 2)), n_burn=0)
-    r_spy = 0.005
+def test_macro_print_move_of_exactly_one_sd_scores_one_third() -> None:
+    d0, d1 = _sd_ratio_pair(1.0, 1.0)
+    spy_log_return = np.array([0.0, d0, d1])
     rows = surprise_rows(
         [RealEvent(instrument_id=None, event=EventType.MACRO_PRINT, day=1)],
         ProcessOutput(),
-        spy_log_return=np.array([0.0, r_spy]),
-        y10_bp=np.zeros(2),
-        axis=axis,
+        spy_log_return=spy_log_return,
+        y10_bp=np.zeros(3),
+        axis=_AXIS_3D,
         seed="S",
-        config=config,
     )
     assert rows[0].instrument_id is None
     assert rows[0].affected == "all"
-    daily_vol = config.market.families.equity.market_vol / np.sqrt(252)
-    jump_size = config.market.events[EventType.MACRO_PRINT].jump_size
-    expected = max(-1.0, min(1.0, (r_spy / daily_vol) / jump_size))
-    assert rows[0].surprise == pytest.approx(expected)
+    assert rows[0].surprise == pytest.approx(1 / SURPRISE_SD_SCALE)
+
+
+def test_a_four_sd_move_clips_to_one_and_a_minus_four_sd_move_clips_to_minus_one() -> None:
+    d0, d1 = _sd_ratio_pair(4.0, 4.0)
+    spy_log_return = np.array([0.0, d0, d1])
+    positive = surprise_rows(
+        [RealEvent(instrument_id=None, event=EventType.MACRO_PRINT, day=1)],
+        ProcessOutput(),
+        spy_log_return=spy_log_return,
+        y10_bp=np.zeros(3),
+        axis=_AXIS_3D,
+        seed="S",
+    )
+    assert positive[0].surprise == 1.0
+
+    d0, d1 = _sd_ratio_pair(-4.0, 4.0)
+    spy_log_return = np.array([0.0, d0, d1])
+    negative = surprise_rows(
+        [RealEvent(instrument_id=None, event=EventType.MACRO_PRINT, day=1)],
+        ProcessOutput(),
+        spy_log_return=spy_log_return,
+        y10_bp=np.zeros(3),
+        axis=_AXIS_3D,
+        seed="S",
+    )
+    assert negative[0].surprise == -1.0
+
+
+def test_flat_series_raises_naming_the_seed() -> None:
+    with pytest.raises(StageIOError, match="S"):
+        surprise_rows(
+            [RealEvent(instrument_id=None, event=EventType.MACRO_PRINT, day=1)],
+            ProcessOutput(),
+            spy_log_return=np.zeros(3),
+            y10_bp=np.zeros(3),
+            axis=_AXIS_3D,
+            seed="S",
+        )
 
 
 def test_drawn_counts_counts_rows_per_type_with_zeros_for_rating_types() -> None:

@@ -14,15 +14,19 @@ from datetime import date
 
 import numpy as np
 
-from pm_traitbench.config import Config, RealSeedSpec
+from pm_traitbench.config import RealSeedSpec
 from pm_traitbench.enums import CommodityGroup, EventType, InstrumentKind
+from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.axis import SimAxis
 from pm_traitbench.market.calendar import row_sort_key
 from pm_traitbench.market.check import EVENT_FAMILY
-from pm_traitbench.market.constants import ANNUALISATION_DAYS
 from pm_traitbench.market.output import ProcessOutput
 from pm_traitbench.market.real.universe import real_axis_dates
 from pm_traitbench.tables.schema import CalendarEvent, Instrument
+
+# A 1-sd day scores 1/3, and only a move beyond 3 sd reaches +-1, so a real
+# event's surprise keeps its relative size instead of saturating every day.
+SURPRISE_SD_SCALE = 3.0
 
 FOMC_DATES: tuple[date, ...] = (
     date(2018, 6, 13),
@@ -141,8 +145,14 @@ def _clip(value: float) -> float:
     return float(np.clip(value, -1.0, 1.0))
 
 
-def _log_return(prices: np.ndarray, t: int) -> float:
-    return float(np.log(prices[t]) - np.log(prices[t - 1]))
+def _daily_sd(diffs: np.ndarray, seed: str, name: str) -> float:
+    """Sample sd (ddof=1) of one series' daily moves over the seed's full axis.
+    A flat series has zero sd, which would divide by zero below.
+    """
+    sd = float(np.std(diffs, ddof=1))
+    if sd == 0.0:
+        raise StageIOError(f"real seed '{seed}': '{name}' has zero daily sd over the axis")
+    return sd
 
 
 def surprise_rows(
@@ -152,25 +162,47 @@ def surprise_rows(
     y10_bp: np.ndarray,
     axis: SimAxis,
     seed: str,
-    config: Config,
 ) -> list[CalendarEvent]:
     """Price each RealEvent's surprise from the seed's own simulated series and
     turn it into a CalendarEvent row, sorted for the calendar table.
+
+    Each surprise is the event's own daily move scaled by that series' own
+    sd over the whole axis, so magnitude reflects how unusual the move
+    actually was rather than a single fixed jump size.
     """
-    daily_vol = config.market.families.equity.market_vol / np.sqrt(ANNUALISATION_DAYS)
+    y10_diff = np.diff(y10_bp)
+    y10_sd_cache: float | None = None
+
+    commodity_returns: dict[str, np.ndarray] = {}
+    commodity_sd: dict[str, float] = {}
+    spy_returns = spy_log_return[1:]
+    spy_sd_cache: float | None = None
+
+    def _commodity_returns(instrument_id: str) -> np.ndarray:
+        if instrument_id not in commodity_returns:
+            commodity_returns[instrument_id] = np.diff(np.log(output.prices[instrument_id]))
+        return commodity_returns[instrument_id]
 
     rows: list[CalendarEvent] = []
     for event in events:
         t = event.day
-        jump_size = config.market.events[event.event].jump_size
 
         if event.event == EventType.CB_MEETING:
-            surprise = _clip(-(y10_bp[t] - y10_bp[t - 1]) / jump_size)
+            if y10_sd_cache is None:
+                y10_sd_cache = _daily_sd(y10_diff, seed, event.instrument_id or "curve")
+            move = -(y10_bp[t] - y10_bp[t - 1])
+            surprise = _clip(move / (SURPRISE_SD_SCALE * y10_sd_cache))
         elif event.event in (EventType.INVENTORY_REPORT, EventType.CROP_REPORT):
-            r_c = _log_return(output.prices[event.instrument_id], t)
-            surprise = _clip(r_c / jump_size)
+            returns = _commodity_returns(event.instrument_id)
+            if event.instrument_id not in commodity_sd:
+                commodity_sd[event.instrument_id] = _daily_sd(returns, seed, event.instrument_id)
+            move = returns[t - 1]
+            surprise = _clip(move / (SURPRISE_SD_SCALE * commodity_sd[event.instrument_id]))
         elif event.event == EventType.MACRO_PRINT:
-            surprise = _clip((spy_log_return[t] / daily_vol) / jump_size)
+            if spy_sd_cache is None:
+                spy_sd_cache = _daily_sd(spy_returns, seed, "SPY")
+            move = spy_log_return[t]
+            surprise = _clip(move / (SURPRISE_SD_SCALE * spy_sd_cache))
         else:
             raise ValueError(f"real events do not support {event.event.value}")
 
