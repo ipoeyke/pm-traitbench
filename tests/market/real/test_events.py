@@ -5,8 +5,8 @@ from datetime import UTC, date, datetime, timedelta
 import numpy as np
 import pytest
 
-from pm_traitbench.config import Config
-from pm_traitbench.enums import CommodityGroup, EventType, Family, InstrumentKind
+from pm_traitbench.config import Config, RealSeedSpec
+from pm_traitbench.enums import CommodityGroup, EventType, Family, InstrumentKind, Regime
 from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.axis import SimAxis, build_axis
 from pm_traitbench.market.output import ProcessOutput
@@ -65,15 +65,15 @@ class _FakeEarningsCache:
         return self._yahoo.get(ticker, {})
 
 
-def _weekday_axis(start: date, n: int) -> SimAxis:
-    """`n` consecutive weekdays from `start` (a Monday), no burn-in."""
+def _weekday_axis(start: date, n: int, *, n_burn: int = 0) -> SimAxis:
+    """`n` consecutive weekdays from `start` (a Monday)."""
     dates = []
     day = start
     while len(dates) < n:
         if day.weekday() < 5:
             dates.append(day)
         day += timedelta(days=1)
-    return SimAxis(dates=tuple(dates), n_burn=0)
+    return SimAxis(dates=tuple(dates), n_burn=n_burn)
 
 
 def _all_trading_days(axis: SimAxis) -> dict[date, float]:
@@ -124,12 +124,35 @@ def test_earnings_events_are_drawn_from_the_fixture(fake_cache) -> None:
 _EARNINGS_WINDOW_START = date(2018, 6, 4)
 
 
-def _earnings_days(filings: list[EdgarFiling], *, n_days: int = 10) -> list[RealEvent]:
-    axis = _weekday_axis(_EARNINGS_WINDOW_START, n_days)
-    spec = Config().market.real.seeds["R1"].model_copy(update={"window_start": axis.dates[0]})
-    cache = _FakeEarningsCache(
-        filings={_AAPL_CIK: filings}, yahoo={"AAPL": _all_trading_days(axis)}
+def _minimal_spec(window_start: date) -> RealSeedSpec:
+    """A validly-shaped spec for any Monday `window_start`, so earnings-day
+    tests can pick whichever real date they need (e.g. a winter one)
+    without inheriting R1's own fixed regime_starts.
+    """
+    return RealSeedSpec(
+        window_start=window_start,
+        regime_starts=(
+            (Regime.RANGE, window_start),
+            (Regime.RISK_OFF, window_start + timedelta(weeks=20)),
+            (Regime.RISK_ON, window_start + timedelta(weeks=40)),
+        ),
+        basis="design",
+        note="test",
     )
+
+
+def _earnings_days(
+    filings: list[EdgarFiling],
+    *,
+    start: date = _EARNINGS_WINDOW_START,
+    n_days: int = 10,
+    n_burn: int = 0,
+    closed_days: frozenset[date] = frozenset(),
+) -> list[RealEvent]:
+    axis = _weekday_axis(start, n_days, n_burn=n_burn)
+    spec = _minimal_spec(axis.dates[0])
+    values = {d: v for d, v in _all_trading_days(axis).items() if d not in closed_days}
+    cache = _FakeEarningsCache(filings={_AAPL_CIK: filings}, yahoo={"AAPL": values})
     events = real_event_days([_equity_instrument()], spec, axis, axis.dates[0], cache)
     return [e for e in events if e.event == EventType.EARNINGS]
 
@@ -175,6 +198,47 @@ def test_earnings_events_instrument_id_is_the_registry_id() -> None:
     accepted = datetime(2018, 6, 6, 12, 0, tzinfo=UTC)
     events = _earnings_days([_filing(accepted)])
     assert events[0].instrument_id == "EQ-R001"
+
+
+def test_earnings_filing_before_the_axis_start_gives_no_row() -> None:
+    accepted = datetime(2018, 5, 30, 12, 0, tzinfo=UTC)  # before 2018-06-04, the axis start
+    events = _earnings_days([_filing(accepted)])
+    assert events == []
+
+
+def test_earnings_filing_in_winter_est_after_the_close_lands_on_the_next_day() -> None:
+    start = date(2019, 1, 7)  # Monday, during EST (no DST)
+    accepted = datetime(2019, 1, 8, 21, 30, tzinfo=UTC)  # 16:30 EST, after the close
+    events = _earnings_days([_filing(accepted)], start=start)
+    assert len(events) == 1
+    assert events[0].day == 2  # 2019-01-09, the day after 2019-01-08
+
+
+def test_earnings_filing_at_exactly_16_00_new_york_time_lands_on_the_next_day() -> None:
+    accepted = datetime(2018, 6, 5, 20, 0, tzinfo=UTC)  # exactly 16:00:00 EDT, not before it
+    events = _earnings_days([_filing(accepted)])
+    assert len(events) == 1
+    assert events[0].day == 2  # 2018-06-06, the day after 2018-06-05
+
+
+def test_earnings_filing_after_close_on_friday_lands_on_monday() -> None:
+    accepted = datetime(2018, 6, 8, 20, 30, tzinfo=UTC)  # Friday, after the close
+    events = _earnings_days([_filing(accepted)])
+    assert len(events) == 1
+    assert events[0].day == 5  # 2018-06-11, the following Monday
+
+
+def test_earnings_filing_whose_date_is_closed_moves_to_the_next_trading_day() -> None:
+    accepted = datetime(2018, 6, 6, 12, 0, tzinfo=UTC)  # before the close, 2018-06-06
+    events = _earnings_days([_filing(accepted)], closed_days=frozenset({date(2018, 6, 6)}))
+    assert len(events) == 1
+    assert events[0].day == 3  # 2018-06-07, the next trading day with a value
+
+
+def test_earnings_filing_in_the_burn_in_gives_no_row() -> None:
+    accepted = datetime(2018, 6, 5, 12, 0, tzinfo=UTC)  # before the close, 2018-06-05 -> day 1
+    events = _earnings_days([_filing(accepted)], n_burn=3)
+    assert events == []
 
 
 def test_cb_meeting_fires_once_per_fomc_date_for_the_usd_curve(fake_cache) -> None:
@@ -297,6 +361,7 @@ def test_unsupported_event_type_raises() -> None:
             y10_bp=np.zeros(3),
             axis=_AXIS_3D,
             seed="S",
+            betas={},
         )
 
 
@@ -338,6 +403,19 @@ def test_earnings_abnormal_return_subtracts_beta_times_spy_return() -> None:
     assert rows[0].surprise == pytest.approx(np.tanh(1 / SURPRISE_SD_SCALE))
 
 
+def test_earnings_with_no_beta_raises_naming_the_instrument() -> None:
+    with pytest.raises(StageIOError, match="no beta for equity 'EQ-TEST'"):
+        surprise_rows(
+            [RealEvent(instrument_id="EQ-TEST", event=EventType.EARNINGS, day=1)],
+            ProcessOutput(prices={"EQ-TEST": np.array([100.0, 101.0, 102.0])}),
+            spy_log_return=np.zeros(3),
+            y10_bp=np.zeros(3),
+            axis=_AXIS_3D,
+            seed="S",
+            betas={},
+        )
+
+
 def test_cb_meeting_move_of_exactly_one_sd_scores_tanh_of_one_third() -> None:
     d0, d1 = _sd_ratio_pair(-1.0, 1.0)  # move = -d0 = 1.0, a positive rate cut is good
     y10_bp = np.array([100.0, 100.0 + d0, 100.0 + d0 + d1])
@@ -348,6 +426,7 @@ def test_cb_meeting_move_of_exactly_one_sd_scores_tanh_of_one_third() -> None:
         y10_bp=y10_bp,
         axis=_AXIS_3D,
         seed="S",
+        betas={},
     )
     assert rows[0].surprise == pytest.approx(np.tanh(1 / SURPRISE_SD_SCALE))
     assert rows[0].affected == "rates"
@@ -363,6 +442,7 @@ def test_inventory_report_move_of_exactly_one_sd_scores_tanh_of_one_third() -> N
         y10_bp=np.zeros(3),
         axis=_AXIS_3D,
         seed="S",
+        betas={},
     )
     assert rows[0].surprise == pytest.approx(np.tanh(1 / SURPRISE_SD_SCALE))
     assert rows[0].affected == "commodities"
@@ -378,6 +458,7 @@ def test_crop_report_move_of_exactly_minus_one_sd_scores_tanh_of_minus_one_third
         y10_bp=np.zeros(3),
         axis=_AXIS_3D,
         seed="S",
+        betas={},
     )
     assert rows[0].surprise == pytest.approx(np.tanh(-1 / SURPRISE_SD_SCALE))
     assert rows[0].affected == "commodities"
@@ -393,6 +474,7 @@ def test_macro_print_move_of_exactly_one_sd_scores_tanh_of_one_third() -> None:
         y10_bp=np.zeros(3),
         axis=_AXIS_3D,
         seed="S",
+        betas={},
     )
     assert rows[0].instrument_id is None
     assert rows[0].affected == "all"
@@ -409,6 +491,7 @@ def test_a_four_sd_move_scores_tanh_of_four_thirds_and_stays_below_one() -> None
         y10_bp=np.zeros(3),
         axis=_AXIS_3D,
         seed="S",
+        betas={},
     )
     assert positive[0].surprise == pytest.approx(np.tanh(4 / SURPRISE_SD_SCALE))
     assert abs(positive[0].surprise) < 1.0
@@ -422,6 +505,7 @@ def test_a_four_sd_move_scores_tanh_of_four_thirds_and_stays_below_one() -> None
         y10_bp=np.zeros(3),
         axis=_AXIS_3D,
         seed="S",
+        betas={},
     )
     assert negative[0].surprise == pytest.approx(np.tanh(-4 / SURPRISE_SD_SCALE))
     assert abs(negative[0].surprise) < 1.0
@@ -436,6 +520,7 @@ def test_flat_series_raises_naming_the_seed() -> None:
             y10_bp=np.zeros(3),
             axis=_AXIS_3D,
             seed="S",
+            betas={},
         )
 
 

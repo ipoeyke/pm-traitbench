@@ -651,6 +651,42 @@ def test_malformed_edgar_main_body_unequal_lengths_raises_naming_the_cik(
         fetch_all(config, tmp_path, opener=lambda url, headers: body, sleeper=lambda _: None)
 
 
+@pytest.mark.parametrize(
+    "files",
+    [
+        "not a list",
+        {"name": "x"},
+        [1],
+        [{"filingFrom": "2018-01-01", "filingTo": "2018-06-01"}],
+        [{"name": 7, "filingFrom": "2018-01-01", "filingTo": "2018-06-01"}],
+        [{"name": "x", "filingTo": "2018-06-01"}],
+        [{"name": "x", "filingFrom": "not-a-date", "filingTo": "2018-06-01"}],
+        [{"name": "x", "filingFrom": "2018-01-01"}],
+        [{"name": "x", "filingFrom": "2018-01-01", "filingTo": "not-a-date"}],
+    ],
+    ids=[
+        "files-not-a-list",
+        "files-is-a-dict",
+        "entry-not-a-dict",
+        "entry-missing-name",
+        "entry-non-string-name",
+        "entry-missing-filingFrom",
+        "entry-invalid-filingFrom",
+        "entry-missing-filingTo",
+        "entry-invalid-filingTo",
+    ],
+)
+def test_malformed_edgar_files_list_shapes_raise_naming_the_cik(
+    files: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_to_one_cik(monkeypatch, _AAPL)
+    config = Config()
+    body = json.dumps({"filings": {"recent": _edgar_lists(0), "files": files}}).encode("utf-8")
+
+    with pytest.raises(StageIOError, match="0000320193"):
+        fetch_all(config, tmp_path, opener=lambda url, headers: body, sleeper=lambda _: None)
+
+
 def test_malformed_edgar_older_body_raises_naming_the_cik(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -725,7 +761,8 @@ def test_raw_cache_edgar_filings_merges_main_and_older_files(fake_cache) -> None
     for f in filings:
         assert f.accepted.tzinfo is not None
         assert f.accepted.utcoffset().total_seconds() == 0
-        assert f.accepted.hour == 20 and f.accepted.minute == 30
+        # 16:30 America/New_York: 20:30Z in EDT months, 21:30Z in EST months.
+        assert f.accepted.hour in (20, 21) and f.accepted.minute == 30
 
 
 def test_raw_cache_edgar_filings_merges_across_multiple_registrants(fake_cache) -> None:

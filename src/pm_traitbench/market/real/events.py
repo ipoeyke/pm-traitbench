@@ -116,7 +116,8 @@ def _earnings_event_day(
     accepted: datetime, real_dates: Sequence[date], last_day: int, values: dict[date, float]
 ) -> int | None:
     """The axis day one 8-K filing's earnings event lands on, or None when its
-    date falls beyond the axis (a filing too close to the horizon's end).
+    date falls outside the axis (before its start, e.g. an older filing from
+    well before the fetch window, or a filing too close to the horizon's end).
 
     Before 16:00 America/New_York the filing's own real date is used, from
     16:00 on the next one; either way, the result then moves forward to the
@@ -124,6 +125,8 @@ def _earnings_event_day(
     """
     local = accepted.astimezone(_EASTERN)
     real_date = local.date() if local.time() < _MARKET_CLOSE else local.date() + timedelta(days=1)
+    if real_date < real_dates[0]:
+        return None
     start_t = bisect.bisect_left(real_dates, real_date)
     if start_t > last_day:
         return None
@@ -255,7 +258,7 @@ def surprise_rows(
     y10_bp: np.ndarray,
     axis: SimAxis,
     seed: str,
-    betas: Mapping[str, float] | None = None,
+    betas: Mapping[str, float],
 ) -> list[CalendarEvent]:
     """Price each RealEvent's surprise from the seed's own simulated series and
     turn it into a CalendarEvent row, sorted for the calendar table.
@@ -265,9 +268,8 @@ def surprise_rows(
     rather than a single fixed jump size. An earnings surprise instead
     scales the equity's abnormal return (its own move net of `beta` times
     SPY's) by that abnormal series' own sd, since a beta-driven move is not
-    itself the surprise.
+    itself the surprise; an equity with no entry in `betas` raises.
     """
-    betas = betas or {}
     y10_diff = np.diff(y10_bp)
     y10_sd_cache: float | None = None
 
@@ -286,6 +288,8 @@ def surprise_rows(
 
     def _abnormal_return(instrument_id: str) -> np.ndarray:
         if instrument_id not in equity_abnormal:
+            if instrument_id not in betas:
+                raise StageIOError(f"real seed '{seed}': no beta for equity '{instrument_id}'")
             r_i = np.diff(np.log(output.prices[instrument_id]))
             a = np.zeros(len(spy_log_return))
             a[1:] = r_i - betas[instrument_id] * spy_returns

@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
@@ -40,6 +41,7 @@ _TREASURY_START_PCT: dict[str, float] = {
     "DGS30": 3.1,
 }
 _TREASURY_STEP_PCT = 0.05
+_EASTERN = ZoneInfo("America/New_York")
 
 
 def _fake_opener(files: dict[str, bytes]) -> Callable[[str, Mapping[str, str]], bytes]:
@@ -104,8 +106,12 @@ def _yahoo_json(values: dict[date, float]) -> bytes:
 
 
 def _edgar_accepted(day: date) -> str:
-    """A 20:30 UTC acceptance timestamp, EDGAR's own format."""
-    return f"{day.isoformat()}T20:30:00.000Z"
+    """A 16:30 America/New_York acceptance timestamp in EDGAR's UTC format:
+    20:30Z in EDT months, 21:30Z in EST months, so after-close filings stay
+    realistic all year.
+    """
+    local = datetime(day.year, day.month, day.day, 16, 30, tzinfo=_EASTERN)
+    return local.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _edgar_lists(filings: Sequence[tuple[date, str, str]]) -> dict[str, list[str]]:

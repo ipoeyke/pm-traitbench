@@ -217,6 +217,22 @@ _EDGAR_MAIN_PATH_RE = re.compile(r"^edgar/CIK\d{10}\.json$")
 _EDGAR_LIST_FIELDS: tuple[str, ...] = ("form", "filingDate", "acceptanceDateTime", "items")
 
 
+def _validate_edgar_files_list(files: object, label: str) -> None:
+    """`filings.files` must be a list, and every entry a string `name` and
+    ISO `filingFrom`/`filingTo` dates.
+    """
+    if not isinstance(files, list):
+        raise StageIOError(f"malformed EDGAR response for CIK '{label}'")
+    for entry in files:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            raise StageIOError(f"malformed EDGAR response for CIK '{label}'")
+        try:
+            date.fromisoformat(entry.get("filingFrom"))
+            date.fromisoformat(entry.get("filingTo"))
+        except (TypeError, ValueError) as e:
+            raise StageIOError(f"malformed EDGAR response for CIK '{label}'") from e
+
+
 def _validate_edgar(rel_path: str, body: bytes, label: str) -> None:
     try:
         payload = json.loads(body)
@@ -225,8 +241,10 @@ def _validate_edgar(rel_path: str, body: bytes, label: str) -> None:
     if _EDGAR_MAIN_PATH_RE.match(rel_path):
         try:
             node = payload["filings"]["recent"]
+            files = payload["filings"]["files"]
         except (KeyError, TypeError) as e:
             raise StageIOError(f"malformed EDGAR response for CIK '{label}'") from e
+        _validate_edgar_files_list(files, label)
     else:
         node = payload
     try:
@@ -248,25 +266,16 @@ def _validate(rel_path: str, body: bytes, label: str) -> None:
 
 def _edgar_followup_names(body: bytes, start: date, end: date) -> list[str]:
     """Names, from `filings.files`, of older EDGAR files whose date range
-    overlaps [start, end]. A malformed or absent files list yields none;
-    the main file's own required shape was already checked by `_validate`.
+    overlaps [start, end]. The main file's `filings.files` shape was
+    already checked by `_validate`, so every entry is trusted here.
     """
-    try:
-        files = json.loads(body)["filings"]["files"]
-    except (KeyError, TypeError, json.JSONDecodeError):
-        return []
-    if not isinstance(files, list):
-        return []
+    files = json.loads(body)["filings"]["files"]
     names = []
     for entry in files:
-        try:
-            filing_from = date.fromisoformat(entry["filingFrom"])
-            filing_to = date.fromisoformat(entry["filingTo"])
-            name = entry["name"]
-        except (KeyError, TypeError, ValueError):
-            continue
+        filing_from = date.fromisoformat(entry["filingFrom"])
+        filing_to = date.fromisoformat(entry["filingTo"])
         if filing_from <= end and filing_to >= start:
-            names.append(name)
+            names.append(entry["name"])
     return names
 
 
