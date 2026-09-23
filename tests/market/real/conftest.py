@@ -14,7 +14,12 @@ import pytest
 from pm_traitbench.config import Config, real_window_end, referenced_seeds
 from pm_traitbench.enums import Family
 from pm_traitbench.market.real.fetch import fetch_all, fetch_range, fred_url, nasdaq_url, yahoo_url
-from pm_traitbench.market.real.sources import REAL_INSTRUMENTS, fred_series, yahoo_tickers
+from pm_traitbench.market.real.sources import (
+    REAL_INSTRUMENTS,
+    REFERENCE_EQUITY,
+    fred_series,
+    yahoo_tickers,
+)
 
 
 def _fake_opener(files: dict[str, bytes]) -> Callable[[str], bytes]:
@@ -109,10 +114,13 @@ def _nasdaq_json(symbols: list[str]) -> bytes:
 
 @dataclass(frozen=True)
 class FakeCache:
-    """A built fake raw cache: its data dir and the shared holiday-gap weekday."""
+    """A built fake raw cache: its data dir, the shared holiday-gap weekday, and
+    the known beta each equity ticker was generated with.
+    """
 
     data_dir: Path
     holiday: date
+    betas: dict[str, float]
 
 
 @pytest.fixture
@@ -122,11 +130,14 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
     Covers SPY and every registry series over the fetch range. FRED and Yahoo
     share one holiday-gap weekday: FRED keeps the row with an empty value
     (its real convention), Yahoo omits the row entirely. Yahoo timestamps sit
-    at 13:30 UTC. The Nasdaq calendar has every equity ticker reporting once
-    per calendar quarter, with the first equity ticker's report in the
-    holiday's quarter moved onto the holiday weekday itself (replacing, not
-    duplicating, that ticker's report for that quarter) rather than any
-    weekend date, since a real cache never holds a weekend file.
+    at 13:30 UTC. Every equity is generated as `beta * spy_return + noise`
+    with a known beta, so a beta regression against SPY can be checked
+    against a known slope. The Nasdaq calendar has every equity ticker
+    reporting once per calendar quarter, with the first equity ticker's
+    report in the holiday's quarter moved onto the holiday weekday itself
+    (replacing, not duplicating, that ticker's report for that quarter)
+    rather than any weekend date, since a real cache never holds a weekend
+    file.
     """
 
     def _build(config: Config) -> FakeCache:
@@ -144,7 +155,34 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
             values = dict(zip(series_days, walk, strict=True))
             files[fred_url(series, start, end)] = _fred_csv(series, weekdays, values)
 
-        for ticker in yahoo_tickers():
+        n_returns = len(series_days) - 1
+        spy_returns = rng.normal(0, 0.01, size=n_returns)
+        spy_log_prices = np.log(100.0) + np.concatenate([[0.0], np.cumsum(spy_returns)])
+        spy_values = dict(zip(series_days, np.exp(spy_log_prices), strict=True))
+        files[yahoo_url(REFERENCE_EQUITY, start, end)] = _yahoo_json(spy_values)
+
+        equities_by_ticker = {
+            inst.series: inst for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES
+        }
+        betas: dict[str, float] = {}
+        beta_draws = rng.uniform(0.5, 1.5, size=len(equities_by_ticker))
+        for ticker, beta in zip(equities_by_ticker, beta_draws, strict=True):
+            inst = equities_by_ticker[ticker]
+            # Small relative to the SPY return so a beta regression over the
+            # window recovers the known slope tightly enough to assert on.
+            noise = rng.normal(0, 0.001, size=n_returns)
+            log_returns = beta * spy_returns + noise
+            log_prices = np.log(100.0) + np.concatenate([[0.0], np.cumsum(log_returns)])
+            values = dict(zip(series_days, np.exp(log_prices), strict=True))
+            files[yahoo_url(ticker, start, end)] = _yahoo_json(values)
+            betas[inst.instrument_id] = float(beta)
+
+        other_tickers = [
+            ticker
+            for ticker in yahoo_tickers()
+            if ticker != REFERENCE_EQUITY and ticker not in equities_by_ticker
+        ]
+        for ticker in other_tickers:
             walk = 100.0 + np.cumsum(rng.normal(0, 1, size=len(series_days)))
             values = dict(zip(series_days, walk, strict=True))
             files[yahoo_url(ticker, start, end)] = _yahoo_json(values)
@@ -178,6 +216,6 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
             files[nasdaq_url(day)] = _nasdaq_json(symbols_by_date.get(day, []))
 
         fetch_all(config, data_dir, opener=_fake_opener(files), sleeper=lambda _: None)
-        return FakeCache(data_dir=data_dir, holiday=holiday)
+        return FakeCache(data_dir=data_dir, holiday=holiday, betas=betas)
 
     return _build
