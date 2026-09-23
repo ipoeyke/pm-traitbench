@@ -57,27 +57,27 @@ def test_nan_price_fails_naming_finite_and_the_series(fake_cache) -> None:
     assert equity.instrument_id in str(excinfo.value)
 
 
-def test_negative_curve_level_fails_naming_positive_and_the_series(fake_cache) -> None:
+def test_negative_equity_price_fails_naming_positive_and_the_series(fake_cache) -> None:
     config = Config()
     result = fake_cache(config)
     instruments, market = _build(config, result)
 
-    # A non-M1 commodity futures tenor: family_indices only reads a
-    # commodity's `prices` (M1) entry, so this can't blow up the vol/corr
-    # log() calls before the positivity check gets a chance to fail.
-    commodity = next(i for i in instruments if i.family == Family.COMMODITIES)
-    curves = dict(market.output.curves)
-    key = (commodity.instrument_id, Tenor.M2)
-    series = curves[key].copy()
+    equity = next(i for i in instruments if i.instrument_id == "EQ-R001")
+    prices = dict(market.output.prices)
+    series = prices[equity.instrument_id].copy()
     series[5] = -1.0
-    curves[key] = series
-    output = dataclasses.replace(market.output, curves=curves)
+    prices[equity.instrument_id] = series
+    output = dataclasses.replace(market.output, prices=prices)
     modified = dataclasses.replace(market, output=output)
 
+    # Structural metrics (positive included) are checked, and raise, before
+    # any realised moment is computed, so this never reaches the vol/corr
+    # log() calls that a bad price would otherwise poison.
     with pytest.raises(MarketCheckError) as excinfo:
         check_real_market(modified, instruments, config)
-    assert "positive" in str(excinfo.value)
-    assert commodity.instrument_id in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "positive:EQ-R001" in message
+    assert "1 miss" in message
 
 
 def test_fill_above_the_limit_fails_naming_fill_run(fake_cache) -> None:

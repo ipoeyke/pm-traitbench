@@ -253,22 +253,29 @@ def _realised_moment_metrics(
 def check_real_market(
     market: SeedMarket, instruments: Sequence[Instrument], config: Config
 ) -> CheckReport:
-    """Verify one real seed's structural integrity and report its realised
-    moments. Raises `MarketCheckError` naming the first mismatch and the
-    total miss count if any pass/fail metric fails.
+    """Verify one real seed's structural integrity, then report its realised
+    moments. Structural metrics are checked first and raise on any miss
+    before a realised moment is computed, since vol/corr/flat over bad data
+    (a non-finite or non-positive series, say) cannot be trusted. Raises
+    `MarketCheckError` naming the first mismatch and the total miss count.
     """
     instrument_by_id = {i.instrument_id: i for i in instruments}
-    metrics: list[CheckMetric] = []
 
-    metrics.extend(_finite_metrics(market, instrument_by_id))
-    metrics.extend(_positive_metrics(market, instrument_by_id, config))
-    metrics.extend(_floored_metrics(market, instrument_by_id, config))
-    metrics.extend(_fill_run_metrics(market, instrument_by_id))
-    metrics.extend(count_metrics(market, instruments))
-    metrics.extend(_earnings_spacing_metrics(market, instruments))
-    metrics.extend(_realised_moment_metrics(market, instruments))
+    structural: list[CheckMetric] = []
+    structural.extend(_finite_metrics(market, instrument_by_id))
+    structural.extend(_positive_metrics(market, instrument_by_id, config))
+    structural.extend(_floored_metrics(market, instrument_by_id, config))
+    structural.extend(_fill_run_metrics(market, instrument_by_id))
+    structural.extend(count_metrics(market, instruments))
+    structural.extend(_earnings_spacing_metrics(market, instruments))
 
-    misses = [metric for metric in metrics if not metric.passed]
+    misses = [metric for metric in structural if not metric.passed]
     if misses:
         raise check_error(misses)
-    return CheckReport(seed=market.seed, metrics=tuple(metrics))
+
+    moments = _realised_moment_metrics(market, instruments)
+    misses = [metric for metric in moments if not metric.passed]
+    if misses:
+        raise check_error(misses)
+
+    return CheckReport(seed=market.seed, metrics=tuple(structural) + tuple(moments))

@@ -24,7 +24,7 @@ from pm_traitbench.market.real.sources import (
 _CREDIT_SERIES: frozenset[str] = frozenset({"DAAA", "DBAA"})
 # A quarter runs about 60-65 weekdays; picking each report from the middle of
 # its quarter keeps consecutive reports at least 40 weekdays (about 8 weeks)
-# apart, comfortably clear of a duplicated or misattributed feed row.
+# apart - exactly 40 where the carry-forward band binds, not always with slack.
 _REPORT_BAND_LO = 20
 _REPORT_BAND_HI = 40
 _MIN_REPORT_GAP_WEEKDAYS = 40
@@ -169,10 +169,11 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
     seed's own window and has every equity ticker reporting once per
     calendar quarter, each report at least 40 weekdays from its neighbours,
     with the first equity ticker's report in the holiday's quarter moved
-    onto the holiday weekday itself (replacing, not duplicating, that
-    ticker's report for that quarter); only the following quarter's band
-    carries forward to keep the spacing, never the preceding one, rather
-    than any weekend date, since a real cache never holds a weekend file.
+    onto the holiday weekday itself (rather than any weekend date, since a
+    real cache never holds a weekend file), replacing rather than
+    duplicating that ticker's report for that quarter; only the following
+    quarter's band then carries forward to keep the spacing, never the
+    preceding one.
     """
 
     def _build(config: Config) -> FakeCache:
