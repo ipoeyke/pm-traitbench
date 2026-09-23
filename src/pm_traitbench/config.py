@@ -1392,6 +1392,24 @@ class MarketRealConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     seeds: dict[str, RealSeedSpec] = Field(default_factory=_default_real_seeds)
+    sec_user_agent: str = Field(
+        "pm-traitbench 65440968+ipoeyke@users.noreply.github.com",
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "SEC's fair-access policy asks automated clients to declare a name "
+                "and a contact email"
+            ),
+        },
+    )
+
+    @field_validator("sec_user_agent")
+    @classmethod
+    def _check_sec_user_agent(cls, value: str) -> str:
+        parts = value.split()
+        if len(parts) < 2 or "@" not in parts[-1]:
+            raise ValueError("sec_user_agent must be a space-separated name and an email address")
+        return value
 
 
 class MarketConfig(BaseModel):

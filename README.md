@@ -133,6 +133,9 @@ history instead of simulating it. Its raw data comes from:
   bond yields for the credit spread, and daily FX rates.
 - Yahoo Finance's chart API: equity closes, continuous front-month futures
   for commodities, and the SPY reference series.
+- SEC EDGAR: 8-K filings with item 2.02 (Results of Operations), the
+  earnings-date source. Requests declare a User-Agent with a contact
+  email, set in `market.real.sec_user_agent`.
 - Fixed public dates: FOMC (Federal Reserve), WASDE (USDA) and Employment
   Situation (BLS) release schedules.
 
@@ -146,12 +149,16 @@ structural: every price, spread and curve value must be finite and positive
 (a yield against its floor instead), no series may sit on a forward-filled
 value for longer than the fetch's fill limit, and calendar row counts are
 checked against the seed's own drawn events and flips, plus exact expiry
-and positioning dates. These run before anything realised is computed,
-since a moment over bad data cannot be trusted. Once they pass, each
-regime span and family's realised annualised volatility and correlation
-with `z` are reported for information, not checked against a target, and a
-family index with zero variance over a span fails as `flat`; the days a
-yield curve tenor spent at its floor are likewise reported only.
+and positioning dates. Each equity also needs `earnings_coverage`: at
+least 3 earnings rows a year (scaled to a shorter horizon), since
+companies report quarterly and fewer rows mean a missing or unparsed
+filing history. These run before anything realised is computed, since a
+moment over bad data cannot be trusted. Once they pass, each regime span
+and family's realised annualised volatility and correlation with `z` are
+reported for information, not checked against a target, and a family
+index with zero variance over a span fails as `flat`; the days a yield
+curve tenor spent at its floor, and each equity's smallest gap in days
+between earnings rows (`earnings_spacing`), are likewise reported only.
 
 Every real series keeps its historical day-over-day change (log for
 prices; level for yields, which are then floored); only its starting level
@@ -162,7 +169,10 @@ disguise hides levels, names and dates, but not the return pattern itself,
 which is real history. Credit prices and commodity M2-M12 are derived from
 these series rather than fetched directly. An event's surprise is its own
 series' daily move scaled by that series' own historical daily sd, so
-ordinary days stay small and the size of a genuine outlier is preserved.
+ordinary days stay small and the size of a genuine outlier is preserved;
+an earnings surprise instead scales the equity's abnormal return (its own
+move net of `beta` times SPY's), so a market-wide move on the same day is
+not mistaken for the earnings reaction.
 
 Limitations from the model:
 
@@ -182,10 +192,9 @@ Limitations from the model:
   close.
 - An event's surprise is priced from the seed's own realised price or yield
   reaction, not from a reported consensus-versus-actual figure.
-- A real seed has no earnings feed, so it never draws an EARNINGS event: an
-  equity's street score only updates on the weekly revision day (plus any
-  consensus flip), never on an earnings-day jump, and a rule keyed to an
-  earnings signpost never fires on a real seed.
+- An earnings date is the filing date of the results 8-K. A company that
+  published results before filing is shifted by up to a day, and off-cycle
+  2.02 filings (pre-announcements) also count as earnings events.
 
 The real window a seed replays is recorded in the run metadata and the
 config itself, for operators only; never pass either to a model under test.

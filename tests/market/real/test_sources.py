@@ -78,6 +78,19 @@ def test_equity_ticker_to_id_order_matches_the_registry() -> None:
         assert inst.source == "yahoo"
 
 
+def test_every_equity_has_a_ten_digit_cik_and_no_two_repeat() -> None:
+    equities = [inst for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES]
+    ciks = [inst.cik for inst in equities]
+    assert all(cik is not None for cik in ciks)
+    assert all(len(cik) == 10 and cik.isdigit() for cik in ciks)
+    assert len(ciks) == len(set(ciks))
+
+
+def test_non_equity_instruments_have_no_cik() -> None:
+    non_equities = [inst for inst in REAL_INSTRUMENTS if inst.family != Family.EQUITIES]
+    assert all(inst.cik is None for inst in non_equities)
+
+
 def test_equity_sector_groups_are_four_tickers_each_in_order() -> None:
     equities = [inst for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES]
     sectors = [inst.sector for inst in equities]

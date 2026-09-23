@@ -238,7 +238,8 @@ def build_seed(
 
     events = real_event_days(instruments, spec, axis, calendar_start, cache)
     y10_bp = curves[(curve_id, Tenor.Y10)] * 100
-    event_rows = surprise_rows(events, output, spy_log_return, y10_bp, axis, seed)
+    betas = {i.instrument_id: i.beta for i in instruments if i.family == Family.EQUITIES}
+    event_rows = surprise_rows(events, output, spy_log_return, y10_bp, axis, seed, betas)
     generated = generated_rows(instruments, axis, seed, config.market.consensus.report_weekday)
 
     event_days = event_day_indices(event_rows, axis)

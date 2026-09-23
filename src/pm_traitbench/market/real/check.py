@@ -5,12 +5,13 @@ flatness, fill runs and calendar counts) that must hold regardless of the
 source data.
 """
 
+import math
 from collections.abc import Sequence
 
 import numpy as np
 
 from pm_traitbench.config import REAL_FILL_LIMIT, Config
-from pm_traitbench.enums import Family, InstrumentKind
+from pm_traitbench.enums import EventType, Family, InstrumentKind
 from pm_traitbench.market.check import (
     CheckMetric,
     CheckReport,
@@ -149,6 +150,54 @@ def _fill_run_metrics(
     return metrics
 
 
+def _earnings_metrics(
+    market: SeedMarket, instruments: Sequence[Instrument], n_weeks: int
+) -> list[CheckMetric]:
+    """Per equity: `earnings_coverage`, checked, and `earnings_spacing`, reported."""
+    equity_ids = sorted(i.instrument_id for i in instruments if i.family == Family.EQUITIES)
+    axis_days: dict[str, list[int]] = {}
+    for row in market.calendar:
+        if row.event != EventType.EARNINGS:
+            continue
+        axis_days.setdefault(row.instrument_id, []).append(market.axis.index(row.date))
+
+    # Companies report quarterly, so fewer than three reports a year means a
+    # missing or unparsed filing history; the floor scales with the horizon.
+    min_rows = max(1, math.floor(3 * n_weeks / 52))
+
+    metrics = []
+    for instrument_id in equity_ids:
+        days = sorted(axis_days.get(instrument_id, []))
+        metrics.append(
+            CheckMetric(
+                seed=market.seed,
+                regime=None,
+                family=Family.EQUITIES,
+                metric=f"earnings_coverage:{instrument_id}",
+                target=float(min_rows),
+                realised=float(len(days)),
+                tolerance=0.0,
+                passed=len(days) >= min_rows,
+            )
+        )
+        # Off-cycle 2.02 filings, such as pre-announcements, are real, so
+        # this is reported only, never checked against a threshold.
+        gap = min((b - a for a, b in zip(days, days[1:], strict=False)), default=0)
+        metrics.append(
+            CheckMetric(
+                seed=market.seed,
+                regime=None,
+                family=Family.EQUITIES,
+                metric=f"earnings_spacing:{instrument_id}",
+                target=float(gap),
+                realised=float(gap),
+                tolerance=0.0,
+                passed=True,
+            )
+        )
+    return metrics
+
+
 def _realised_moment_metrics(
     market: SeedMarket, instruments: Sequence[Instrument]
 ) -> list[CheckMetric]:
@@ -224,6 +273,7 @@ def check_real_market(
     structural.extend(_floored_metrics(market, instrument_by_id, config))
     structural.extend(_fill_run_metrics(market, instrument_by_id))
     structural.extend(count_metrics(market, instruments, config.market.consensus.report_weekday))
+    structural.extend(_earnings_metrics(market, instruments, config.calendar.n_weeks))
 
     misses = [metric for metric in structural if not metric.passed]
     if misses:

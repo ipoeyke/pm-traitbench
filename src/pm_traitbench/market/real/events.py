@@ -1,21 +1,24 @@
-"""Real-market calendar: fixed macro dates priced into surprises from the
-seed's own simulated series.
+"""Real-market calendar: fixed macro dates and SEC EDGAR earnings filings,
+priced into surprises from the seed's own simulated series.
 
-Event dates and targets carry no randomness: FOMC, WASDE and NFP dates are a
-public schedule, and inventory and crop reports follow a fixed weekday or
-that same public schedule. A real seed has no earnings feed, so it never
-draws an EARNINGS event. Surprise magnitude and sign come from the realised
-market move, so no sampling stream is used here.
+FOMC, WASDE and NFP dates are a public schedule; inventory and crop reports
+follow a fixed weekday or that same public schedule. Earnings dates come
+from each equity's 8-K filings with item 2.02 (Results of Operations),
+converted from their EDGAR acceptance time to a real date. Surprise
+magnitude and sign come from the realised market move, so no sampling
+stream is used here.
 """
 
-from collections.abc import Sequence
+import bisect
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
 from pm_traitbench.config import RealSeedSpec
-from pm_traitbench.enums import CommodityGroup, EventType, InstrumentKind
+from pm_traitbench.enums import CommodityGroup, EventType, Family, InstrumentKind
 from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.axis import SimAxis
 from pm_traitbench.market.calendar import row_sort_key
@@ -82,11 +85,19 @@ NFP_DATES: tuple[date, ...] = (
     date(2019, 5, 3),
 )
 
-# The event types a real seed can draw; rating actions and earnings are
-# never generated for real seeds, so they always count as zero.
+# The event types a real seed can draw; rating actions are never generated
+# for real seeds, so they always count as zero.
 _COUNTED_EVENT_TYPES: tuple[EventType, ...] = tuple(EVENT_FAMILY)
 
 _SERIES_BY_ID: dict[str, str] = {inst.instrument_id: inst.series for inst in REAL_INSTRUMENTS}
+_CIK_BY_ID: dict[str, str] = {
+    inst.instrument_id: inst.cik for inst in REAL_INSTRUMENTS if inst.cik is not None
+}
+
+# A results 8-K filed from 16:00 local time on counts as reported the next
+# trading day, matching when the market could first react to it.
+_MARKET_CLOSE = time(16, 0)
+_EASTERN = ZoneInfo("America/New_York")
 
 
 def _next_open_day(t: int, last: int, real_dates: Sequence[date], values: dict[date, float]) -> int:
@@ -97,6 +108,27 @@ def _next_open_day(t: int, last: int, real_dates: Sequence[date], values: dict[d
     day = t
     while day < last and real_dates[day] not in values:
         day += 1
+    return day
+
+
+def _earnings_event_day(
+    accepted: datetime, real_dates: Sequence[date], last_day: int, values: dict[date, float]
+) -> int | None:
+    """The axis day one 8-K filing's earnings event lands on, or None when its
+    date falls beyond the axis (a filing too close to the horizon's end).
+
+    Before 16:00 America/New_York the filing's own real date is used, from
+    16:00 on the next one; either way, the result then moves forward to the
+    first axis day with a source value, same as a closed inventory report.
+    """
+    local = accepted.astimezone(_EASTERN)
+    real_date = local.date() if local.time() < _MARKET_CLOSE else local.date() + timedelta(days=1)
+    start_t = bisect.bisect_left(real_dates, real_date)
+    if start_t > last_day:
+        return None
+    day = _next_open_day(start_t, last_day, real_dates, values)
+    if real_dates[day] not in values:
+        return None
     return day
 
 
@@ -120,10 +152,11 @@ def real_event_days(
 
     Every axis day's real date is a weekday: `real_axis_dates` maps Monday to
     Monday, so the offset between `calendar_start` and `spec.window_start` is
-    a whole number of weeks. A real seed draws no EARNINGS event, since it
-    has no earnings feed. An inventory report due on a Wednesday whose
-    commodity series was closed (filled, with no source value) moves to the
-    next trading day with one.
+    a whole number of weeks. An earnings row comes from an equity's 8-K
+    filings with item 2.02; several such filings landing on the same axis
+    day for one equity still count as a single row. An inventory report due
+    on a Wednesday whose commodity series was closed (filled, with no
+    source value) moves to the next trading day with one.
     """
     real_dates = real_axis_dates(spec, axis, calendar_start)
     horizon = range(axis.n_burn, axis.n_days)
@@ -131,6 +164,23 @@ def real_event_days(
     last_day = axis.n_days - 1
 
     events: list[RealEvent] = []
+
+    equity_ids = [i.instrument_id for i in instruments if i.family == Family.EQUITIES]
+    for instrument_id in equity_ids:
+        cik = _CIK_BY_ID.get(instrument_id)
+        if cik is None:
+            continue
+        values = cache.yahoo(_SERIES_BY_ID[instrument_id])
+        days: set[int] = set()
+        for filing in cache.edgar_filings(cik):
+            if filing.form != "8-K" or "2.02" not in filing.items:
+                continue
+            day = _earnings_event_day(filing.accepted, real_dates, last_day, values)
+            if day is None or day < axis.n_burn:
+                continue
+            days.add(day)
+        for day in sorted(days):
+            events.append(RealEvent(instrument_id=instrument_id, event=EventType.EARNINGS, day=day))
 
     curve_ids = [i.instrument_id for i in instruments if i.kind == InstrumentKind.SOVEREIGN_CURVE]
     for fomc_date in FOMC_DATES:
@@ -200,14 +250,19 @@ def surprise_rows(
     y10_bp: np.ndarray,
     axis: SimAxis,
     seed: str,
+    betas: Mapping[str, float] | None = None,
 ) -> list[CalendarEvent]:
     """Price each RealEvent's surprise from the seed's own simulated series and
     turn it into a CalendarEvent row, sorted for the calendar table.
 
     Each surprise is the event's own daily move scaled by that series' own
     sd over the whole axis, so magnitude reflects how unusual the move was
-    rather than a single fixed jump size.
+    rather than a single fixed jump size. An earnings surprise instead
+    scales the equity's abnormal return (its own move net of `beta` times
+    SPY's) by that abnormal series' own sd, since a beta-driven move is not
+    itself the surprise.
     """
+    betas = betas or {}
     y10_diff = np.diff(y10_bp)
     y10_sd_cache: float | None = None
 
@@ -216,10 +271,21 @@ def surprise_rows(
     spy_returns = spy_log_return[1:]
     spy_sd_cache: float | None = None
 
+    equity_abnormal: dict[str, np.ndarray] = {}
+    equity_sd: dict[str, float] = {}
+
     def _commodity_returns(instrument_id: str) -> np.ndarray:
         if instrument_id not in commodity_returns:
             commodity_returns[instrument_id] = np.diff(np.log(output.prices[instrument_id]))
         return commodity_returns[instrument_id]
+
+    def _abnormal_return(instrument_id: str) -> np.ndarray:
+        if instrument_id not in equity_abnormal:
+            r_i = np.diff(np.log(output.prices[instrument_id]))
+            a = np.zeros(len(spy_log_return))
+            a[1:] = r_i - betas[instrument_id] * spy_returns
+            equity_abnormal[instrument_id] = a
+        return equity_abnormal[instrument_id]
 
     rows: list[CalendarEvent] = []
     for event in events:
@@ -241,6 +307,12 @@ def surprise_rows(
                 spy_sd_cache = _daily_sd(spy_returns, seed, "SPY")
             move = spy_log_return[t]
             surprise = _clip(move / (SURPRISE_SD_SCALE * spy_sd_cache))
+        elif event.event == EventType.EARNINGS:
+            a = _abnormal_return(event.instrument_id)
+            if event.instrument_id not in equity_sd:
+                equity_sd[event.instrument_id] = _daily_sd(a[1:], seed, event.instrument_id)
+            move = a[t]
+            surprise = _clip(move / (SURPRISE_SD_SCALE * equity_sd[event.instrument_id]))
         else:
             raise ValueError(f"real events do not support {event.event.value}")
 

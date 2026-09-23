@@ -1,12 +1,12 @@
 """Tests for the real-market event calendar: dates, targets and surprises."""
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import numpy as np
 import pytest
 
 from pm_traitbench.config import Config
-from pm_traitbench.enums import CommodityGroup, EventType
+from pm_traitbench.enums import CommodityGroup, EventType, Family, InstrumentKind
 from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.axis import SimAxis, build_axis
 from pm_traitbench.market.output import ProcessOutput
@@ -20,12 +20,68 @@ from pm_traitbench.market.real.events import (
     real_event_days,
     surprise_rows,
 )
-from pm_traitbench.market.real.fetch import RawCache
+from pm_traitbench.market.real.fetch import EdgarFiling, RawCache
+from pm_traitbench.market.real.sources import REAL_INSTRUMENTS
 from pm_traitbench.market.real.universe import build_real_universe, real_axis_dates
-from pm_traitbench.tables.schema import CalendarEvent
+from pm_traitbench.tables.schema import CalendarEvent, Instrument
 
 _WINDOW_START = date(2018, 6, 4)
 _WINDOW_END = date(2019, 5, 31)
+
+_AAPL_CIK = next(i.cik for i in REAL_INSTRUMENTS if i.series == "AAPL")
+
+
+def _equity_instrument(instrument_id: str = "EQ-R001", beta: float = 1.0) -> Instrument:
+    return Instrument(
+        instrument_id=instrument_id,
+        family=Family.EQUITIES,
+        kind=InstrumentKind.EQUITY,
+        name=instrument_id,
+        currency="USD",
+        sector="sector_01",
+        rating_band=None,
+        commodity_group=None,
+        duration_years=None,
+        beta=beta,
+        expiry_rule=None,
+    )
+
+
+class _FakeEarningsCache:
+    """A minimal hand-built cache exposing only what earnings events need:
+    EDGAR filings by CIK and each equity's raw Yahoo close-date set.
+    """
+
+    def __init__(
+        self, filings: dict[str, list[EdgarFiling]], yahoo: dict[str, dict[date, float]]
+    ) -> None:
+        self._filings = filings
+        self._yahoo = yahoo
+
+    def edgar_filings(self, cik: str) -> list[EdgarFiling]:
+        return self._filings.get(cik, [])
+
+    def yahoo(self, ticker: str) -> dict[date, float]:
+        return self._yahoo.get(ticker, {})
+
+
+def _weekday_axis(start: date, n: int) -> SimAxis:
+    """`n` consecutive weekdays from `start` (a Monday), no burn-in."""
+    dates = []
+    day = start
+    while len(dates) < n:
+        if day.weekday() < 5:
+            dates.append(day)
+        day += timedelta(days=1)
+    return SimAxis(dates=tuple(dates), n_burn=0)
+
+
+def _all_trading_days(axis: SimAxis) -> dict[date, float]:
+    return dict.fromkeys(axis.dates, 100.0)
+
+
+def _filing(accepted: datetime, items: str = "2.02,9.01", form: str = "8-K") -> EdgarFiling:
+    return EdgarFiling(form=form, accepted=accepted, items=tuple(items.split(",")) if items else ())
 
 
 @pytest.mark.parametrize("dates", [FOMC_DATES, WASDE_DATES, NFP_DATES])
@@ -54,13 +110,71 @@ def test_no_events_fall_in_burn_in(fake_cache) -> None:
     assert all(e.day >= axis.n_burn for e in events)
 
 
-def test_no_earnings_events_are_drawn(fake_cache) -> None:
-    """A real seed has no earnings feed, so it never draws an EARNINGS event."""
+def test_earnings_events_are_drawn_from_the_fixture(fake_cache) -> None:
     config = Config()
     result = fake_cache(config)
-    _, _, _, events = _real_event_days(config, result)
+    _, _, instruments, events = _real_event_days(config, result)
 
-    assert not any(e.event == EventType.EARNINGS for e in events)
+    equity_ids = {i.instrument_id for i in instruments if i.family == Family.EQUITIES}
+    earnings = [e for e in events if e.event == EventType.EARNINGS]
+    assert earnings
+    assert {e.instrument_id for e in earnings} <= equity_ids
+
+
+_EARNINGS_WINDOW_START = date(2018, 6, 4)
+
+
+def _earnings_days(filings: list[EdgarFiling], *, n_days: int = 10) -> list[RealEvent]:
+    axis = _weekday_axis(_EARNINGS_WINDOW_START, n_days)
+    spec = Config().market.real.seeds["R1"].model_copy(update={"window_start": axis.dates[0]})
+    cache = _FakeEarningsCache(
+        filings={_AAPL_CIK: filings}, yahoo={"AAPL": _all_trading_days(axis)}
+    )
+    events = real_event_days([_equity_instrument()], spec, axis, axis.dates[0], cache)
+    return [e for e in events if e.event == EventType.EARNINGS]
+
+
+def test_earnings_filing_after_the_close_lands_on_the_next_trading_day() -> None:
+    accepted = datetime(2018, 6, 6, 20, 30, tzinfo=UTC)  # 16:30 EDT, after the 16:00 close
+    events = _earnings_days([_filing(accepted)])
+    assert len(events) == 1
+    assert events[0].day == 3  # 2018-06-07, the next weekday after 2018-06-06
+
+
+def test_earnings_filing_before_the_close_lands_on_the_same_day() -> None:
+    accepted = datetime(2018, 6, 8, 12, 0, tzinfo=UTC)  # 08:00 EDT, before the close
+    events = _earnings_days([_filing(accepted)])
+    assert len(events) == 1
+    assert events[0].day == 4  # 2018-06-08 itself
+
+
+def test_earnings_filing_without_item_202_is_ignored() -> None:
+    accepted = datetime(2018, 6, 6, 12, 0, tzinfo=UTC)
+    events = _earnings_days([_filing(accepted, items="5.02")])
+    assert events == []
+
+
+def test_two_earnings_filings_on_one_day_give_one_row() -> None:
+    first = datetime(2018, 6, 6, 12, 0, tzinfo=UTC)
+    second = datetime(2018, 6, 6, 13, 0, tzinfo=UTC)
+    events = _earnings_days([_filing(first), _filing(second)])
+    assert len(events) == 1
+
+
+def test_earnings_filing_just_before_the_horizon_gives_no_row() -> None:
+    # The axis's last weekday, after the close: the shifted date falls on the
+    # weekend right after the horizon ends, with no axis day to land on.
+    axis = _weekday_axis(_EARNINGS_WINDOW_START, 10)
+    last_date = axis.dates[-1]
+    accepted = datetime(last_date.year, last_date.month, last_date.day, 20, 30, tzinfo=UTC)
+    events = _earnings_days([_filing(accepted)])
+    assert events == []
+
+
+def test_earnings_events_instrument_id_is_the_registry_id() -> None:
+    accepted = datetime(2018, 6, 6, 12, 0, tzinfo=UTC)
+    events = _earnings_days([_filing(accepted)])
+    assert events[0].instrument_id == "EQ-R001"
 
 
 def test_cb_meeting_fires_once_per_fomc_date_for_the_usd_curve(fake_cache) -> None:
@@ -175,15 +289,53 @@ def _sd_ratio_pair(move: float, k: float) -> tuple[float, float]:
 
 
 def test_unsupported_event_type_raises() -> None:
-    with pytest.raises(ValueError, match="earnings"):
+    with pytest.raises(ValueError, match="rating_downgrade"):
         surprise_rows(
-            [RealEvent(instrument_id="EQ-TEST", event=EventType.EARNINGS, day=1)],
-            ProcessOutput(prices={"EQ-TEST": np.array([100.0, 100.0, 100.0])}),
+            [RealEvent(instrument_id="CR-X", event=EventType.RATING_DOWNGRADE, day=1)],
+            ProcessOutput(),
             spy_log_return=np.zeros(3),
             y10_bp=np.zeros(3),
             axis=_AXIS_3D,
             seed="S",
         )
+
+
+def test_earnings_move_of_exactly_one_sd_scores_one_third() -> None:
+    d0, d1 = _sd_ratio_pair(1.0, 1.0)
+    prices = 100.0 * np.exp(np.array([0.0, d0, d0 + d1]))
+    rows = surprise_rows(
+        [RealEvent(instrument_id="EQ-TEST", event=EventType.EARNINGS, day=1)],
+        ProcessOutput(prices={"EQ-TEST": prices}),
+        spy_log_return=np.zeros(3),
+        y10_bp=np.zeros(3),
+        axis=_AXIS_3D,
+        seed="S",
+        betas={"EQ-TEST": 1.0},
+    )
+    assert rows[0].surprise == pytest.approx(1 / SURPRISE_SD_SCALE)
+    assert rows[0].affected == "equities"
+
+
+def test_earnings_abnormal_return_subtracts_beta_times_spy_return() -> None:
+    """A beta-scaled co-movement with SPY baked into the equity's own return
+    is subtracted out, leaving the same surprise as the SPY-flat case.
+    """
+    beta = 1.5
+    spy_log_return = np.array([0.0, 0.03, -0.02])
+    spy_returns = spy_log_return[1:]
+    d0, d1 = _sd_ratio_pair(1.0, 1.0)
+    equity_returns = beta * spy_returns + np.array([d0, d1])
+    prices = 100.0 * np.exp(np.concatenate([[0.0], np.cumsum(equity_returns)]))
+    rows = surprise_rows(
+        [RealEvent(instrument_id="EQ-TEST", event=EventType.EARNINGS, day=1)],
+        ProcessOutput(prices={"EQ-TEST": prices}),
+        spy_log_return=spy_log_return,
+        y10_bp=np.zeros(3),
+        axis=_AXIS_3D,
+        seed="S",
+        betas={"EQ-TEST": beta},
+    )
+    assert rows[0].surprise == pytest.approx(1 / SURPRISE_SD_SCALE)
 
 
 def test_cb_meeting_move_of_exactly_one_sd_scores_one_third() -> None:

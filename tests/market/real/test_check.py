@@ -110,14 +110,63 @@ def test_moved_expiry_date_fails(fake_cache) -> None:
     assert "count:contract_expiry" in str(excinfo.value)
 
 
-def test_no_earnings_rows_and_zero_earnings_count(fake_cache) -> None:
-    """A real seed has no earnings feed, so its calendar draws no EARNINGS row."""
+def test_earnings_rows_are_drawn_and_counted(fake_cache) -> None:
     config = Config()
     result = fake_cache(config)
     instruments, market = _build(config, result)
 
-    assert not any(row.event == EventType.EARNINGS for row in market.calendar)
-    assert market.drawn_events[EventType.EARNINGS] == 0
+    earnings = [row for row in market.calendar if row.event == EventType.EARNINGS]
+    assert earnings
+    assert market.drawn_events[EventType.EARNINGS] == len(earnings)
+
+
+def test_equity_with_fewer_than_the_minimum_earnings_rows_fails_earnings_coverage(
+    fake_cache,
+) -> None:
+    config = Config()
+    result = fake_cache(config)
+    instruments, market = _build(config, result)
+
+    target = next(i for i in instruments if i.family == Family.EQUITIES)
+    removed = [
+        row
+        for row in market.calendar
+        if row.event == EventType.EARNINGS and row.instrument_id == target.instrument_id
+    ]
+    calendar = [row for row in market.calendar if row not in removed]
+    # Also correct drawn_events, so this isolates the coverage miss rather
+    # than also tripping the unrelated count:earnings structural check.
+    drawn_events = dict(market.drawn_events)
+    drawn_events[EventType.EARNINGS] -= len(removed)
+    modified = dataclasses.replace(market, calendar=calendar, drawn_events=drawn_events)
+
+    with pytest.raises(MarketCheckError) as excinfo:
+        check_real_market(modified, instruments, config)
+    message = str(excinfo.value)
+    assert f"earnings_coverage:{target.instrument_id}" in message
+
+
+def test_earnings_spacing_reports_the_smallest_gap_and_always_passes(fake_cache) -> None:
+    config = Config()
+    result = fake_cache(config)
+    instruments, market = _build(config, result)
+
+    report = check_real_market(market, instruments, config)
+
+    target = next(i for i in instruments if i.family == Family.EQUITIES)
+    days = sorted(
+        market.axis.index(row.date)
+        for row in market.calendar
+        if row.event == EventType.EARNINGS and row.instrument_id == target.instrument_id
+    )
+    expected_gap = float(min(b - a for a, b in zip(days, days[1:], strict=False)))
+
+    entry = next(
+        m for m in report.metrics if m.metric == f"earnings_spacing:{target.instrument_id}"
+    )
+    assert entry.realised == expected_gap
+    assert entry.target == expected_gap
+    assert entry.passed is True
 
 
 def test_constant_rates_curve_over_a_span_fails_naming_flat_rates(fake_cache) -> None:

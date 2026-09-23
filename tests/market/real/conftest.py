@@ -3,7 +3,7 @@ used instead of the network by every test in this package.
 """
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -11,9 +11,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pm_traitbench.config import Config
+from pm_traitbench.config import Config, referenced_seeds
 from pm_traitbench.enums import Family
-from pm_traitbench.market.real.fetch import fetch_all, fetch_range, fred_url, yahoo_url
+from pm_traitbench.market.real.fetch import (
+    edgar_followup_url,
+    edgar_url,
+    fetch_all,
+    fetch_range,
+    fred_url,
+    yahoo_url,
+)
 from pm_traitbench.market.real.sources import (
     REAL_INSTRUMENTS,
     REFERENCE_EQUITY,
@@ -35,10 +42,10 @@ _TREASURY_START_PCT: dict[str, float] = {
 _TREASURY_STEP_PCT = 0.05
 
 
-def _fake_opener(files: dict[str, bytes]) -> Callable[[str], bytes]:
+def _fake_opener(files: dict[str, bytes]) -> Callable[[str, Mapping[str, str]], bytes]:
     """An opener returning canned bytes for known URLs, failing loudly on any other."""
 
-    def _opener(url: str) -> bytes:
+    def _opener(url: str, headers: Mapping[str, str]) -> bytes:
         try:
             return files[url]
         except KeyError:
@@ -48,7 +55,7 @@ def _fake_opener(files: dict[str, bytes]) -> Callable[[str], bytes]:
 
 
 @pytest.fixture
-def fake_opener() -> Callable[[dict[str, bytes]], Callable[[str], bytes]]:
+def fake_opener() -> Callable[[dict[str, bytes]], Callable[[str, Mapping[str, str]], bytes]]:
     """A factory building an opener that serves canned bytes for known URLs."""
     return _fake_opener
 
@@ -94,6 +101,34 @@ def _yahoo_json(values: dict[date, float]) -> bytes:
         }
     }
     return json.dumps(payload).encode("utf-8")
+
+
+def _edgar_accepted(day: date) -> str:
+    """A 20:30 UTC acceptance timestamp, EDGAR's own format."""
+    return f"{day.isoformat()}T20:30:00.000Z"
+
+
+def _edgar_lists(filings: Sequence[tuple[date, str, str]]) -> dict[str, list[str]]:
+    return {
+        "form": [form for _, form, _ in filings],
+        "filingDate": [day.isoformat() for day, _, _ in filings],
+        "acceptanceDateTime": [_edgar_accepted(day) for day, _, _ in filings],
+        "items": [items for _, _, items in filings],
+    }
+
+
+def _edgar_main_json(recent: Sequence[tuple[date, str, str]], files: list[dict[str, str]]) -> bytes:
+    payload = {"filings": {"recent": _edgar_lists(recent), "files": files}}
+    return json.dumps(payload).encode("utf-8")
+
+
+def _edgar_older_json(filings: Sequence[tuple[date, str, str]]) -> bytes:
+    return json.dumps(_edgar_lists(filings)).encode("utf-8")
+
+
+def _referenced_window_starts(config: Config) -> list[date]:
+    used = set(referenced_seeds(config))
+    return [spec.window_start for name, spec in config.market.real.seeds.items() if name in used]
 
 
 @dataclass(frozen=True)
@@ -190,6 +225,39 @@ def fake_cache(tmp_path: Path) -> Callable[..., FakeCache]:
             walk = 100.0 + np.cumsum(rng.normal(0, 1, size=len(series_days)))
             values = dict(zip(series_days, walk, strict=True))
             files[yahoo_url(ticker, start, end)] = _yahoo_json(values)
+
+        # EDGAR: four quarterly 2.02 filings per seed window (comfortably
+        # above the 3-report coverage floor) in the main "recent" file, plus
+        # a 2.02 and a non-2.02 8-K before window_start in a separate older
+        # file (exercising the filings.files merge path; excluded from
+        # coverage since they fall in the burn-in, not the horizon).
+        window_starts = _referenced_window_starts(config)
+        for inst in REAL_INSTRUMENTS:
+            if inst.family != Family.EQUITIES:
+                continue
+            older_filings: list[tuple[date, str, str]] = []
+            recent_filings: list[tuple[date, str, str]] = []
+            for window_start in window_starts:
+                older_filings.append((window_start - timedelta(days=40), "8-K", "5.02"))
+                older_filings.append((window_start - timedelta(days=20), "8-K", "2.02,9.01"))
+                for offset in (45, 136, 227, 318):
+                    recent_filings.append(
+                        (window_start + timedelta(days=offset), "8-K", "2.02,9.01")
+                    )
+                recent_filings.append((window_start + timedelta(days=200), "8-K", "5.02"))
+            older_filings.sort()
+            recent_filings.sort()
+
+            older_name = f"CIK{inst.cik}-submissions-001.json"
+            files[edgar_followup_url(older_name)] = _edgar_older_json(older_filings)
+            files_list = [
+                {
+                    "name": older_name,
+                    "filingFrom": start.isoformat(),
+                    "filingTo": (min(window_starts) - timedelta(days=1)).isoformat(),
+                }
+            ]
+            files[edgar_url(inst.cik)] = _edgar_main_json(recent_filings, files_list)
 
         fetch_all(config, data_dir, opener=_fake_opener(files), sleeper=lambda _: None)
         return FakeCache(data_dir=data_dir, holiday=holiday, betas=betas)

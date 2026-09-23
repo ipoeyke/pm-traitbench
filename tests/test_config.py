@@ -36,6 +36,8 @@ def test_config_builds_with_defaults() -> None:
     assert config.population.pilot_market_seeds == ("R1",)
     assert config.population.full_per_cell == 3
     assert config.market.real.seeds["R1"].window_start == date(2018, 6, 4)
+    expected_agent = "pm-traitbench 65440968+ipoeyke@users.noreply.github.com"
+    assert config.market.real.sec_user_agent == expected_agent
     assert config.mandate.book_size_min == 50e6
     assert config.mandate.book_size_max == 2e9
     assert config.drift.bias_update_weeks == (18, 30)
@@ -332,6 +334,16 @@ def test_bias_spec_empty_note_raises() -> None:
             basis="guess",
             note="",
         )
+
+
+def test_sec_user_agent_without_at_sign_raises() -> None:
+    with pytest.raises(ValidationError, match="sec_user_agent"):
+        Config.model_validate({"market": {"real": {"sec_user_agent": "pm-traitbench contact"}}})
+
+
+def test_sec_user_agent_without_space_raises() -> None:
+    with pytest.raises(ValidationError, match="sec_user_agent"):
+        Config.model_validate({"market": {"real": {"sec_user_agent": "pm-traitbench@example.com"}}})
 
 
 def test_dump_with_basis_covers_every_leaf() -> None:
