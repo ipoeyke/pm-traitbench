@@ -25,8 +25,15 @@ _LONG_ROOT = 0
 
 
 def _long_config() -> Config:
+    # A long horizon only used to exercise the synthetic seed "A": the pilot
+    # is overridden away from the real seed R1, whose window can't stretch
+    # this far past the fixed event date coverage.
     return Config.model_validate(
-        {"calendar": {"n_weeks": 520}, "market": {"boundary_weeks": (100, 300)}}
+        {
+            "population": {"pilot_market_seeds": ["A"]},
+            "calendar": {"n_weeks": 520},
+            "market": {"boundary_weeks": (100, 300)},
+        }
     )
 
 

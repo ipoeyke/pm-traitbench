@@ -215,11 +215,28 @@ def _load_old_manifest(data_dir: Path) -> Manifest | None:
     return _read_manifest(path)
 
 
+def _mkdir(path: Path) -> None:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise StageIOError(f"cannot create directory {path}: {e}") from e
+
+
+def _write_bytes(path: Path, body: bytes) -> None:
+    try:
+        path.write_bytes(body)
+    except OSError as e:
+        raise StageIOError(f"cannot write {path}: {e}") from e
+
+
 def _write_manifest(root: Path, manifest: Manifest) -> None:
     manifest_path = root / "manifest.json"
     tmp_path = manifest_path.with_name(manifest_path.name + ".tmp")
-    tmp_path.write_text(manifest.to_json(), encoding="utf-8")
-    os.replace(tmp_path, manifest_path)
+    try:
+        tmp_path.write_text(manifest.to_json(), encoding="utf-8")
+        os.replace(tmp_path, manifest_path)
+    except OSError as e:
+        raise StageIOError(f"cannot write manifest at {manifest_path}: {e}") from e
 
 
 def fetch_all(
@@ -255,7 +272,7 @@ def fetch_all(
         return Manifest(window=(start.isoformat(), end.isoformat()), entries=(), complete=True)
 
     for sub in ("fred", "yahoo"):
-        (root / sub).mkdir(parents=True, exist_ok=True)
+        _mkdir(root / sub)
 
     start, end = fetch_range(config)
     old_by_path = {entry.path: entry for entry in old.entries} if old else {}
@@ -290,7 +307,7 @@ def fetch_all(
         if entry is None:
             body = _fetch_with_retry(opener, sleep, REAL_REQUEST_INTERVAL_S, url, label)
             _validate(rel_path, body, label)
-            full_path.write_bytes(body)
+            _write_bytes(full_path, body)
             entry = ManifestEntry(
                 path=rel_path,
                 url=url,

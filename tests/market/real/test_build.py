@@ -244,8 +244,44 @@ def test_schedule_dates_equal_mapped_regime_starts_and_tile_the_horizon(fake_cac
     assert [span.date_start for span in schedule] == expected_starts
     assert schedule[0].date_start == axis.dates[axis.n_burn]
     for prev, nxt in zip(schedule, schedule[1:], strict=False):
-        assert nxt.date_start == prev.date_end + timedelta(days=1)
+        assert nxt.date_start == axis.dates[axis.index(prev.date_end) + 1]
     assert schedule[-1].date_end == axis.dates[-1]
+
+
+def test_real_schedule_span_ends_on_the_last_axis_day_before_a_weekend_gap() -> None:
+    """A span whose next span starts right after a weekend ends on the Friday
+    before it, not on the calendar Sunday a naive day-before would give.
+    """
+    axis = SimAxis(
+        dates=(
+            date(2020, 1, 6),  # Mon - RANGE
+            date(2020, 1, 7),  # Tue - RISK_OFF
+            date(2020, 1, 8),  # Wed
+            date(2020, 1, 9),  # Thu
+            date(2020, 1, 10),  # Fri - last axis day before the RISK_ON Monday
+            date(2020, 1, 13),  # Mon - RISK_ON
+            date(2020, 1, 14),  # Tue
+        ),
+        n_burn=0,
+    )
+    calendar_start = date(2020, 1, 6)
+    spec = RealSeedSpec(
+        window_start=date(2018, 6, 4),
+        regime_starts=(
+            (Regime.RANGE, date(2018, 6, 4)),
+            (Regime.RISK_OFF, date(2018, 6, 5)),
+            (Regime.RISK_ON, date(2018, 6, 11)),
+        ),
+        basis="design",
+        note="unit test spec",
+    )
+
+    schedule = real_schedule(spec, axis, calendar_start, "S")
+
+    assert schedule[1].regime == Regime.RISK_OFF
+    assert schedule[1].date_start == date(2020, 1, 7)
+    assert schedule[1].date_end == date(2020, 1, 10)
+    assert schedule[2].date_start == date(2020, 1, 13)
 
 
 def test_burn_in_maps_to_the_first_regime(fake_cache) -> None:

@@ -2,14 +2,15 @@
 full state, check each against what the config implies, then write the six market tables.
 """
 
+from datetime import date
 from typing import Any
 
 from pm_traitbench.config import Config, referenced_seeds
-from pm_traitbench.errors import MarketCheckError
+from pm_traitbench.errors import MarketCheckError, StageIOError
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.market.real.build import build_seed as build_real_seed
 from pm_traitbench.market.real.check import check_real_market
-from pm_traitbench.market.real.fetch import RawCache
+from pm_traitbench.market.real.fetch import RawCache, fetch_range
 from pm_traitbench.market.real.universe import build_real_universe
 from pm_traitbench.market.seed import to_rows
 from pm_traitbench.market.synthetic.build import build_seed as build_synthetic_seed
@@ -85,6 +86,14 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
     cache: RawCache | None = None
     if any(seed in real_seeds for seed in seeds):
         cache = RawCache.open(store.data_dir)
+        cache_start = date.fromisoformat(cache.manifest.window[0])
+        cache_end = date.fromisoformat(cache.manifest.window[1])
+        needed_start, needed_end = fetch_range(config)
+        if cache_start > needed_start or cache_end < needed_end:
+            raise StageIOError(
+                f"raw market cache covers {cache_start} to {cache_end}, the config needs "
+                f"{needed_start} to {needed_end}; run fetch-market again"
+            )
         real_instruments = build_real_universe(config, cache, axis)
 
     instruments = _merge_instruments(synthetic_instruments, real_instruments)

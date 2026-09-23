@@ -8,7 +8,7 @@ rest of the pipeline.
 """
 
 from collections.abc import Sequence
-from datetime import date, timedelta
+from datetime import date
 
 import numpy as np
 
@@ -45,15 +45,15 @@ def real_schedule(
 ) -> list[RegimeSpan]:
     """Map a real seed's regime start dates onto the axis, tiling the whole horizon.
 
-    Each span ends the day before the next span's mapped start, or on the
-    last axis day for the final span.
+    Each span ends on the last axis day before the next span's mapped start,
+    or on the last axis day for the final span.
     """
     offset = spec.window_start - calendar_start
     starts = [regime_start - offset for _, regime_start in spec.regime_starts]
     spans = []
     for i, (regime, _) in enumerate(spec.regime_starts):
         if i + 1 < len(starts):
-            date_end = starts[i + 1] - timedelta(days=1)
+            date_end = axis.dates[axis.index(starts[i + 1]) - 1]
         else:
             date_end = axis.dates[-1]
         spans.append(RegimeSpan(seed=seed, regime=regime, date_start=starts[i], date_end=date_end))

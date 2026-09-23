@@ -5,7 +5,6 @@ flatness, fill runs and calendar counts) that must hold regardless of the
 source data.
 """
 
-from bisect import bisect_right
 from collections.abc import Sequence
 
 import numpy as np
@@ -161,9 +160,7 @@ def _realised_moment_metrics(
     metrics = []
     for span in market.schedule:
         a = market.axis.index(span.date_start)
-        # A real span's date_end can fall on a weekend; the axis holds
-        # weekdays only, so slice up to the last axis day at or before it.
-        b = bisect_right(market.axis.dates, span.date_end) - 1
+        b = market.axis.index(span.date_end)
         z_window = market.z[a : b + 1]
         for family in Family:
             changes = indices[family][a : b + 1]

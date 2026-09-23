@@ -533,6 +533,67 @@ def test_real_seed_regime_start_after_window_end_raises() -> None:
         )
 
 
+def test_real_seed_regime_start_on_saturday_raises() -> None:
+    with pytest.raises(ValidationError, match="must fall on a weekday"):
+        RealSeedSpec(
+            **_real_seed_kwargs(
+                regime_starts=(
+                    (Regime.RANGE, date(2018, 6, 4)),
+                    (Regime.RISK_OFF, date(2018, 9, 29)),  # a Saturday
+                    (Regime.RISK_ON, date(2018, 12, 26)),
+                )
+            )
+        )
+
+
+def test_real_seed_window_outside_event_date_coverage_raises() -> None:
+    with pytest.raises(
+        ValidationError,
+        match=r"falls outside the FOMC/WASDE/NFP date coverage 2018-06-04 to 2019-05-31",
+    ):
+        Config.model_validate(
+            {
+                "market": {
+                    "real": {
+                        "seeds": {
+                            "R1": _real_seed_kwargs(
+                                window_start=date(2018, 6, 11),
+                                regime_starts=(
+                                    (Regime.RANGE, date(2018, 6, 11)),
+                                    (Regime.RISK_OFF, date(2018, 10, 8)),
+                                    (Regime.RISK_ON, date(2019, 1, 2)),
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+        )
+
+
+def test_real_seed_window_outside_coverage_is_accepted_when_not_referenced() -> None:
+    config = Config.model_validate(
+        {
+            "population": {"pilot_market_seeds": ["A"]},
+            "market": {
+                "real": {
+                    "seeds": {
+                        "R1": _real_seed_kwargs(
+                            window_start=date(2018, 6, 11),
+                            regime_starts=(
+                                (Regime.RANGE, date(2018, 6, 11)),
+                                (Regime.RISK_OFF, date(2018, 10, 8)),
+                                (Regime.RISK_ON, date(2019, 1, 2)),
+                            ),
+                        )
+                    }
+                }
+            },
+        }
+    )
+    assert config.market.real.seeds["R1"].window_start == date(2018, 6, 11)
+
+
 @pytest.mark.parametrize(
     ("boundary_weeks", "match"),
     [

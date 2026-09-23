@@ -21,8 +21,21 @@ from pm_traitbench.market.axis import SimAxis
 from pm_traitbench.market.calendar import row_sort_key
 from pm_traitbench.market.check import EVENT_FAMILY
 from pm_traitbench.market.output import ProcessOutput
+from pm_traitbench.market.real.event_dates import EVENT_DATES_COVER
 from pm_traitbench.market.real.universe import real_axis_dates
 from pm_traitbench.tables.schema import CalendarEvent, Instrument
+
+__all__ = [
+    "EVENT_DATES_COVER",
+    "FOMC_DATES",
+    "NFP_DATES",
+    "SURPRISE_SD_SCALE",
+    "WASDE_DATES",
+    "RealEvent",
+    "drawn_counts",
+    "real_event_days",
+    "surprise_rows",
+]
 
 # A 1-sd day scores 1/3, and only a move beyond 3 sd reaches +-1, so a real
 # event's surprise keeps its relative size instead of saturating every day.

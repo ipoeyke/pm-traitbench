@@ -206,6 +206,25 @@ def test_tampered_cache_fails_naming_the_file(fake_cache) -> None:
     assert not (result.data_dir / "run_metadata").exists()
 
 
+def test_cache_narrower_than_the_config_needs_raises_stage_io_error(fake_cache) -> None:
+    config = _demo_config()
+    result = fake_cache(config)
+    store = DataStore(result.data_dir, config.output)
+
+    wider = config.model_copy(
+        update={
+            "market": config.market.model_copy(
+                update={"burn_in_days": config.market.burn_in_days + 500}
+            )
+        }
+    )
+
+    with pytest.raises(StageIOError, match="run fetch-market again"):
+        run_stage(MARKET_STAGE, wider, store)
+
+    assert not (result.data_dir / "market").exists()
+
+
 def test_referenced_seeds_orders_pilot_first_and_dedupes() -> None:
     config = Config.model_validate(
         {"population": {"pilot_market_seeds": ["C"], "market_seeds": ["A", "B", "C"]}}

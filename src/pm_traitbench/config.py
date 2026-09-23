@@ -28,6 +28,7 @@ from pm_traitbench.market.constants import (
     USD_PAIR,
     largest_remainder,
 )
+from pm_traitbench.market.real.event_dates import EVENT_DATES_COVER
 from pm_traitbench.timeline import Timeline
 
 BIAS_PARAMS: tuple[str, ...] = (
@@ -1335,12 +1336,27 @@ class RealSeedSpec(BaseModel):
         for earlier, later in zip(dates, dates[1:], strict=False):
             if earlier >= later:
                 raise ValueError("regime_starts dates must be strictly ascending")
+        for start in dates:
+            if start.weekday() >= 5:
+                raise ValueError(f"regime_starts date {start} must fall on a weekday")
         return self
 
 
 def real_window_end(spec: RealSeedSpec, n_weeks: int) -> date:
     """The exclusive end of a real seed's simulation window."""
     return spec.window_start + timedelta(weeks=n_weeks)
+
+
+def _last_weekday_before(day: date) -> date:
+    """The last weekday strictly before `day`.
+
+    `window_start` is always a Monday and `real_window_end` lands on a Monday
+    too, so a seed's last simulated day is always the Friday 3 days earlier.
+    """
+    result = day - timedelta(days=1)
+    while result.weekday() >= 5:
+        result -= timedelta(days=1)
+    return result
 
 
 # A longer gap than a holiday week means the underlying series is broken, not thin.
@@ -1527,6 +1543,20 @@ class Config(BaseModel):
                         f"market.real.seeds['{seed_name}'] regime start {start} for "
                         f"{regime} must fall within [{spec.window_start}, {window_end})"
                     )
+
+        used_seeds = set(self.population.pilot_market_seeds) | set(self.population.market_seeds)
+        cover_start, cover_end = EVENT_DATES_COVER
+        for seed_name, spec in self.market.real.seeds.items():
+            if seed_name not in used_seeds:
+                continue
+            window_end = real_window_end(spec, n_weeks)
+            last_day = _last_weekday_before(window_end)
+            if not (cover_start <= spec.window_start and last_day <= cover_end):
+                raise ValueError(
+                    f"market.real.seeds['{seed_name}'] window {spec.window_start} to "
+                    f"{window_end} falls outside the FOMC/WASDE/NFP date coverage "
+                    f"{cover_start} to {cover_end}"
+                )
         first, last = self.market.boundary_weeks
         if not (1 <= first < last <= n_weeks - 1):
             raise ValueError(f"market.boundary_weeks must fall within 1..{n_weeks - 1}")

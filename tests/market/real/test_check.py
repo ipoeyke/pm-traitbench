@@ -2,7 +2,6 @@
 
 import dataclasses
 import json
-from bisect import bisect_right
 from datetime import timedelta
 
 import numpy as np
@@ -129,7 +128,7 @@ def test_constant_rates_curve_over_a_span_fails_naming_flat_rates(fake_cache) ->
     curve_inst = next(i for i in instruments if i.kind == InstrumentKind.SOVEREIGN_CURVE)
     span = market.schedule[0]
     a = market.axis.index(span.date_start)
-    b = bisect_right(market.axis.dates, span.date_end) - 1
+    b = market.axis.index(span.date_end)
 
     curves = dict(market.output.curves)
     key = (curve_inst.instrument_id, Tenor.Y10)
