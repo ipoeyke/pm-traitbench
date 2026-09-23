@@ -22,10 +22,10 @@ from pm_traitbench.config import (
     Config,
     RealSeedSpec,
     real_window_end,
+    referenced_seeds,
 )
 from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.real.sources import fred_series, yahoo_tickers
-from pm_traitbench.market.stage import referenced_seeds
 
 Opener = Callable[[str], bytes]
 
@@ -129,6 +129,7 @@ class ManifestEntry:
 class Manifest:
     window: tuple[str, str]
     entries: tuple[ManifestEntry, ...]
+    complete: bool
 
     def to_json(self) -> str:
         payload = {
@@ -143,6 +144,7 @@ class Manifest:
                 }
                 for entry in self.entries
             ],
+            "complete": self.complete,
         }
         return json.dumps(payload, indent=2)
 
@@ -153,6 +155,7 @@ class Manifest:
         return cls(
             window=(window[0], window[1]),
             entries=tuple(ManifestEntry(**entry) for entry in payload["entries"]),
+            complete=payload["complete"],
         )
 
 
@@ -265,41 +268,59 @@ def fetch_all(
     the previous manifest is kept and not refetched; with `force` every file
     is refetched. Requests are spaced `REAL_REQUEST_INTERVAL_S` apart, with
     exponential backoff on a retryable failure. The manifest is checkpointed
-    after every file, so a failure partway through keeps prior progress.
-    When no real seed is referenced by the population's market seeds, no
-    file is fetched and an empty manifest is written.
+    (`complete=False`) after every file, seeded with any still-valid old
+    entry for a file not yet reached, so a failure partway through keeps
+    prior progress instead of discarding it; the final write sets
+    `complete=True`. When no real seed is referenced by the population's
+    market seeds, nothing is fetched: the existing manifest is returned
+    unchanged if one exists, otherwise an empty complete manifest, and
+    nothing is written.
     """
     sleep = sleeper if sleeper is not None else time.sleep
     root = cache_dir(data_dir)
+    old = _load_old_manifest(data_dir)
+
+    if not _referenced_real_seeds(config):
+        if old is not None:
+            return old
+        start, end = fetch_range(config)
+        return Manifest(window=(start.isoformat(), end.isoformat()), entries=(), complete=True)
+
     for sub in ("fred", "yahoo", "nasdaq"):
         (root / sub).mkdir(parents=True, exist_ok=True)
 
     start, end = fetch_range(config)
-    old = _load_old_manifest(data_dir)
     old_by_path = {entry.path: entry for entry in old.entries} if old else {}
 
     tasks: list[tuple[str, str, str]] = []
-    if _referenced_real_seeds(config):
-        for series in fred_series():
-            tasks.append((f"fred/{series}.csv", fred_url(series, start, end), series))
-        for ticker in yahoo_tickers():
-            tasks.append((f"yahoo/{ticker}.json", yahoo_url(ticker, start, end), ticker))
-        for day in _nasdaq_days(config):
-            label = day.isoformat()
-            tasks.append((f"nasdaq/{label}.json", nasdaq_url(day), label))
+    for series in fred_series():
+        tasks.append((f"fred/{series}.csv", fred_url(series, start, end), series))
+    for ticker in yahoo_tickers():
+        tasks.append((f"yahoo/{ticker}.json", yahoo_url(ticker, start, end), ticker))
+    for day in _nasdaq_days(config):
+        label = day.isoformat()
+        tasks.append((f"nasdaq/{label}.json", nasdaq_url(day), label))
+
+    # Which old entries are still trustworthy (same URL, same on-disk sha256):
+    # computed once, since a file this run hasn't reached yet doesn't change.
+    valid_old_by_path: dict[str, ManifestEntry] = {}
+    for rel_path, url, _label in tasks:
+        old_entry = old_by_path.get(rel_path)
+        if old_entry is None or old_entry.url != url:
+            continue
+        full_path = root / rel_path
+        if not full_path.exists():
+            continue
+        if hashlib.sha256(full_path.read_bytes()).hexdigest() == old_entry.sha256:
+            valid_old_by_path[rel_path] = old_entry
 
     entries: list[ManifestEntry] = []
-    for rel_path, url, label in tasks:
+    for i, (rel_path, url, label) in enumerate(tasks):
         full_path = root / rel_path
-        old_entry = old_by_path.get(rel_path)
-        entry: ManifestEntry | None = None
         # A kept file must match both the manifest sha256 and the URL it was
         # fetched from; a changed fetch window changes the URL even when a
-        # coincidentally identical file is still on disk.
-        if not force and old_entry is not None and old_entry.url == url and full_path.exists():
-            actual = hashlib.sha256(full_path.read_bytes()).hexdigest()
-            if actual == old_entry.sha256:
-                entry = old_entry
+        # coincidentally identical file is still on disk. force skips reuse.
+        entry = valid_old_by_path.get(rel_path) if not force else None
 
         if entry is None:
             body = _fetch_with_retry(opener, sleep, REAL_REQUEST_INTERVAL_S, url, label)
@@ -312,14 +333,24 @@ def fetch_all(
                 sha256=hashlib.sha256(body).hexdigest(),
                 size=len(body),
             )
+            # A fresh fetch replaces any placeholder used below for checkpoints.
+            valid_old_by_path.pop(rel_path, None)
 
         entries.append(entry)
-        # Checkpoint immediately: a failure on the next file keeps this progress.
-        _write_manifest(
-            root, Manifest(window=(start.isoformat(), end.isoformat()), entries=tuple(entries))
+        # Checkpoint immediately: a failure on the next file keeps this
+        # progress, plus a safety net of still-valid old entries for every
+        # file not yet reached.
+        remaining = [valid_old_by_path[p] for p, _, _ in tasks[i + 1 :] if p in valid_old_by_path]
+        checkpoint = Manifest(
+            window=(start.isoformat(), end.isoformat()),
+            entries=tuple(entries) + tuple(remaining),
+            complete=False,
         )
+        _write_manifest(root, checkpoint)
 
-    manifest = Manifest(window=(start.isoformat(), end.isoformat()), entries=tuple(entries))
+    manifest = Manifest(
+        window=(start.isoformat(), end.isoformat()), entries=tuple(entries), complete=True
+    )
     _write_manifest(root, manifest)
     return manifest
 
@@ -330,6 +361,7 @@ class RawCache:
     def __init__(self, root: Path, manifest: Manifest) -> None:
         self._root = root
         self._manifest = manifest
+        self._entries_by_path = {entry.path: entry for entry in manifest.entries}
 
     @property
     def manifest(self) -> Manifest:
@@ -342,6 +374,8 @@ class RawCache:
         if not manifest_path.exists():
             raise StageIOError(f"no raw market cache at {root}; run fetch-market first")
         manifest = _read_manifest(manifest_path)
+        if not manifest.complete:
+            raise StageIOError(f"raw market cache at {root} is incomplete; run fetch-market again")
         for entry in manifest.entries:
             path = root / entry.path
             if not path.exists():
@@ -351,11 +385,18 @@ class RawCache:
                 raise StageIOError(f"raw market cache file does not match its manifest: {path}")
         return cls(root, manifest)
 
+    def _entry(self, rel_path: str, description: str) -> ManifestEntry:
+        entry = self._entries_by_path.get(rel_path)
+        if entry is None:
+            raise StageIOError(f"{description} is not in the raw cache manifest")
+        return entry
+
     def fred(self, series: str) -> dict[date, float]:
         """FRED values by date, skipping a missing observation: an empty value
         (FRED's actual holiday convention, e.g. '2018-07-04,') or a '.' marker.
         """
-        text = (self._root / "fred" / f"{series}.csv").read_text(encoding="utf-8")
+        entry = self._entry(f"fred/{series}.csv", f"FRED series '{series}'")
+        text = (self._root / entry.path).read_text(encoding="utf-8")
         values: dict[date, float] = {}
         for line in text.splitlines()[1:]:
             if not line:
@@ -369,7 +410,8 @@ class RawCache:
 
     def yahoo(self, ticker: str) -> dict[date, float]:
         """Adjusted close by the UTC date of each timestamp, skipping null values."""
-        payload = json.loads((self._root / "yahoo" / f"{ticker}.json").read_text(encoding="utf-8"))
+        entry = self._entry(f"yahoo/{ticker}.json", f"Yahoo ticker '{ticker}'")
+        payload = json.loads((self._root / entry.path).read_text(encoding="utf-8"))
         result = payload["chart"]["result"][0]
         timestamps = result["timestamp"]
         adjclose = result["indicators"]["adjclose"][0]["adjclose"]
@@ -382,8 +424,8 @@ class RawCache:
 
     def nasdaq_symbols(self, day: date) -> set[str]:
         """The set of symbols reporting earnings on `day`."""
-        payload = json.loads(
-            (self._root / "nasdaq" / f"{day.isoformat()}.json").read_text(encoding="utf-8")
-        )
+        label = day.isoformat()
+        entry = self._entry(f"nasdaq/{label}.json", f"Nasdaq date '{label}'")
+        payload = json.loads((self._root / entry.path).read_text(encoding="utf-8"))
         rows = payload["data"]["rows"] or []
         return {row["symbol"] for row in rows}

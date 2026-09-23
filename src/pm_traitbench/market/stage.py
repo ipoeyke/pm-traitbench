@@ -4,7 +4,7 @@ full state, check each against what the config implies, then write the six marke
 
 from typing import Any
 
-from pm_traitbench.config import Config
+from pm_traitbench.config import Config, referenced_seeds
 from pm_traitbench.errors import StageIOError
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.market.seed import to_rows
@@ -25,14 +25,6 @@ from pm_traitbench.tables.specs import (
     MARKET_TABLES,
 )
 from pm_traitbench.tables.store import DataStore
-
-
-def referenced_seeds(config: Config) -> list[str]:
-    """Every market seed the population grid uses, pilot seeds first, without repeats."""
-    seen: dict[str, None] = {}
-    for seed in (*config.population.pilot_market_seeds, *config.population.market_seeds):
-        seen.setdefault(seed, None)
-    return list(seen)
 
 
 def run(config: Config, store: DataStore) -> dict[str, Any]:

@@ -84,17 +84,43 @@ def test_fetch_range_starts_seventy_weekdays_before_window_start_and_ends_at_win
     assert end == spec.window_start + timedelta(weeks=config.calendar.n_weeks)
 
 
-def test_fetch_all_with_no_referenced_real_seeds_fetches_nothing(tmp_path: Path) -> None:
-    config = Config()
-    only_synthetic = config.model_copy(
+def _only_synthetic(config: Config) -> Config:
+    return config.model_copy(
         update={"population": config.population.model_copy(update={"pilot_market_seeds": ("A",)})}
     )
+
+
+def test_fetch_all_with_no_referenced_real_seeds_fetches_nothing(tmp_path: Path) -> None:
+    only_synthetic = _only_synthetic(Config())
 
     def _opener(url: str) -> bytes:
         raise AssertionError(f"should not be called: {url}")
 
     manifest = fetch_all(only_synthetic, tmp_path, opener=_opener, sleeper=lambda _: None)
     assert manifest.entries == ()
+    assert manifest.complete is True
+    assert not (fetch_module.cache_dir(tmp_path) / "manifest.json").exists()
+
+
+def test_fetch_all_with_no_referenced_real_seeds_returns_existing_manifest_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_to_one_fred_series(monkeypatch, "DGS2")
+    config = Config()
+    body = b"observation_date,DGS2\n2018-01-02,2.0\n"
+    old = fetch_all(config, tmp_path, opener=lambda url: body, sleeper=lambda _: None)
+
+    manifest_path = fetch_module.cache_dir(tmp_path) / "manifest.json"
+    before = manifest_path.read_text(encoding="utf-8")
+
+    only_synthetic = _only_synthetic(config)
+
+    def _opener(url: str) -> bytes:
+        raise AssertionError(f"should not be called: {url}")
+
+    result = fetch_all(only_synthetic, tmp_path, opener=_opener, sleeper=lambda _: None)
+    assert result == old
+    assert manifest_path.read_text(encoding="utf-8") == before
 
 
 def test_fetch_all_writes_every_file_and_a_matching_manifest(fake_cache) -> None:
@@ -175,11 +201,17 @@ def test_kept_file_must_match_both_sha256_and_url(
     assert calls["n"] == 1
 
 
+def _read_manifest(tmp_path: Path) -> fetch_module.Manifest:
+    manifest_path = fetch_module.cache_dir(tmp_path) / "manifest.json"
+    return fetch_module.Manifest.from_json(manifest_path.read_text(encoding="utf-8"))
+
+
 def test_manifest_checkpoints_after_each_fetch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A failure partway through a fetch leaves the manifest holding the files
-    already fetched, not just the ones from before this run started.
+    already fetched, not just the ones from before this run started, marked
+    incomplete since RawCache.open would otherwise refuse to read it.
     """
     monkeypatch.setattr(fetch_module, "fred_series", lambda: ["DGS2", "DGS5", "DGS10"])
     monkeypatch.setattr(fetch_module, "yahoo_tickers", lambda: [])
@@ -197,8 +229,42 @@ def test_manifest_checkpoints_after_each_fetch(
     with pytest.raises(StageIOError):
         fetch_all(config, tmp_path, opener=_opener, sleeper=lambda _: None)
 
-    manifest = RawCache.open(tmp_path).manifest
+    manifest = _read_manifest(tmp_path)
+    assert manifest.complete is False
     assert [entry.path for entry in manifest.entries] == ["fred/DGS2.csv", "fred/DGS5.csv"]
+
+
+def test_checkpoint_seeds_still_valid_old_entries_for_tasks_not_yet_reached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file this run hasn't reached yet keeps its still-valid old entry in
+    the interim checkpoint, so a failure elsewhere doesn't discard it.
+    """
+    monkeypatch.setattr(fetch_module, "fred_series", lambda: ["DGS2", "DGS5", "DGS10"])
+    monkeypatch.setattr(fetch_module, "yahoo_tickers", lambda: [])
+    monkeypatch.setattr(fetch_module, "_nasdaq_days", lambda config: [])
+    config = Config()
+    body = b"observation_date,X\n2018-01-02,1.0\n"
+
+    old = fetch_all(config, tmp_path, opener=lambda url: body, sleeper=lambda _: None)
+    assert old.complete is True
+    assert len(old.entries) == 3
+
+    calls = {"n": 0}
+
+    def _opener(url: str) -> bytes:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+        return body
+
+    with pytest.raises(StageIOError):
+        fetch_all(config, tmp_path, force=True, opener=_opener, sleeper=lambda _: None)
+
+    manifest = _read_manifest(tmp_path)
+    assert manifest.complete is False
+    kept = {entry.path: entry for entry in manifest.entries}
+    assert kept["fred/DGS10.csv"] == old.entries[2]
 
 
 def test_transient_429s_retry_then_succeed_with_backoff(
@@ -393,6 +459,42 @@ def test_malformed_nasdaq_body_raises_naming_the_date() -> None:
 def test_raw_cache_open_fails_on_missing_manifest(tmp_path: Path) -> None:
     with pytest.raises(StageIOError, match="run fetch-market first"):
         RawCache.open(tmp_path)
+
+
+def test_raw_cache_open_fails_on_incomplete_manifest(tmp_path: Path) -> None:
+    root = fetch_module.cache_dir(tmp_path)
+    root.mkdir(parents=True)
+    manifest = fetch_module.Manifest(
+        window=("2018-01-01", "2018-01-02"), entries=(), complete=False
+    )
+    (root / "manifest.json").write_text(manifest.to_json(), encoding="utf-8")
+
+    with pytest.raises(StageIOError, match="is incomplete; run fetch-market again"):
+        RawCache.open(tmp_path)
+
+
+def test_raw_cache_fred_raises_for_an_unlisted_series(fake_cache) -> None:
+    config = Config()
+    result = fake_cache(config)
+    cache = RawCache.open(result.data_dir)
+    with pytest.raises(StageIOError, match="UNKNOWN"):
+        cache.fred("UNKNOWN")
+
+
+def test_raw_cache_yahoo_raises_for_an_unlisted_ticker(fake_cache) -> None:
+    config = Config()
+    result = fake_cache(config)
+    cache = RawCache.open(result.data_dir)
+    with pytest.raises(StageIOError, match="UNKNOWN"):
+        cache.yahoo("UNKNOWN")
+
+
+def test_raw_cache_nasdaq_symbols_raises_for_an_unlisted_date(fake_cache) -> None:
+    config = Config()
+    result = fake_cache(config)
+    cache = RawCache.open(result.data_dir)
+    with pytest.raises(StageIOError, match="2099-01-01"):
+        cache.nasdaq_symbols(date(2099, 1, 1))
 
 
 def test_raw_cache_open_fails_on_tampered_file_naming_its_path(fake_cache) -> None:

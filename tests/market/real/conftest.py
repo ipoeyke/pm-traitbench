@@ -11,11 +11,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pm_traitbench.config import Config
+from pm_traitbench.config import Config, real_window_end, referenced_seeds
 from pm_traitbench.enums import Family
 from pm_traitbench.market.real.fetch import fetch_all, fetch_range, fred_url, nasdaq_url, yahoo_url
 from pm_traitbench.market.real.sources import REAL_INSTRUMENTS, fred_series, yahoo_tickers
-from pm_traitbench.market.stage import referenced_seeds
 
 
 def _fake_opener(files: dict[str, bytes]) -> Callable[[str], bytes]:
@@ -153,7 +152,7 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
         used = set(referenced_seeds(config))
         real_seeds = {name: spec for name, spec in config.market.real.seeds.items() if name in used}
         first_seed = next(iter(real_seeds.values()))
-        window_end = first_seed.window_start + timedelta(weeks=config.calendar.n_weeks)
+        window_end = real_window_end(first_seed, config.calendar.n_weeks)
         nasdaq_days = _weekdays(first_seed.window_start, window_end)
 
         equities = [inst.series for inst in REAL_INSTRUMENTS if inst.family == Family.EQUITIES]

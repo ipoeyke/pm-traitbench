@@ -1541,6 +1541,14 @@ class Config(BaseModel):
         return rows
 
 
+def referenced_seeds(config: Config) -> list[str]:
+    """Every market seed the population grid uses, pilot seeds first, without repeats."""
+    seen: dict[str, None] = {}
+    for seed in (*config.population.pilot_market_seeds, *config.population.market_seeds):
+        seen.setdefault(seed, None)
+    return list(seen)
+
+
 @dataclass(frozen=True)
 class BasisRow:
     path: str
