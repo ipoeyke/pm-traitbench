@@ -38,9 +38,11 @@ class ConsensusResult:
     positioning_pct: dict[str, np.ndarray]
 
 
-def ema_weight(half_life: float) -> float:
-    """Exponential-moving-average alpha giving the requested half-life in days."""
-    return 1 - 2 ** (-1 / half_life)
+def update_weight(gap: int, half_life: float) -> float:
+    """Exponential-moving-average alpha closing the gap to target over `half_life`
+    trading days, for an update that follows `gap` axis days after the last one.
+    """
+    return 1 - 2 ** (-gap / half_life)
 
 
 def consensus_signal(instrument: Instrument, output: ProcessOutput) -> np.ndarray:
@@ -95,34 +97,45 @@ def _street_score(
     trend: np.ndarray,
     update_days: set[int],
     flip_days: set[int],
-    alpha: float,
+    half_life: float,
     threshold: float,
 ) -> np.ndarray:
-    """Street score across the full axis: flip resets, updates ease toward trend."""
+    """Street score across the full axis: flip resets, updates ease toward trend
+    by a weight set by the number of axis days since the last update or flip.
+    """
     n = len(trend)
     score = np.empty(n)
     prev = 0.0
+    last_update = 0
     for t in range(n):
         if t in flip_days:
             sign = 1.0 if prev >= 0 else -1.0
             score[t] = -sign * 2 * threshold
+            last_update = t
         elif t in update_days:
+            alpha = update_weight(t - last_update, half_life)
             score[t] = prev + alpha * (trend[t] - prev)
+            last_update = t
         else:
             score[t] = prev
         prev = score[t]
     return score
 
 
-def _positioning_pct(trend: np.ndarray, report_mask: np.ndarray, alpha: float) -> np.ndarray:
-    """Positioning percentile across the full axis: eases toward its report-day target."""
+def _positioning_pct(trend: np.ndarray, report_mask: np.ndarray, half_life: float) -> np.ndarray:
+    """Positioning percentile across the full axis: eases toward its report-day
+    target by a weight set by the number of axis days since the last report.
+    """
     n = len(trend)
     pct = np.empty(n)
     prev = 50.0
+    last_update = 0
     for t in range(n):
         if report_mask[t]:
+            alpha = update_weight(t - last_update, half_life)
             target = 50 + 40 * np.tanh(2 * trend[t])
             pct[t] = np.clip(prev + alpha * (target - prev), 0, 100)
+            last_update = t
         else:
             pct[t] = prev
         prev = pct[t]
@@ -143,8 +156,6 @@ def build_consensus(
     horizon_days = axis.n_days - axis.n_burn
     street_window = cfg.street_window_days
     positioning_window = cfg.positioning_window_multiple * street_window
-    street_alpha = ema_weight(street_window)
-    positioning_alpha = ema_weight(positioning_window / 5)
     lo, hi = cfg.positioning_thresholds
 
     revision_mask = np.array([day.weekday() == cfg.revision_weekday for day in axis.dates])
@@ -182,9 +193,9 @@ def build_consensus(
 
         update_days = set(event_days.get(instrument_id, set())) | revision_days | flip_axis_idx
         score = _street_score(
-            trend_street, update_days, flip_axis_idx, street_alpha, cfg.view_threshold
+            trend_street, update_days, flip_axis_idx, street_window, cfg.view_threshold
         )
-        pct = _positioning_pct(trend_positioning, report_mask, positioning_alpha)
+        pct = _positioning_pct(trend_positioning, report_mask, positioning_window)
         street_score[instrument_id] = score
         positioning_pct[instrument_id] = pct
 

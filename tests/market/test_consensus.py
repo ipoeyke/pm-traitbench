@@ -3,6 +3,7 @@
 import functools
 
 import numpy as np
+import pytest
 
 from pm_traitbench.config import Config
 from pm_traitbench.enums import Family, InstrumentKind, Positioning, StreetView, Tenor
@@ -194,7 +195,7 @@ def test_flips_do_not_touch_positioning() -> None:
 
 
 def test_uptrend_rises_above_thresholds_and_labels_agree() -> None:
-    config = _trending_equity_config(burn_in_days=0)
+    config = _trending_equity_config(burn_in_days=1)
     axis = build_axis(config.timeline(), config.market.burn_in_days)
     instrument = _equity()
     output = ProcessOutput(prices={"EQ-0001": _log_linear_prices(axis.n_days, rate=0.01)})
@@ -233,6 +234,39 @@ def test_first_horizon_row_nonzero_after_trend_through_burn_in() -> None:
     result = build_consensus([instrument], axis, output, {}, config.market, _rng_for(_ROOT), "A")
     first_row = next(row for row in result.rows if row.date == axis.dates[axis.n_burn])
     assert first_row.street_score != 0.0
+
+
+def test_street_score_half_life_runs_in_trading_days_not_updates() -> None:
+    # A saturated trend leaves the target at 1 on every update; the invariant
+    # 1 - score[t] == 2**(-t/W) then holds at every weekly update day t,
+    # so the score should sit near half the trend at t = W trading days,
+    # not at t = W updates (about 5W days on a weekly clock).
+    config = _trending_equity_config(burn_in_days=0)
+    axis = build_axis(config.timeline(), config.market.burn_in_days)
+    instrument = _equity()
+    output = ProcessOutput(prices={"EQ-0001": _log_linear_prices(axis.n_days, rate=1.0)})
+
+    result = build_consensus([instrument], axis, output, {}, config.market, _rng_for(_ROOT), "A")
+    score = result.street_score["EQ-0001"]
+    window = config.market.consensus.street_window_days
+    revision_weekday = config.market.consensus.revision_weekday
+
+    for t in range(1, axis.n_days):
+        if axis.dates[t].weekday() == revision_weekday:
+            assert score[t] == pytest.approx(1 - 2 ** (-t / window), abs=1e-9)
+
+
+def test_first_horizon_score_closes_most_of_the_gap_after_burn_in() -> None:
+    # W is 20 trading days and the default burn-in is 60, three half-lives, so
+    # a saturated trend should have closed about 1 - 2**-3 = 87% of the gap.
+    config = _trending_equity_config(burn_in_days=60)
+    axis = build_axis(config.timeline(), config.market.burn_in_days)
+    instrument = _equity()
+    output = ProcessOutput(prices={"EQ-0001": _log_linear_prices(axis.n_days, rate=1.0)})
+
+    result = build_consensus([instrument], axis, output, {}, config.market, _rng_for(_ROOT), "A")
+    first_row = next(row for row in result.rows if row.date == axis.dates[axis.n_burn])
+    assert first_row.street_score >= 0.8
 
 
 def test_falling_curve_gives_positive_score() -> None:
