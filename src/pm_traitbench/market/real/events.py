@@ -22,6 +22,8 @@ from pm_traitbench.market.calendar import row_sort_key
 from pm_traitbench.market.check import EVENT_FAMILY
 from pm_traitbench.market.output import ProcessOutput
 from pm_traitbench.market.real.event_dates import EVENT_DATES_COVER
+from pm_traitbench.market.real.fetch import RawCache
+from pm_traitbench.market.real.sources import REAL_INSTRUMENTS
 from pm_traitbench.market.real.universe import real_axis_dates
 from pm_traitbench.tables.schema import CalendarEvent, Instrument
 
@@ -84,6 +86,19 @@ NFP_DATES: tuple[date, ...] = (
 # never generated for real seeds, so they always count as zero.
 _COUNTED_EVENT_TYPES: tuple[EventType, ...] = tuple(EVENT_FAMILY)
 
+_SERIES_BY_ID: dict[str, str] = {inst.instrument_id: inst.series for inst in REAL_INSTRUMENTS}
+
+
+def _next_open_day(t: int, last: int, real_dates: Sequence[date], values: dict[date, float]) -> int:
+    """First axis day at or after `t`, up to `last`, whose real date has a source
+    value: a closed day (the series was filled, with no source value) moves the
+    report to the next trading day that has one.
+    """
+    day = t
+    while day < last and real_dates[day] not in values:
+        day += 1
+    return day
+
 
 @dataclass(frozen=True)
 class RealEvent:
@@ -99,17 +114,21 @@ def real_event_days(
     spec: RealSeedSpec,
     axis: SimAxis,
     calendar_start: date,
+    cache: RawCache,
 ) -> list[RealEvent]:
     """Build the real event calendar's dates and targets, horizon days only.
 
     Every axis day's real date is a weekday: `real_axis_dates` maps Monday to
     Monday, so the offset between `calendar_start` and `spec.window_start` is
     a whole number of weeks. A real seed draws no EARNINGS event, since it
-    has no earnings feed.
+    has no earnings feed. An inventory report due on a Wednesday whose
+    commodity series was closed (filled, with no source value) moves to the
+    next trading day with one.
     """
     real_dates = real_axis_dates(spec, axis, calendar_start)
     horizon = range(axis.n_burn, axis.n_days)
     real_date_to_day = {real_dates[t]: t for t in horizon}
+    last_day = axis.n_days - 1
 
     events: list[RealEvent] = []
 
@@ -126,11 +145,17 @@ def real_event_days(
     energy_ids = [
         i.instrument_id for i in instruments if i.commodity_group == CommodityGroup.ENERGY
     ]
+    energy_values = {
+        instrument_id: cache.yahoo(_SERIES_BY_ID[instrument_id]) for instrument_id in energy_ids
+    }
     for t in horizon:
         if axis.dates[t].weekday() == 2:
             for instrument_id in energy_ids:
+                day = _next_open_day(t, last_day, real_dates, energy_values[instrument_id])
                 events.append(
-                    RealEvent(instrument_id=instrument_id, event=EventType.INVENTORY_REPORT, day=t)
+                    RealEvent(
+                        instrument_id=instrument_id, event=EventType.INVENTORY_REPORT, day=day
+                    )
                 )
 
     agriculture_ids = [

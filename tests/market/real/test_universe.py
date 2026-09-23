@@ -248,6 +248,27 @@ def test_aligned_series_fills_day_zero_from_a_value_before_the_window() -> None:
     assert longest_run == 1
 
 
+def test_aligned_series_day_zero_six_weekdays_stale_breaks_the_fill_limit() -> None:
+    # 2018-06-01 (Fri) to 2018-06-11 (Mon) is 6 weekdays: day 0 starts a run of 6,
+    # over the limit of 5, even though only one day is missing from `dates`.
+    dates = [date(2018, 6, 11)]
+    values = {date(2018, 6, 1): 9.0}
+
+    with pytest.raises(StageIOError, match="longest fill run of 6"):
+        aligned_series(values, dates, name="TICKER")
+
+
+def test_aligned_series_day_zero_two_weekdays_stale_passes_with_a_run_of_two() -> None:
+    # 2018-06-07 (Thu) to 2018-06-11 (Mon) is 2 weekdays.
+    dates = [date(2018, 6, 11) + timedelta(days=i) for i in range(2)]
+    values = {date(2018, 6, 7): 9.0, dates[1]: 2.0}
+
+    array, longest_run = aligned_series(values, dates, name="TEST")
+
+    assert list(array) == [9.0, 2.0]
+    assert longest_run == 2
+
+
 def test_aligned_series_raises_when_the_fill_run_exceeds_the_limit() -> None:
     dates = [date(2018, 6, 4) + timedelta(days=i) for i in range(REAL_FILL_LIMIT + 2)]
     values = {dates[0]: 1.0}

@@ -175,11 +175,11 @@ Limitations from the model:
   contract-expiry rows.
 - A missing observation (a holiday) forward-fills from the prior value, up
   to a capped run length; a longer gap fails the market stage.
-- The EIA petroleum status report's own holiday-shifted release dates are
-  not modelled: the inventory report event fires on every Wednesday, and a
-  report that lands on a market holiday scores a zero surprise. A real
-  event row can also score zero surprise on an ordinary day when its
-  source repeats the previous close.
+- The inventory report event fires on every Wednesday; if that commodity's
+  series was closed that day (filled, with no source value), the report
+  moves to the next trading day with one. A real event row can also score
+  zero surprise on an ordinary day when its source repeats the previous
+  close.
 - An event's surprise is priced from the seed's own realised price or yield
   reaction, not from a reported consensus-versus-actual figure.
 - A real seed has no earnings feed, so it never draws an EARNINGS event: an

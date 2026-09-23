@@ -108,7 +108,7 @@ class FakeCache:
 
 
 @pytest.fixture
-def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
+def fake_cache(tmp_path: Path) -> Callable[..., FakeCache]:
     """Build a deterministic fake raw cache for `config`'s real seeds.
 
     Covers SPY and every registry series over the fetch range. FRED and Yahoo
@@ -116,15 +116,20 @@ def fake_cache(tmp_path: Path) -> Callable[[Config], FakeCache]:
     (its real convention), Yahoo omits the row entirely. Yahoo timestamps sit
     at 13:30 UTC. Every equity is generated as `beta * spy_return + noise`
     with a known beta, so a beta regression against SPY can be checked
-    against a known slope.
+    against a known slope. `holiday_weekday` picks which weekday (0=Monday)
+    the shared gap falls on, defaulting to the range's middle weekday.
     """
 
-    def _build(config: Config) -> FakeCache:
+    def _build(config: Config, *, holiday_weekday: int | None = None) -> FakeCache:
         data_dir = tmp_path / "data"
         start, end = fetch_range(config)
         weekdays = _weekdays(start, end)
 
-        holiday = weekdays[len(weekdays) // 2]
+        if holiday_weekday is None:
+            holiday = weekdays[len(weekdays) // 2]
+        else:
+            candidates = [day for day in weekdays if day.weekday() == holiday_weekday]
+            holiday = candidates[len(candidates) // 2]
         series_days = [day for day in weekdays if day != holiday]
 
         rng = np.random.default_rng(0)

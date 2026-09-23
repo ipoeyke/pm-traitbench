@@ -236,7 +236,7 @@ def build_seed(
     lookup = RegimeLookup(schedule, spec.regime_starts[0][0])
     path = regime_path(axis, lookup, config)
 
-    events = real_event_days(instruments, spec, axis, calendar_start)
+    events = real_event_days(instruments, spec, axis, calendar_start, cache)
     y10_bp = curves[(curve_id, Tenor.Y10)] * 100
     event_rows = surprise_rows(events, output, spy_log_return, y10_bp, axis, seed)
     generated = generated_rows(instruments, axis, seed, config.market.consensus.report_weekday)

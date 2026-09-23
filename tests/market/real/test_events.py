@@ -21,7 +21,7 @@ from pm_traitbench.market.real.events import (
     surprise_rows,
 )
 from pm_traitbench.market.real.fetch import RawCache
-from pm_traitbench.market.real.universe import build_real_universe
+from pm_traitbench.market.real.universe import build_real_universe, real_axis_dates
 from pm_traitbench.tables.schema import CalendarEvent
 
 _WINDOW_START = date(2018, 6, 4)
@@ -41,7 +41,7 @@ def _real_event_days(config: Config, result):
     axis = build_axis(config.timeline(), config.market.burn_in_days)
     spec = config.market.real.seeds["R1"]
     instruments = build_real_universe(config, cache, axis)
-    events = real_event_days(instruments, spec, axis, config.calendar.start)
+    events = real_event_days(instruments, spec, axis, config.calendar.start, cache)
     return axis, spec, instruments, events
 
 
@@ -91,6 +91,52 @@ def test_inventory_report_fires_every_horizon_wednesday_for_energy_commodities(f
     assert {e.instrument_id for e in inventory} == energy_ids
     for e in inventory:
         assert axis.dates[e.day].weekday() == 2
+
+
+def test_closed_wednesday_inventory_report_moves_to_the_next_trading_day(fake_cache) -> None:
+    config = Config()
+    result = fake_cache(config, holiday_weekday=2)
+    axis, spec, instruments, events = _real_event_days(config, result)
+
+    real_dates = real_axis_dates(spec, axis, config.calendar.start)
+    holiday_day = real_dates.index(result.holiday)
+    assert axis.n_burn <= holiday_day < axis.n_days
+    assert axis.dates[holiday_day].weekday() == 2
+    assert axis.dates[holiday_day + 1].weekday() == 3
+
+    energy_ids = {
+        i.instrument_id for i in instruments if i.commodity_group == CommodityGroup.ENERGY
+    }
+    inventory = [e for e in events if e.event == EventType.INVENTORY_REPORT]
+    on_holiday = {e.instrument_id for e in inventory if e.day == holiday_day}
+    moved = {e.instrument_id for e in inventory if e.day == holiday_day + 1}
+
+    assert on_holiday == set()
+    assert moved == energy_ids
+
+
+def test_open_wednesday_inventory_report_stays_on_its_own_day(fake_cache) -> None:
+    config = Config()
+    result = fake_cache(config, holiday_weekday=2)
+    axis, spec, instruments, events = _real_event_days(config, result)
+
+    real_dates = real_axis_dates(spec, axis, config.calendar.start)
+    holiday_day = real_dates.index(result.holiday)
+
+    energy_ids = {
+        i.instrument_id for i in instruments if i.commodity_group == CommodityGroup.ENERGY
+    }
+    inventory = [e for e in events if e.event == EventType.INVENTORY_REPORT]
+    other_wednesdays = [
+        t
+        for t in range(axis.n_burn, axis.n_days)
+        if axis.dates[t].weekday() == 2 and t != holiday_day
+    ]
+    assert other_wednesdays
+
+    for t in other_wednesdays:
+        on_day = {e.instrument_id for e in inventory if e.day == t}
+        assert on_day == energy_ids
 
 
 def test_crop_report_fires_on_wasde_dates_for_agriculture_commodities_only(fake_cache) -> None:
