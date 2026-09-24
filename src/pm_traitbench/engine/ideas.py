@@ -138,7 +138,6 @@ def _build_signposts(
     candidate: str,
     adapter: Adapter,
     view: MarketView,
-    t: int,
     catalogue: Catalogue,
     series: Series,
     entry_level: float,
@@ -243,6 +242,8 @@ def attempt_entry(
         legs = adapter.build_legs(
             form, candidate, view, t, universe, state.held_instruments, rng_legs
         )
+        if legs is None:
+            raise EngineError(f"adapter could not build outright legs for '{candidate}'")
 
     series = adapter.series(form, legs)
     draw = draw_signal(view, series, t, params, config, rng_for("signal", t, attempt))
@@ -324,7 +325,6 @@ def attempt_entry(
         candidate=candidate,
         adapter=adapter,
         view=view,
-        t=t,
         catalogue=catalogue,
         series=series,
         entry_level=entry_level,
@@ -396,7 +396,6 @@ def attempt_entry(
     size, risk_amount = adapter.size_and_risk(
         size_pct_book, legs, view, t, persona.mandate.book_size
     )
-    leg_risk_amount = getattr(adapter, "leg_risk_amount", None)
     bias_flag = join_flags([decision.flag, overconfidence_flag, conviction_flag])
     ledger_rows = tuple(
         LedgerRow(
@@ -408,17 +407,13 @@ def attempt_entry(
             instrument_type=adapter.instrument_type(leg.instrument_id, view),
             side=leg_side(side_sign, series.bullish_sign, leg.coeff, adapter.leg_bullish(leg)),
             size=size,
-            risk_amount=(
-                risk_amount
-                if (i == 0 or leg_risk_amount is None)
-                else leg_risk_amount(leg, size, view)
-            ),
+            risk_amount=adapter.leg_risk_amount(leg, size, view, risk_amount),
             price_or_yield=adapter.leg_price(leg, view, t),
             stated_conviction=draw.conviction,
             bias_flag=bias_flag,
             rule_id=None,
         )
-        for i, leg in enumerate(legs)
+        for leg in legs
     )
 
     position = Position(

@@ -8,7 +8,8 @@ import pytest
 from pm_traitbench.config import Config, EngineConfig
 from pm_traitbench.engine import ideas as ideas_module
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
-from pm_traitbench.engine.biases import herding
+from pm_traitbench.engine.adapters.rates_credit import RatesCreditAdapter
+from pm_traitbench.engine.biases import herding, overconfidence
 from pm_traitbench.engine.biases.herding import HerdingDecision
 from pm_traitbench.engine.constants import NO_ENTRY_LAST_SESSIONS
 from pm_traitbench.engine.ideas import attempt_entry, entries_for_day
@@ -190,6 +191,76 @@ def test_strong_signal_produces_consistent_stop_and_target(
     )
 
 
+def test_strong_signal_sell_side_produces_consistent_stop_and_target(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(-2.0))
+    _force_no_conflict(monkeypatch)
+    new_state, new_idea = attempt_entry(
+        setup["state"],
+        _T,
+        setup["view"],
+        setup["adapter"],
+        _params(),
+        setup["persona"],
+        setup["rules"],
+        setup["traits"],
+        setup["universe"],
+        setup["config"],
+        setup["catalogue"],
+        _rng_for(setup["config"], _PM_ID),
+        attempt=0,
+    )
+    assert new_idea is not None
+    idea = new_idea.idea
+    assert idea.side == Side.SELL
+    assert idea.stop_level > idea.entry_level
+    assert idea.target_level < idea.entry_level
+    rr_lo, rr_hi = setup["config"].engine.rr_range
+    rr = (idea.target_level - idea.entry_level) / (idea.entry_level - idea.stop_level)
+    assert rr_lo <= rr <= rr_hi
+    assert (idea.target_level - idea.entry_level) == pytest.approx(
+        rr * (idea.entry_level - idea.stop_level), abs=1e-9
+    )
+
+
+def test_strong_signal_credit_bullish_negative_consistent_stop_and_target(
+    fixture_view, neutral_pm, catalogue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    persona, traits, rules = neutral_pm(AssetClass.RATES_CREDIT, "long_short_credit")
+    adapter = RatesCreditAdapter(sub_style="long_short_credit", horizon_days=20)
+    universe = adapter.universe(fixture_view.instruments, rules)
+    config = Config()
+    state = PmState(pm_id=_PM_ID, positions=(), next_idea=1, next_rule=1)
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+    new_state, new_idea = attempt_entry(
+        state,
+        _T,
+        fixture_view,
+        adapter,
+        _params(),
+        persona,
+        rules,
+        traits,
+        universe,
+        config,
+        catalogue,
+        _rng_for(config, _PM_ID),
+        attempt=0,
+    )
+    assert new_idea is not None
+    assert new_idea.position.series.bullish_sign == -1
+    idea = new_idea.idea
+    rr_lo, rr_hi = config.engine.rr_range
+    rr = (idea.target_level - idea.entry_level) / (idea.entry_level - idea.stop_level)
+    assert rr_lo <= rr <= rr_hi
+    assert (idea.target_level - idea.entry_level) == pytest.approx(
+        rr * (idea.entry_level - idea.stop_level), abs=1e-9
+    )
+
+
 def test_cap_never_exceeded_with_a_large_overconfidence_factor(
     equities_setup, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -197,6 +268,8 @@ def test_cap_never_exceeded_with_a_large_overconfidence_factor(
     monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
     _force_no_conflict(monkeypatch)
     params = _params(coverage=0.3)  # low stated coverage inflates the overconfidence factor
+    factor, _ = overconfidence.size_factor(params)
+    assert factor > 1
     new_state, new_idea = attempt_entry(
         setup["state"],
         _T,
@@ -214,7 +287,7 @@ def test_cap_never_exceeded_with_a_large_overconfidence_factor(
     )
     assert new_idea is not None
     cap_rule = next(r for r in setup["rules"] if r.param == "max_risk_pct")
-    assert new_idea.position.size_pct_book <= float(cap_rule.level) + 1e-9
+    assert new_idea.position.size_pct_book == pytest.approx(float(cap_rule.level))
 
 
 def test_signposts_count_ids_and_event_kind(
@@ -424,13 +497,30 @@ def test_entries_for_day_stops_in_last_sessions_without_attempting(equities_setu
     assert new_state == setup["state"]
 
 
+class _FixedArrival:
+    """Stands in for the 'arrival' purpose's generator: a fixed attempt count."""
+
+    def __init__(self, n: int) -> None:
+        self._n = n
+
+    def poisson(self, rate: float) -> int:
+        return self._n
+
+
 def test_entries_for_day_collects_multiple_attempts(
     equities_setup, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     setup = equities_setup
     monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
     _force_no_conflict(monkeypatch)
-    config = Config(engine=EngineConfig(arrival_rate=20.0))
+    config = setup["config"]
+    base_rng_for = _rng_for(config, _PM_ID)
+
+    def rng_for(purpose: str, *keys) -> np.random.Generator:
+        if purpose == "arrival":
+            return _FixedArrival(4)  # equal to the fixture's universe size: all 4 succeed
+        return base_rng_for(purpose, *keys)
+
     new_state, new_ideas = entries_for_day(
         setup["state"],
         _T,
@@ -443,7 +533,8 @@ def test_entries_for_day_collects_multiple_attempts(
         setup["universe"],
         config,
         setup["catalogue"],
-        _rng_for(config, _PM_ID),
+        rng_for,
     )
-    assert len(new_ideas) == new_state.n_positions
+    assert len(new_ideas) == 4
+    assert new_state.n_positions == 4
     assert new_state.next_idea == 1 + len(new_ideas)

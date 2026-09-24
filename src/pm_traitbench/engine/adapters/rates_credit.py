@@ -175,11 +175,14 @@ class RatesCreditAdapter:
         size = risk_amount / 1e6 * dv01
         return size, risk_amount
 
-    def leg_risk_amount(self, leg: LegRef, size: float, view: MarketView) -> float:
-        """Notional the ledger carries for one leg, scaled by that leg's own DV01.
+    def leg_risk_amount(
+        self, leg: LegRef, size: float, view: MarketView, risk_amount: float
+    ) -> float:
+        """Risk the ledger carries for one leg, scaled by that leg's own DV01.
 
         A curve's short leg has a different notional to its long leg so both
-        legs carry the same DV01 exposure.
+        legs carry the same DV01 exposure; `risk_amount` is unused here since
+        the DV01 ratio alone determines each leg's share.
         """
         return size / self._dv01(leg.tenor, leg.instrument_id, view) * 1e6
 

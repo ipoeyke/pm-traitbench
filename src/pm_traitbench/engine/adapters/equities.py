@@ -141,6 +141,12 @@ class EquitiesAdapter:
     ) -> tuple[float, float]:
         return size_pct_book, book_size * size_pct_book / 100
 
+    def leg_risk_amount(
+        self, leg: LegRef, size: float, view: MarketView, risk_amount: float
+    ) -> float:
+        """Every leg of an equities idea carries the idea's full risk amount."""
+        return risk_amount
+
     def leg_price(self, leg: LegRef, view: MarketView, t: int) -> float:
         raw = view.raw_level(leg.instrument_id, leg.tenor, t)
         return math.exp(raw / 100.0)

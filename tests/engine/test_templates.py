@@ -57,6 +57,27 @@ def test_render_thesis_contains_entry_and_target(catalogue) -> None:
     assert "15.67" in text
 
 
+def test_render_thesis_rounds_entry_and_target_for_bp_series(catalogue) -> None:
+    rng = np.random.default_rng(0)
+    text = render_thesis(
+        catalogue,
+        AssetClass.RATES_CREDIT,
+        Expression.CURVE,
+        side="steepener",
+        name="2Y versus 10Y",
+        entry=123.456789,
+        target=145.987654321,
+        move=5.4,
+        unit="bp",
+        horizon=20,
+        rng=rng,
+    )
+    assert "123.5" in text
+    assert "146.0" in text
+    assert "123.456789" not in text
+    assert "145.987654" not in text
+
+
 def test_render_outcome_win_contains_signed_pnl(catalogue) -> None:
     rng = np.random.default_rng(0)
     text = render_outcome(catalogue, kind="win", pnl=3.456, unit="pct", closer="target", rng=rng)
@@ -74,7 +95,8 @@ def test_render_signpost_text_level_contains_window(catalogue) -> None:
     text = render_signpost_text(
         catalogue, AssetClass.EQUITIES, "level", level=12.3, unit="pct", window=4, rng=rng
     )
-    assert "4" in text
+    # Every equities 'level' template places the window right before "sessions".
+    assert "4 sessions" in text
 
 
 def test_render_signpost_text_event_contains_event(catalogue) -> None:

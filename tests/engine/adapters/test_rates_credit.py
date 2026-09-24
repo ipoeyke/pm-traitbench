@@ -288,9 +288,9 @@ def test_leg_risk_amount_follows_dv01_ratio_for_curve_short_leg(fixture_view) ->
     short_leg = LegRef("RT-USD", Tenor.Y2, -1.0)
     size, risk = adapter.size_and_risk(5.0, (long_leg, short_leg), fixture_view, 0, 1e8)
 
-    assert adapter.leg_risk_amount(long_leg, size, fixture_view) == pytest.approx(risk)
+    assert adapter.leg_risk_amount(long_leg, size, fixture_view, risk) == pytest.approx(risk)
     expected_short_risk = size / DV01_PER_MILLION[Tenor.Y2] * 1e6
-    assert adapter.leg_risk_amount(short_leg, size, fixture_view) == pytest.approx(
+    assert adapter.leg_risk_amount(short_leg, size, fixture_view, risk) == pytest.approx(
         expected_short_risk
     )
     assert expected_short_risk != pytest.approx(risk)
@@ -299,9 +299,9 @@ def test_leg_risk_amount_follows_dv01_ratio_for_curve_short_leg(fixture_view) ->
 def test_leg_risk_amount_credit_uses_duration(fixture_view) -> None:
     adapter = RatesCreditAdapter("long_short_credit", _HORIZON)
     leg = LegRef("CR-IG-001", None, 1.0)
-    size, _ = adapter.size_and_risk(5.0, (leg,), fixture_view, 0, 1e8)
+    size, risk = adapter.size_and_risk(5.0, (leg,), fixture_view, 0, 1e8)
     expected = size / (6.0 * 100) * 1e6
-    assert adapter.leg_risk_amount(leg, size, fixture_view) == pytest.approx(expected)
+    assert adapter.leg_risk_amount(leg, size, fixture_view, risk) == pytest.approx(expected)
 
 
 def test_leg_price_tenor_is_percent_and_credit_is_spread_bp(fixture_view) -> None:

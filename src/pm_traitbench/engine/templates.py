@@ -20,6 +20,10 @@ from pm_traitbench.enums import FUTURES_TENORS, SOVEREIGN_TENORS, AssetClass, Ex
 _TENOR_RANK: dict[Tenor, int] = {t: i for i, t in enumerate(SOVEREIGN_TENORS)}
 _TENOR_RANK.update({t: i for i, t in enumerate(FUTURES_TENORS)})
 
+# Display precision for a thesis's entry/target, by series unit; a quoted
+# price (unit None) uses the same 2 dp as pct.
+_LEVEL_DECIMALS: dict[str | None, int] = {"bp": 1, "pct": 2, None: 2}
+
 
 def idea_name(view: MarketView, legs: tuple[LegRef, ...], expression: Expression) -> str:
     """A human-readable name for a trade idea, from its legs and structural form."""
@@ -53,12 +57,13 @@ def render_thesis(
     """Render one of the catalogue's thesis templates for this idea's asset class and form."""
     templates = catalogue.theses.theses[asset_class][expression]
     template = templates[int(rng.integers(len(templates)))]
+    decimals = _LEVEL_DECIMALS.get(unit, 2)
     return _fill_text(
         template,
         side=side,
         name=name,
-        entry=entry,
-        target=target,
+        entry=round(entry, decimals),
+        target=round(target, decimals),
         move=move,
         unit=unit,
         horizon=horizon,
