@@ -151,6 +151,41 @@ class ExpiryRule(StrEnum):
     MONTHLY_THIRD_FRIDAY = "monthly_third_friday"
 
 
+class Side(StrEnum):
+    BUY = "buy"
+    SELL = "sell"
+
+
+class Expression(StrEnum):
+    OUTRIGHT = "outright"
+    PAIR = "pair"
+    CURVE = "curve"
+    CALENDAR_SPREAD = "calendar_spread"
+
+
+class RuleResponse(StrEnum):
+    ACTED = "acted"
+    ACKED_NO_ACTION = "acked_no_action"
+    ADDED = "added"
+    OVERRIDDEN = "overridden"
+
+
+class PositionAction(StrEnum):
+    NONE = "none"
+    HOLD = "hold"
+    ADD = "add"
+    CUT = "cut"
+    TRIM = "trim"
+    EXIT = "exit"
+    ROLL = "roll"
+
+
+class PnlState(StrEnum):
+    GAIN = "gain"
+    LOSS = "loss"
+    FLAT = "flat"
+
+
 SOVEREIGN_TENORS: tuple[Tenor, ...] = (Tenor.Y2, Tenor.Y5, Tenor.Y10, Tenor.Y30)
 FUTURES_TENORS: tuple[Tenor, ...] = (
     Tenor.M1,
@@ -174,3 +209,6 @@ MARKET_WIDE_EVENTS: frozenset[EventType] = frozenset(
 )
 HY_BANDS: frozenset[RatingBand] = frozenset({RatingBand.BB, RatingBand.B})
 IG_BANDS: frozenset[RatingBand] = frozenset(RatingBand) - HY_BANDS
+MULTI_LEG_FORMS: frozenset[Expression] = frozenset(
+    {Expression.PAIR, Expression.CURVE, Expression.CALENDAR_SPREAD}
+)

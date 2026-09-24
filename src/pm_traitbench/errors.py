@@ -41,3 +41,9 @@ class MarketCheckError(PmTraitbenchError):
     """Raised when a generated market misses its own regime targets."""
 
     exit_code = 1
+
+
+class EngineError(PmTraitbenchError):
+    """Raised when the behaviour engine breaks one of its own invariants."""
+
+    exit_code = 1
