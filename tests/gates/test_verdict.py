@@ -80,6 +80,20 @@ def test_active_mean_wrong_side_of_neutral_mean_with_large_gap_fails_gap() -> No
     assert row.verdict == Gate1Verdict.FAIL
 
 
+def test_lower_is_stronger_passes_with_active_mean_below_neutral_mean() -> None:
+    cell = _cell(higher_is_stronger=False, neutral_mean=0.5, active_mean=0.1, neutral_sd=0.03)
+    row = judge(cell, KNOBS)
+    assert row.gap_ok is True
+    assert row.verdict == Gate1Verdict.PASS
+
+
+def test_lower_is_stronger_wrong_side_of_neutral_mean_with_large_gap_fails_gap() -> None:
+    cell = _cell(higher_is_stronger=False, neutral_mean=0.1, active_mean=0.5, neutral_sd=0.03)
+    row = judge(cell, KNOBS)
+    assert row.gap_ok is False
+    assert row.verdict == Gate1Verdict.FAIL
+
+
 def test_rank_corr_below_threshold_fails() -> None:
     row = judge(_cell(rank_corr=0.3), KNOBS)
     assert row.rank_ok is False
@@ -104,6 +118,26 @@ def test_four_neutral_pms_is_insufficient_regardless_of_the_tests() -> None:
 def test_four_active_pms_is_insufficient() -> None:
     row = judge(_cell(n_active=4), KNOBS)
     assert row.verdict == Gate1Verdict.INSUFFICIENT
+
+
+def test_threshold_boundaries_all_pass() -> None:
+    # exactly representable floats: neutral_sd == gap_fraction * gap (0.5 == 0.5 * 1.0),
+    # rank_corr == min_rank_corr (0.5 == 0.5), n_neutral == n_active == min_pms (5).
+    assert KNOBS.gap_fraction == 0.5
+    assert KNOBS.min_rank_corr == 0.5
+    assert KNOBS.min_pms == 5
+    cell = _cell(
+        neutral_mean=0.0,
+        neutral_sd=0.5,
+        active_mean=1.0,
+        rank_corr=0.5,
+        n_neutral=5,
+        n_active=5,
+    )
+    row = judge(cell, KNOBS)
+    assert row.gap_ok is True
+    assert row.rank_ok is True
+    assert row.verdict == Gate1Verdict.PASS
 
 
 # --- judge: blocking -----------------------------------------------------------
