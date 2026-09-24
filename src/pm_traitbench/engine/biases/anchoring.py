@@ -19,17 +19,24 @@ class AnchoredExit:
 def evaluate(
     pos: Position, level_now: float, anchors: Sequence[float], params: EffectiveParams
 ) -> AnchoredExit:
-    """Blend the position's target toward the nearest anchor on the target side."""
-    favourable = -pos.adverse_dir
-    candidates = [a for a in anchors if (a - level_now) * favourable > 0]
+    """Blend the position's target toward the nearest anchor strictly between entry and target.
+
+    An anchor pulls the exit short of the target, so only one that actually sits
+    between entry and target can do that; one beyond the target or behind entry
+    would not shorten the trade and is ignored.
+    """
+    fav = -pos.adverse_dir
+    candidates = [
+        a for a in anchors if (a - pos.entry_level) * fav > 0 and (a - pos.target_level) * fav < 0
+    ]
     if candidates:
-        anchor = min(candidates, key=lambda a: abs(a - level_now))
+        anchor = max(candidates, key=lambda a: (a - pos.entry_level) * fav)
     else:
         anchor = pos.target_level
 
     rho = params.value("anchoring_rho")
     effective = (1 - rho) * pos.target_level + rho * anchor
-    reached = (level_now - effective) * favourable >= 0
+    reached = (level_now - effective) * fav >= 0
     return AnchoredExit(anchor_level=anchor, effective_exit_level=effective, reached=reached)
 
 
