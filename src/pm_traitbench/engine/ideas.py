@@ -1,0 +1,503 @@
+"""Idea generation: turns a PM's daily entry attempts into new trade ideas.
+
+Composes the own-signal draw with herding, overconfidence and conviction
+biases, an adapter's leg construction and sizing, and catalogue-driven thesis
+and signpost text, into one new position (plus its idea, rule and ledger
+rows) per attempt. `attempt_entry` and `entries_for_day` are pure: neither
+mutates its `state` argument, both return a new one.
+"""
+
+import math
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
+
+import numpy as np
+
+from pm_traitbench.catalogues.models import Catalogue
+from pm_traitbench.config import Config
+from pm_traitbench.engine.adapters import preferred_form
+from pm_traitbench.engine.adapters.base import Adapter, leg_side
+from pm_traitbench.engine.biases import (
+    conviction,
+    extrapolation,
+    herding,
+    join_flags,
+    overconfidence,
+)
+from pm_traitbench.engine.constants import (
+    ENTRY_THRESHOLD,
+    LEVEL_WINDOW_CHOICES,
+    NO_ENTRY_LAST_SESSIONS,
+    RISK_STEPS,
+    SIGNPOSTS_PER_IDEA,
+)
+from pm_traitbench.engine.market_view import MarketView
+from pm_traitbench.engine.own_signal import draw_signal, signal_sign
+from pm_traitbench.engine.params import EffectiveParams
+from pm_traitbench.engine.series import Series
+from pm_traitbench.engine.state import PmState, Position, idea_id, rule_id
+from pm_traitbench.engine.templates import idea_name, render_signpost_text, render_thesis
+from pm_traitbench.enums import (
+    Action,
+    AssetClass,
+    Expression,
+    Op,
+    RuleScope,
+    RuleSource,
+    Side,
+    StreetView,
+)
+from pm_traitbench.errors import EngineError
+from pm_traitbench.tables.schema import Idea, LedgerRow, Leg, Persona, Rule, Trait
+
+_SIDE_SIGN: dict[Side, int] = {Side.BUY: 1, Side.SELL: -1}
+_UNIT_WORDS: dict[str, str] = {"pct": "%", "bp": "bp"}
+_PRICE_QUOTED_OUTRIGHT_CLASSES = (AssetClass.EQUITIES, AssetClass.COMMODITIES)
+
+
+@dataclass(frozen=True)
+class NewIdea:
+    """A freshly entered trade idea: its position and the rows it produced."""
+
+    position: Position
+    idea: Idea
+    rules: tuple[Rule, ...]
+    ledger_rows: tuple[LedgerRow, ...]
+    conflict: bool
+    entered_after_run: bool
+
+
+def _find_pm_rule(rules: Sequence[Rule], param: str) -> Rule | None:
+    """The PM-scope rule for `param`, or None if the PM holds no such rule."""
+    for r in rules:
+        if r.scope == RuleScope.PM and r.param == param:
+            return r
+    return None
+
+
+def _structurally_blocked(
+    state: PmState, t: int, view: MarketView, pm_rules: Sequence[Rule], universe: Sequence[str]
+) -> bool:
+    """Whether no attempt should be drawn today: too late, at capacity, or nothing to buy."""
+    if t >= view.n_days - NO_ENTRY_LAST_SESSIONS:
+        return True
+    max_positions_rule = _find_pm_rule(pm_rules, "max_positions")
+    if max_positions_rule is not None and state.n_positions >= float(max_positions_rule.level):
+        return True
+    return frozenset(universe) <= state.held_instruments
+
+
+def _side_word(expression: Expression, side: Side) -> str:
+    """The thesis template's `{side}` word for this idea's form and direction."""
+    if expression == Expression.CURVE:
+        return "steepener" if side == Side.BUY else "flattener"
+    if expression == Expression.CALENDAR_SPREAD:
+        return "long the front" if side == Side.BUY else "short the front"
+    return "long" if side == Side.BUY else "short"
+
+
+def _stop_text(level: float, unit: str, adverse_dir: int) -> str:
+    word = "above" if adverse_dir > 0 else "below"
+    return f"stop {word} {level:g}{_UNIT_WORDS[unit]}"
+
+
+def _target_text(level: float, unit: str, adverse_dir: int) -> str:
+    word = "below" if adverse_dir > 0 else "above"
+    return f"target {word} {level:g}{_UNIT_WORDS[unit]}"
+
+
+def _draw_form(
+    forms: tuple[Expression, ...],
+    preferred: Expression | None,
+    weight: float,
+    rng: np.random.Generator,
+) -> Expression:
+    """Draw an idea's structural form, favouring `preferred` by `weight` when it applies."""
+    if preferred is not None and preferred in forms:
+        n_other = len(forms) - 1
+        if n_other == 0:
+            probs = [1.0]
+        else:
+            probs = [weight if f == preferred else (1 - weight) / n_other for f in forms]
+    else:
+        probs = [1.0 / len(forms)] * len(forms)
+    return forms[int(rng.choice(len(forms), p=probs))]
+
+
+def _signpost_kinds(rng: np.random.Generator, event_types_present: bool) -> list[str]:
+    """The signpost kinds for one idea: 2 or 3, without replacement from those available."""
+    available = ["level", "relative"] + (["event"] if event_types_present else [])
+    n = min(int(rng.choice(SIGNPOSTS_PER_IDEA)), len(available))
+    return list(rng.choice(available, size=n, replace=False))
+
+
+def _build_signposts(
+    *,
+    pm_id: str,
+    trade_idea_id: str,
+    candidate: str,
+    adapter: Adapter,
+    view: MarketView,
+    t: int,
+    catalogue: Catalogue,
+    series: Series,
+    entry_level: float,
+    adverse_dir: int,
+    signpost_k: float,
+    sd: float,
+    next_rid: Callable[[], str],
+    rng_signposts: np.random.Generator,
+    rng_templates: np.random.Generator,
+) -> tuple[Rule, ...]:
+    """This idea's 2 or 3 idea-scope signpost rules."""
+    event_types = view.event_types(candidate)
+    kinds = _signpost_kinds(rng_signposts, bool(event_types))
+    peer = adapter.peer_label(candidate)
+    rows: list[Rule] = []
+    for kind in kinds:
+        if kind == "event":
+            field, op, window, unit = "event", Op.EQ, 1, None
+            level: float | str = str(rng_signposts.choice(sorted(et.value for et in event_types)))
+            text = render_signpost_text(
+                catalogue, adapter.asset_class, "event", event=level, rng=rng_templates
+            )
+        elif kind == "level":
+            window = int(rng_signposts.choice(LEVEL_WINDOW_CHOICES))
+            field, unit = "level", series.unit
+            level = entry_level + adverse_dir * signpost_k * sd
+            op = Op.GE if adverse_dir > 0 else Op.LE
+            text = render_signpost_text(
+                catalogue,
+                adapter.asset_class,
+                "level",
+                level=level,
+                unit=unit,
+                window=window,
+                peer=peer,
+                rng=rng_templates,
+            )
+        else:
+            field, op, unit, window = "relative_move", Op.LE, series.unit, 1
+            level = -signpost_k * sd
+            text = render_signpost_text(
+                catalogue,
+                adapter.asset_class,
+                "relative",
+                level=level,
+                unit=unit,
+                peer=peer,
+                rng=rng_templates,
+            )
+        rows.append(
+            Rule(
+                pm_id=pm_id,
+                rule_id=next_rid(),
+                source=RuleSource.SELF,
+                scope=RuleScope.IDEA,
+                trade_idea_id=trade_idea_id,
+                param="signpost",
+                field=field,
+                op=op,
+                level=level,
+                unit=unit,
+                window=window,
+                action=Action.SIGNPOST,
+                text=text,
+            )
+        )
+    return tuple(rows)
+
+
+def attempt_entry(
+    state: PmState,
+    t: int,
+    view: MarketView,
+    adapter: Adapter,
+    params: EffectiveParams,
+    persona: Persona,
+    pm_rules: Sequence[Rule],
+    traits: Sequence[Trait],
+    universe: Sequence[str],
+    config: Config,
+    catalogue: Catalogue,
+    rng_for: Callable[..., np.random.Generator],
+    attempt: int,
+) -> tuple[PmState, "NewIdea | None"]:
+    """Attempt one new trade idea for this PM on day `t`; None if none was entered."""
+    if _structurally_blocked(state, t, view, pm_rules, universe):
+        return state, None
+
+    available = [iid for iid in universe if iid not in state.held_instruments]
+    candidate = available[int(rng_for("candidate", t, attempt).integers(len(available)))]
+
+    forms = adapter.forms(persona.mandate.sub_style)
+    preferred = preferred_form(traits)
+    form = _draw_form(
+        forms, preferred, config.engine.preferred_form_weight, rng_for("form", t, attempt)
+    )
+
+    rng_legs = rng_for("legs", t, attempt)
+    legs = adapter.build_legs(form, candidate, view, t, universe, state.held_instruments, rng_legs)
+    if legs is None:
+        form = Expression.OUTRIGHT
+        legs = adapter.build_legs(
+            form, candidate, view, t, universe, state.held_instruments, rng_legs
+        )
+
+    series = adapter.series(form, legs)
+    draw = draw_signal(view, series, t, params, config, rng_for("signal", t, attempt))
+    if abs(draw.own_signal) < ENTRY_THRESHOLD:
+        return state, None
+
+    own_side = signal_sign(draw)
+    street = view.street_view(candidate, t)
+    decision = herding.decide(own_side, street, params, rng_for("herding", t, attempt))
+    side = decision.side
+    side_sign = _SIDE_SIGN[side]
+
+    rank, conviction_flag = conviction.size_rank(
+        draw.conviction, params, rng_for("size_rank", t, attempt)
+    )
+    factor, overconfidence_flag = overconfidence.size_factor(params)
+    cap_rule = _find_pm_rule(pm_rules, "max_risk_pct")
+    if cap_rule is None:
+        raise EngineError("no mandate risk cap rule found for this PM")
+    cap_level = float(cap_rule.level)
+    size_pct_book = min(cap_level, cap_level * RISK_STEPS[rank - 1] * factor)
+    if size_pct_book > cap_level:
+        raise EngineError("sized idea exceeds the mandate risk cap")
+
+    stop_rule = _find_pm_rule(pm_rules, "stop_loss")
+    if stop_rule is None:
+        raise EngineError("no stop-loss rule found for this PM")
+    stop_distance = adapter.stop_distance(stop_rule, series)
+    rr_lo, rr_hi = config.engine.rr_range
+    rr = float(rng_for("rr", t, attempt).uniform(rr_lo, rr_hi))
+    entry_level = view.level(series, t)
+    adverse_dir = -series.bullish_sign * side_sign
+    stop_level = entry_level + adverse_dir * stop_distance
+    target_level = entry_level - adverse_dir * rr * stop_distance
+
+    trade_idea_id = idea_id(state.next_idea)
+    rule_counter = state.next_rule
+
+    def _next_rid() -> str:
+        nonlocal rule_counter
+        rid = rule_id(rule_counter)
+        rule_counter += 1
+        return rid
+
+    stop_row = Rule(
+        pm_id=persona.pm_id,
+        rule_id=_next_rid(),
+        source=RuleSource.SELF,
+        scope=RuleScope.IDEA,
+        trade_idea_id=trade_idea_id,
+        param="stop",
+        field="level",
+        op=Op.GE if adverse_dir > 0 else Op.LE,
+        level=stop_level,
+        unit=series.unit,
+        window=1,
+        action=Action.EXIT,
+        text=_stop_text(stop_level, series.unit, adverse_dir),
+    )
+    target_row = Rule(
+        pm_id=persona.pm_id,
+        rule_id=_next_rid(),
+        source=RuleSource.SELF,
+        scope=RuleScope.IDEA,
+        trade_idea_id=trade_idea_id,
+        param="target",
+        field="level",
+        op=Op.LE if adverse_dir > 0 else Op.GE,
+        level=target_level,
+        unit=series.unit,
+        window=1,
+        action=Action.TARGET,
+        text=_target_text(target_level, series.unit, adverse_dir),
+    )
+    rng_templates = rng_for("templates", t, attempt)
+    signpost_rows = _build_signposts(
+        pm_id=persona.pm_id,
+        trade_idea_id=trade_idea_id,
+        candidate=candidate,
+        adapter=adapter,
+        view=view,
+        t=t,
+        catalogue=catalogue,
+        series=series,
+        entry_level=entry_level,
+        adverse_dir=adverse_dir,
+        signpost_k=config.engine.signpost_k,
+        sd=draw.sd_h,
+        next_rid=_next_rid,
+        rng_signposts=rng_for("signposts", t, attempt),
+        rng_templates=rng_templates,
+    )
+
+    if form == Expression.OUTRIGHT and adapter.asset_class in _PRICE_QUOTED_OUTRIGHT_CLASSES:
+        entry_arg: float = round(math.exp(entry_level / 100.0), 2)
+        target_arg: float = round(math.exp(target_level / 100.0), 2)
+        unit_arg: str | None = None
+    else:
+        entry_arg, target_arg, unit_arg = entry_level, target_level, series.unit
+
+    name = idea_name(view, legs, form)
+    thesis = render_thesis(
+        catalogue,
+        adapter.asset_class,
+        form,
+        side=_side_word(form, side),
+        name=name,
+        entry=entry_arg,
+        target=target_arg,
+        move=draw.forecast,
+        unit=unit_arg,
+        horizon=config.engine.horizon_days,
+        rng=rng_templates,
+    )
+
+    idea_legs = tuple(
+        Leg(
+            instrument_id=leg.instrument_id,
+            tenor=leg.tenor,
+            side=leg_side(side_sign, series.bullish_sign, leg.coeff, adapter.leg_bullish(leg)),
+            weight=abs(leg.coeff),
+        )
+        for leg in legs
+    )
+
+    idea_row = Idea(
+        pm_id=persona.pm_id,
+        trade_idea_id=trade_idea_id,
+        instrument_id=candidate,
+        expression=form,
+        side=side,
+        legs=idea_legs,
+        entry_date=view.dates[t],
+        exit_date=None,
+        entry_level=entry_level,
+        target_level=target_level,
+        stop_level=stop_level,
+        thesis=thesis,
+        outcome=None,
+        own_signal=draw.own_signal,
+        forecast=draw.forecast,
+        interval_lo=draw.interval_lo,
+        interval_hi=draw.interval_hi,
+        street_view_at_entry=street if street is not None else StreetView.NEUTRAL,
+        conflict=decision.conflict,
+        followed_street=decision.followed_street,
+        conviction=draw.conviction,
+        size_rank=rank,
+    )
+
+    size, risk_amount = adapter.size_and_risk(
+        size_pct_book, legs, view, t, persona.mandate.book_size
+    )
+    leg_risk_amount = getattr(adapter, "leg_risk_amount", None)
+    bias_flag = join_flags([decision.flag, overconfidence_flag, conviction_flag])
+    ledger_rows = tuple(
+        LedgerRow(
+            pm_id=persona.pm_id,
+            date=view.dates[t],
+            trade_idea_id=trade_idea_id,
+            instrument_id=leg.instrument_id,
+            tenor=leg.tenor,
+            instrument_type=adapter.instrument_type(leg.instrument_id, view),
+            side=leg_side(side_sign, series.bullish_sign, leg.coeff, adapter.leg_bullish(leg)),
+            size=size,
+            risk_amount=(
+                risk_amount
+                if (i == 0 or leg_risk_amount is None)
+                else leg_risk_amount(leg, size, view)
+            ),
+            price_or_yield=adapter.leg_price(leg, view, t),
+            stated_conviction=draw.conviction,
+            bias_flag=bias_flag,
+            rule_id=None,
+        )
+        for i, leg in enumerate(legs)
+    )
+
+    position = Position(
+        trade_idea_id=trade_idea_id,
+        expression=form,
+        instrument_id=candidate,
+        legs=idea_legs,
+        series=series,
+        side=side,
+        entry_t=t,
+        entry_level=entry_level,
+        target_level=target_level,
+        stop_level=stop_level,
+        sd_h_at_entry=draw.sd_h,
+        forecast=draw.forecast,
+        size_pct_book=size_pct_book,
+        original_size_pct_book=size_pct_book,
+        conviction=draw.conviction,
+        size_rank=rank,
+        triggers_fired=0,
+        consumed_rule_ids=frozenset(),
+        run_counters=(),
+        size_changed_t=t,
+    )
+
+    trailing_move = view.trailing_move(series, t, config.engine.horizon_days)
+    entered_after_run = extrapolation.entered_after_run(
+        trailing_move, draw.sd_h, side_sign, series.bullish_sign
+    )
+
+    new_state = replace(
+        state.add_position(position), next_idea=state.next_idea + 1, next_rule=rule_counter
+    )
+    new_idea = NewIdea(
+        position=position,
+        idea=idea_row,
+        rules=(stop_row, target_row, *signpost_rows),
+        ledger_rows=ledger_rows,
+        conflict=decision.conflict,
+        entered_after_run=entered_after_run,
+    )
+    return new_state, new_idea
+
+
+def entries_for_day(
+    state: PmState,
+    t: int,
+    view: MarketView,
+    adapter: Adapter,
+    params: EffectiveParams,
+    persona: Persona,
+    pm_rules: Sequence[Rule],
+    traits: Sequence[Trait],
+    universe: Sequence[str],
+    config: Config,
+    catalogue: Catalogue,
+    rng_for: Callable[..., np.random.Generator],
+) -> tuple[PmState, list["NewIdea"]]:
+    """Attempt this PM's entries for one day; stop at the first structural block."""
+    n_attempts = int(rng_for("arrival", t).poisson(config.engine.arrival_rate))
+    new_ideas: list[NewIdea] = []
+    for attempt in range(n_attempts):
+        if _structurally_blocked(state, t, view, pm_rules, universe):
+            break
+        state, new_idea = attempt_entry(
+            state,
+            t,
+            view,
+            adapter,
+            params,
+            persona,
+            pm_rules,
+            traits,
+            universe,
+            config,
+            catalogue,
+            rng_for,
+            attempt,
+        )
+        if new_idea is not None:
+            new_ideas.append(new_idea)
+    return state, new_ideas
