@@ -668,15 +668,22 @@ def test_breached_roll_force_rolls_at_expiry_with_late_roll_flag(cm_parts) -> No
         assert state.n_positions == 1
         assert out.position_days[0].pnl_unit == pytest.approx(10.0)
         pos_now = state.position("ti_001")
-        if t == 10:
+        roll_events = [ev for ev in out.rule_events if ev.rule_id == roll_rule.rule_id]
+        if t == 9:
+            # The day before expiry, the roll rule still fires normally and breaches.
+            assert len(roll_events) == 1
+            assert roll_events[0].response == RuleResponse.ACKED_NO_ACTION
+            assert out.ledger_rows == ()
+            assert pos_now.series.legs[0].tenor == Tenor.M1
+            assert pos_now.rolled_until_t is None
+        elif t == 10:
             assert len(out.ledger_rows) == 2
             assert all(row.bias_flag == LATE_ROLL_FLAG for row in out.ledger_rows)
             assert pos_now.series.legs[0].tenor == Tenor.M2
             assert pos_now.rolled_until_t == 10
-            # The roll rule's own breach fires an event; the force roll adds no event row.
-            roll_events = [ev for ev in out.rule_events if ev.rule_id == roll_rule.rule_id]
-            assert len(roll_events) == 1
-            assert roll_events[0].response == RuleResponse.ACKED_NO_ACTION
+            # The force roll runs first, unconditionally, before rule evaluation on the expiry
+            # day itself, so the roll rule is never evaluated that day and writes no event row.
+            assert roll_events == []
         else:
             assert out.ledger_rows == ()
             assert pos_now.series.legs[0].tenor == Tenor.M1
@@ -764,6 +771,111 @@ def test_force_roll_skips_discretionary_even_when_loss_aversion_would_add(
     assert len(out.ledger_rows) == 2
     keys = {(row.instrument_id, row.tenor, row.side) for row in out.ledger_rows}
     assert keys == {("CM-CRD", Tenor.M1, Side.SELL), ("CM-CRD", Tenor.M2, Side.BUY)}
+
+
+def test_expiry_day_stop_after_force_roll_produces_unique_ledger_keys(cm_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    # M1 drops through the stop on the expiry day itself; the force roll retags to M2 before the
+    # stop is evaluated, so it fires against the tracked (M1-equivalent) level, not a raw M2
+    # price, and its exit row sells the already-rolled M2 leg.
+    m1 = [100.0] * 10 + [80.0] * 3
+    m2 = [level * 1.02 for level in m1]
+    view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=0,
+        entry_level=100.0,
+        target_level=1000.0,
+        stop_level=90.0,
+        tenor=Tenor.M1,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    traits = _traits_with(traits, {"exit_deficiency": (0.0, False)})
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
+
+    new_state, out = step(state, 10, view, ctx, idea_rules)
+
+    assert new_state.n_positions == 0
+    assert len(out.ledger_rows) == 3
+    keys = {(row.tenor, row.side) for row in out.ledger_rows}
+    assert len(keys) == 3
+    assert keys == {(Tenor.M1, Side.SELL), (Tenor.M2, Side.BUY), (Tenor.M2, Side.SELL)}
+    assert len(out.closed) == 1
+
+
+def test_expiry_day_trim_after_force_roll_produces_unique_ledger_keys(cm_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    # Same setup, but M1 rises through the target instead: the trim's sell row must also land on
+    # the already-rolled M2 leg, distinct from the roll's own M1-sell/M2-buy pair.
+    m1 = [100.0] * 10 + [120.0] * 3
+    m2 = [level * 1.02 for level in m1]
+    view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=0,
+        entry_level=100.0,
+        target_level=110.0,
+        stop_level=-1000.0,
+        size_pct_book=4.0,
+        tenor=Tenor.M1,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    traits = _traits_with(traits, {"exit_deficiency": (0.0, False)})
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
+
+    new_state, out = step(state, 10, view, ctx, idea_rules)
+
+    assert new_state.n_positions == 1
+    assert len(out.ledger_rows) == 3
+    keys = {(row.tenor, row.side) for row in out.ledger_rows}
+    assert len(keys) == 3
+    assert keys == {(Tenor.M1, Side.SELL), (Tenor.M2, Side.BUY), (Tenor.M2, Side.SELL)}
+    new_pos = new_state.position("ti_001")
+    assert new_pos.size_pct_book == pytest.approx(2.0)
+    assert out.closed == ()
+
+
+def test_expiry_day_add_after_force_roll_merges_into_the_rolled_leg(cm_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    # Same stop-breach setup, but the breach response is `added` (exit deficiency plus loss
+    # aversion, both active): the add buys more of the same (already-rolled) leg the force roll
+    # just opened, so the two must land in one merged row, not a second row with the same key.
+    m1 = [100.0] * 10 + [80.0] * 3
+    m2 = [level * 1.02 for level in m1]
+    view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=0,
+        entry_level=100.0,
+        target_level=1000.0,
+        stop_level=90.0,
+        size_pct_book=4.0,
+        tenor=Tenor.M1,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    stop_rule_id = idea_rules["ti_001"][0].rule_id
+    traits = _traits_with(
+        traits, {"exit_deficiency": (1.0, False), "loss_aversion_lambda": (1.1, True)}
+    )
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
+
+    new_state, out = step(state, 10, view, ctx, idea_rules)
+
+    assert new_state.n_positions == 1
+    assert len(out.ledger_rows) == 2
+    keys = {(row.tenor, row.side) for row in out.ledger_rows}
+    assert keys == {(Tenor.M1, Side.SELL), (Tenor.M2, Side.BUY)}
+    buy_row = next(row for row in out.ledger_rows if row.side == Side.BUY)
+    assert buy_row.rule_id == stop_rule_id
+    assert buy_row.bias_flag == "exit_deficiency:added"
+    new_pos = new_state.position("ti_001")
+    assert new_pos.size_pct_book > pos.size_pct_book
 
 
 # --- Discretionary block -------------------------------------------------------

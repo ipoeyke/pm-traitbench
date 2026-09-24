@@ -302,7 +302,7 @@ def _execute_fired(
     fired: Sequence[Rule],
     fired_non_hold: Sequence[Rule],
     pnl_state: PnlState,
-) -> tuple[TriggerOutcome, bool]:
+) -> TriggerOutcome:
     """Draw the exit-deficiency response and execute the winner (and roll's trim/target)."""
     resolution = resolve(fired)
     winner = resolution.winner
@@ -401,29 +401,53 @@ def _execute_fired(
         sold=sold,
         rolled_today=rolled_today,
     )
-    return outcome, rolled_today
+    return outcome
 
 
-def _apply_force_roll(
-    outcome: TriggerOutcome, ctx: "PmContext", view: MarketView, t: int
-) -> TriggerOutcome:
-    """Force-roll a position still on its old leg at expiry; no rule fired, no event row."""
-    position = outcome.position
-    if position is None:
-        raise EngineError("cannot force-roll a position that closed earlier today")
+def _force_roll_position(
+    position: Position, ctx: "PmContext", view: MarketView, t: int
+) -> tuple[Position, tuple[LedgerRow, ...], str | None]:
+    """Force-roll a position still on its old leg at expiry, unconditionally and before any
+    rule is evaluated today; no event row (no rule fired)."""
     flag = LATE_ROLL_FLAG if position.roll_breached else None
     rows = roll_rows(position, ctx.adapter, view, t, ctx, flag)
     new_position = apply_roll(position, ctx.adapter, view, t)
-    action = outcome.action if outcome.action != PositionAction.NONE else PositionAction.ROLL
-    bias_flag = join_flags([outcome.bias_flag, flag])
-    return replace(
-        outcome,
-        position=new_position,
-        ledger_rows=outcome.ledger_rows + rows,
-        action=action,
-        bias_flag=bias_flag,
-        rolled_today=True,
-    )
+    return new_position, rows, flag
+
+
+def _merge_same_leg_rows(
+    base_rows: tuple[LedgerRow, ...], extra_rows: tuple[LedgerRow, ...]
+) -> tuple[LedgerRow, ...]:
+    """Combine `extra_rows` into `base_rows` wherever both land on the same (instrument, tenor,
+    side): the ledger key is unique per position per day per leg per side, and a same-day force
+    roll and a same-day add both open exposure in the position's entry direction, so they can
+    land on the same (already-rolled) leg - one net trade that day.
+    """
+    merged = list(base_rows)
+    remainder: list[LedgerRow] = []
+    for row in extra_rows:
+        match = next(
+            (
+                i
+                for i, existing in enumerate(merged)
+                if (existing.instrument_id, existing.tenor, existing.side)
+                == (row.instrument_id, row.tenor, row.side)
+            ),
+            None,
+        )
+        if match is None:
+            remainder.append(row)
+            continue
+        base = merged[match]
+        merged[match] = base.model_copy(
+            update={
+                "size": base.size + row.size,
+                "risk_amount": base.risk_amount + row.risk_amount,
+                "rule_id": row.rule_id if row.rule_id is not None else base.rule_id,
+                "bias_flag": join_flags([base.bias_flag, row.bias_flag]),
+            }
+        )
+    return tuple(merged) + tuple(remainder)
 
 
 def handle_triggers(
@@ -437,11 +461,30 @@ def handle_triggers(
     pnl: float,
     pnl_state: PnlState,
 ) -> TriggerOutcome:
-    """Evaluate today's rules for `position` and execute the winning response."""
+    """Evaluate today's rules for `position` and execute the winning response.
+
+    On a commodity's expiry day, a position still on its old leg is force-rolled first,
+    unconditionally, before any rule is evaluated - not as a response to today's rules, since
+    the roll rule cannot fire once `rolled_until_t` is set below, so a same-day breach never
+    gets its own `acked_no_action` event. Evaluating rules only after the retag also means any
+    exit or trim that fires the same day sells the new leg, never the one just rolled off.
+    """
+    force_rolled = False
+    roll_rows_today: tuple[LedgerRow, ...] = ()
+    roll_flag: str | None = None
+    if (
+        position.rolled_until_t is None
+        and isinstance(ctx.adapter, CommoditiesAdapter)
+        and view.is_expiry_day(position.instrument_id, t)
+    ):
+        position, roll_rows_today, roll_flag = _force_roll_position(position, ctx, view, t)
+        force_rolled = True
+
     fields = ctx.adapter.position_fields(position, view, t, state, pnl)
     rules = (*ctx.pm_rules, *idea_rules_for_id)
     if position.rolled_until_t is not None:
-        # Already mid-roll: the roll rule stays silent until the retag unwinds at expiry.
+        # Already mid-roll (today's force roll or an earlier one): the roll rule stays silent
+        # until the retag unwinds the day after expiry.
         rules = tuple(r for r in rules if r.param != "roll_before_expiry")
     position, fired = evaluate_day(position, rules, fields)
     fired_non_hold = tuple(r for r in fired if r.action != Action.HOLD)
@@ -450,28 +493,27 @@ def handle_triggers(
         outcome = TriggerOutcome(
             position=position,
             events=(),
-            ledger_rows=(),
-            action=PositionAction.NONE,
-            bias_flag=None,
+            ledger_rows=roll_rows_today,
+            action=PositionAction.ROLL if force_rolled else PositionAction.NONE,
+            bias_flag=roll_flag,
             trigger_pending=False,
             fired_non_hold=0,
             closed=None,
             sold=False,
-            rolled_today=False,
+            rolled_today=force_rolled,
         )
-        rolled_today = False
     else:
-        outcome, rolled_today = _execute_fired(
-            position, view, t, ctx, params, fired, fired_non_hold, pnl_state
-        )
-
-    if (
-        outcome.position is not None
-        and not rolled_today
-        and outcome.position.rolled_until_t is None
-        and isinstance(ctx.adapter, CommoditiesAdapter)
-        and view.is_expiry_day(outcome.position.instrument_id, t)
-    ):
-        outcome = _apply_force_roll(outcome, ctx, view, t)
+        outcome = _execute_fired(position, view, t, ctx, params, fired, fired_non_hold, pnl_state)
+        if force_rolled:
+            action = (
+                outcome.action if outcome.action != PositionAction.NONE else PositionAction.ROLL
+            )
+            outcome = replace(
+                outcome,
+                ledger_rows=_merge_same_leg_rows(roll_rows_today, outcome.ledger_rows),
+                action=action,
+                bias_flag=join_flags([roll_flag, outcome.bias_flag]),
+                rolled_today=True,
+            )
 
     return outcome
