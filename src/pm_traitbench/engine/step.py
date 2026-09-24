@@ -175,7 +175,7 @@ def step(
         else:
             running_state = running_state.replace_position(final_position)
 
-        if pnl_state == PnlState.LOSS and trig.fired_non_hold == 0:
+        if pnl_state == PnlState.LOSS and trig.fired_non_hold == 0 and not trig.rolled_today:
             opportunities["loss_side_untriggered_days"] += 1
         if sold_today:
             any_sold = True
