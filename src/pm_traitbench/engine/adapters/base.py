@@ -95,6 +95,16 @@ def pnl_unit(pos: Position, level_now: float) -> float:
     return pos.series.bullish_sign * pos.side_sign * (level_now - pos.entry_level)
 
 
+def tracked_level(pos: Position, view: MarketView, t: int) -> float:
+    """The series level on day `t`, re-based into the position's pre-roll tenor frame.
+
+    Mid-roll the position's legs read a different tenor; `rolled_offset` is the accumulated
+    raw-level gap from every retag, so subtracting it recovers a level comparable with
+    `entry_level`/`stop_level`/`target_level`, which are never themselves shifted.
+    """
+    return view.level(pos.series, t) - pos.rolled_offset
+
+
 def leg_side(pos_side_sign: int, bullish_sign: int, coeff: float, leg_bullish: int) -> Side:
     """The ledger side for one leg, from the position's direction and the leg's own sign."""
     return Side.BUY if pos_side_sign * bullish_sign * coeff * leg_bullish > 0 else Side.SELL

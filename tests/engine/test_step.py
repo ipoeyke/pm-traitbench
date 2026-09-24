@@ -558,6 +558,85 @@ def test_commodity_roll_retags_legs_and_resets_at_expiry(cm_parts) -> None:
     assert final_pos.roll_breached is False
 
 
+def test_roll_does_not_spuriously_trigger_target_via_raw_m2_level(cm_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    # Contango: M2's raw level (102) sits above a target of 101, though the tracked (M1-frame)
+    # level never moves off 100 - comparing the raw mid-roll level against target would fire.
+    m1 = [100.0] * 14
+    m2 = [102.0] * 14
+    view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=1,
+        entry_level=90.0,
+        target_level=101.0,
+        stop_level=-1000.0,
+        tenor=Tenor.M1,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    target_rule_id = idea_rules["ti_001"][1].rule_id
+    trim_rule = next(r for r in pm_rules if r.param == "trim_at_target")
+    traits = _traits_with(
+        traits, {"exit_deficiency": (0.0, False), "disposition_ratio": (1e-8, True)}
+    )
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
+
+    for t in range(4, 13):
+        state, out = step(state, t, view, ctx, idea_rules)
+        assert state.n_positions == 1
+        assert out.position_days[0].pnl_unit == pytest.approx(10.0)
+        assert out.closed == ()
+        fired_ids = {ev.rule_id for ev in out.rule_events}
+        assert target_rule_id not in fired_ids
+        assert trim_rule.rule_id not in fired_ids
+        if t == 5:
+            assert len(out.ledger_rows) == 2
+        else:
+            assert out.ledger_rows == ()
+
+    final_pos = state.position("ti_001")
+    assert final_pos.size_pct_book == pytest.approx(pos.size_pct_book)
+
+
+def test_roll_does_not_spuriously_stop_out_via_raw_m2_level_in_backwardation(cm_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    # Backwardation: M2's raw level (98) sits below a stop of 99, though the tracked (M1-frame)
+    # level never moves off 100 - comparing the raw mid-roll level against stop would fire.
+    m1 = [100.0] * 14
+    m2 = [98.0] * 14
+    view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=1,
+        entry_level=90.0,
+        target_level=1000.0,
+        stop_level=99.0,
+        tenor=Tenor.M1,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    stop_rule_id = idea_rules["ti_001"][0].rule_id
+    traits = _traits_with(
+        traits, {"exit_deficiency": (0.0, False), "disposition_ratio": (1e-8, True)}
+    )
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
+
+    for t in range(4, 13):
+        state, out = step(state, t, view, ctx, idea_rules)
+        assert state.n_positions == 1
+        assert out.position_days[0].pnl_unit == pytest.approx(10.0)
+        assert out.closed == ()
+        fired_ids = {ev.rule_id for ev in out.rule_events}
+        assert stop_rule_id not in fired_ids
+        if t == 5:
+            assert len(out.ledger_rows) == 2
+        else:
+            assert out.ledger_rows == ()
+
+
 def test_breached_roll_force_rolls_at_expiry_with_late_roll_flag(cm_parts) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = cm_parts
     m1 = [100.0] * 13

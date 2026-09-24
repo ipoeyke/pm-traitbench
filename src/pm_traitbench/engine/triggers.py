@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from typing import TYPE_CHECKING
 
-from pm_traitbench.engine.adapters.base import leg_side
+from pm_traitbench.engine.adapters.base import leg_side, tracked_level
 from pm_traitbench.engine.adapters.base import pnl_unit as compute_pnl_unit
 from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
 from pm_traitbench.engine.biases import join_flags
@@ -207,8 +207,11 @@ def roll_rows(
 def apply_roll(
     position: Position, adapter: CommoditiesAdapter, view: MarketView, t: int
 ) -> Position:
-    """Shift `entry_level`/`rolled_offset` by the roll's level gap, retag legs one month out,
-    and record the expiry day the retag must be undone on.
+    """Shift `rolled_offset` by the roll's level gap, retag legs one month out, and record the
+    expiry day the retag must be undone on.
+
+    `entry_level`/`stop_level`/`target_level` never move: `rolled_offset` alone carries the
+    tenor's raw-level gap, so `tracked_level` stays comparable with those fixed thresholds.
 
     Ledger rows must be built from `position` before calling this, since `roll_rows` and
     `roll_shift` read the current (pre-roll) tenor.
@@ -220,7 +223,6 @@ def apply_roll(
     retagged = adapter.retag_legs(position, 1)
     return replace(
         retagged,
-        entry_level=position.entry_level + shift,
         rolled_offset=position.rolled_offset + shift,
         rolled_until_t=t + days_to_expiry,
     )
@@ -233,8 +235,9 @@ def reset_roll_tag(
     other day, including the expiry day itself.
 
     The curves are constant-maturity (`M_k` is a fixed function of spot every day), so nothing
-    here mirrors a trade: `entry_level`/`rolled_offset` absorb today's M2-to-M1 raw-level gap so
-    `pnl_unit` does not move. A roll is P&L-neutral by construction.
+    here mirrors a trade: only `rolled_offset` absorbs today's M2-to-M1 raw-level gap, leaving
+    `entry_level` untouched so `tracked_level` does not move. A roll is P&L-neutral by
+    construction.
     """
     if position.rolled_until_t is None or t <= position.rolled_until_t:
         return position
@@ -244,7 +247,6 @@ def reset_roll_tag(
     shift = level_after - level_before
     return replace(
         retagged,
-        entry_level=position.entry_level + shift,
         rolled_offset=position.rolled_offset + shift,
         rolled_until_t=None,
         roll_breached=False,
@@ -255,7 +257,7 @@ def render_close(
     ctx: "PmContext", position: Position, view: MarketView, t: int, closer: str
 ) -> tuple[str, date, str]:
     """Render an exit's outcome text; win/loss follows the sign of realised P&L."""
-    level_now = view.level(position.series, t)
+    level_now = tracked_level(position, view, t)
     realized = compute_pnl_unit(position, level_now)
     kind = "win" if realized > 0 else "loss"
     text = render_outcome(

@@ -15,7 +15,7 @@ import numpy as np
 
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config
-from pm_traitbench.engine.adapters.base import Adapter
+from pm_traitbench.engine.adapters.base import Adapter, tracked_level
 from pm_traitbench.engine.adapters.base import pnl_unit as compute_pnl_unit
 from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
 from pm_traitbench.engine.biases import join_flags
@@ -104,7 +104,7 @@ def step(
     any_sold = False
 
     for pos in positions_at_start:
-        level_now = view.level(pos.series, t)
+        level_now = tracked_level(pos, view, t)
         pnl = compute_pnl_unit(pos, level_now)
         pnl_z = pnl / pos.sd_h_at_entry
         pnl_state = _pnl_state(pnl_z)
@@ -136,7 +136,10 @@ def step(
             opportunities["exits"] += 1
 
         if final_position is not None and trig.fired_non_hold == 0:
-            cur_pnl = compute_pnl_unit(final_position, level_now)
+            # Re-mark from `final_position`, not the stale `level_now`/`pnl` above: a same-day
+            # force roll can retag its legs before discretionary runs.
+            cur_level_now = tracked_level(final_position, view, t)
+            cur_pnl = compute_pnl_unit(final_position, cur_level_now)
             cur_pnl_z = cur_pnl / final_position.sd_h_at_entry
             cur_pnl_state = _pnl_state(cur_pnl_z)
             cur_progress = cur_pnl / abs(final_position.target_level - final_position.entry_level)
@@ -146,7 +149,7 @@ def step(
                 t,
                 ctx,
                 params,
-                level_now,
+                cur_level_now,
                 cur_pnl_z,
                 cur_pnl_state,
                 cur_progress,
@@ -164,7 +167,7 @@ def step(
             final_position = disc.position
 
         if final_position is not None and isinstance(ctx.adapter, CommoditiesAdapter):
-            # A no-op unless today is the expiry day this position rolled toward.
+            # A no-op unless today is the day after the expiry day this position rolled toward.
             final_position = reset_roll_tag(final_position, ctx.adapter, view, t)
 
         if final_position is None:
@@ -219,7 +222,7 @@ def step(
 
     if t == view.n_days - 1:
         for pos in running_state.positions:
-            level_now = view.level(pos.series, t)
+            level_now = tracked_level(pos, view, t)
             realized = compute_pnl_unit(pos, level_now)
             text = render_outcome(
                 ctx.catalogue,

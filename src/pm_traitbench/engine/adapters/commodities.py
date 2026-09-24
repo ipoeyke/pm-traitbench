@@ -13,6 +13,7 @@ from pm_traitbench.engine.adapters.base import (
     relative_move,
     standard_anchors,
     target_reached,
+    tracked_level,
 )
 from pm_traitbench.engine.constants import CALENDAR_BACK_TENORS
 from pm_traitbench.engine.market_view import MarketView
@@ -127,7 +128,7 @@ class CommoditiesAdapter:
     def position_fields(
         self, pos: Position, view: MarketView, t: int, state: PmState, pnl_unit: float
     ) -> dict[str, float | int | str | frozenset[str]]:
-        level_now = view.level(pos.series, t)
+        level_now = tracked_level(pos, view, t)
         reached = target_reached(pos, level_now)
         fields: dict[str, float | int | str | frozenset[str]] = dict(
             common_fields(pos, state, t, pnl_unit, reached)
