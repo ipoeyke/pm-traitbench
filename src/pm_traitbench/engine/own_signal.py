@@ -14,10 +14,10 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.stats import norm
 
 from pm_traitbench.config import Config
 from pm_traitbench.engine.biases import extrapolation
+from pm_traitbench.engine.biases.overconfidence import z_for_coverage
 from pm_traitbench.engine.constants import CONVICTION_CUTS
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.params import EffectiveParams
@@ -25,14 +25,6 @@ from pm_traitbench.engine.series import Series
 from pm_traitbench.enums import Side
 
 _MAX_CONVICTION = 5
-
-
-def z_for_coverage(c: float) -> float:
-    """The two-sided normal z-score whose central interval covers probability `c`."""
-    return float(norm.ppf((1 + c) / 2))
-
-
-Z_80 = z_for_coverage(0.8)
 
 
 @dataclass(frozen=True)

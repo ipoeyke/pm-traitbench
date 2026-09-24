@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 
 from pm_traitbench.config import Config, EngineConfig
+from pm_traitbench.engine.biases.overconfidence import Z_80
 from pm_traitbench.engine.own_signal import (
-    Z_80,
     SignalDraw,
     conviction_bucket,
     draw_signal,

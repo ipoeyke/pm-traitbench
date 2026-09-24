@@ -1,5 +1,8 @@
 """Tests for the entry-side bias rules and the bias-param-to-module registry."""
 
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 from scipy.stats import pearsonr
@@ -35,6 +38,16 @@ def test_bias_rules_registers_the_four_entry_side_modules() -> None:
     assert BIAS_RULES["herding_weight"] is herding_module
     assert BIAS_RULES["overconfidence_coverage"] is overconfidence_module
     assert BIAS_RULES["conviction_size_miscalibration"] is conviction_module
+
+
+def test_own_signal_imports_alone_without_a_circular_import() -> None:
+    """own_signal imports biases.overconfidence, so it must load with no other module warm."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import pm_traitbench.engine.own_signal"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 # --- extrapolation.blend -----------------------------------------------------
