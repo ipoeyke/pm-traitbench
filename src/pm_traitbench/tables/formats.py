@@ -72,6 +72,8 @@ def _pyarrow_type(col: ColumnInfo) -> pa.DataType:
         return pa.bool_()
     if col.kind == "date":
         return pa.date32()
+    if col.kind == "list_struct":
+        return pa.list_(pa.struct(_pyarrow_fields(columns(col.struct))))
     return pa.struct(_pyarrow_fields(columns(col.struct)))
 
 
@@ -102,6 +104,8 @@ def _to_arrow_row(cols: list[ColumnInfo], record: dict[str, Any]) -> dict[str, A
             row[col.name] = datetime.date.fromisoformat(value)
         elif col.kind == "struct":
             row[col.name] = _to_arrow_row(columns(col.struct), value)
+        elif col.kind == "list_struct":
+            row[col.name] = [_to_arrow_row(columns(col.struct), item) for item in value]
         else:
             row[col.name] = value
     return row
@@ -118,6 +122,9 @@ def _from_arrow_row(cols: list[ColumnInfo], row: dict[str, Any]) -> dict[str, An
             record[col.name] = text if number is None else number
         elif col.kind == "struct" and row[col.name] is not None:
             record[col.name] = _from_arrow_row(columns(col.struct), row[col.name])
+        elif col.kind == "list_struct" and row[col.name] is not None:
+            struct_cols = columns(col.struct)
+            record[col.name] = [_from_arrow_row(struct_cols, item) for item in row[col.name]]
         else:
             record[col.name] = row[col.name]
     return record

@@ -73,7 +73,6 @@ ROW_MODELS = [
 ]
 MARKET_ROW_MODELS = [Instrument, Price, CurvePoint, ConsensusRow, CalendarEvent, RegimeSpan]
 ENGINE_ROW_MODELS = [Leg, Idea, LedgerRow, RuleEvent, PositionDay]
-ENGINE_INTROSPECTABLE_MODELS = [Leg, LedgerRow, RuleEvent, PositionDay]
 
 
 def _mandate(**overrides) -> Mandate:
@@ -1174,11 +1173,15 @@ def test_position_day_accepts_anchor_and_exit_level_together() -> None:
 
 
 def test_engine_models_survive_columns_introspection() -> None:
-    # Idea.legs is a tuple of nested Leg rows, which columns() does not
-    # flatten; it is exercised through to_record instead.
-    for model in ENGINE_INTROSPECTABLE_MODELS:
+    for model in ENGINE_ROW_MODELS:
         infos = columns(model)
         assert len(infos) == len(model.model_fields)
+
+
+def test_idea_legs_column_is_list_struct_of_leg() -> None:
+    by_name = {info.name: info for info in columns(Idea)}
+    assert by_name["legs"].kind == "list_struct"
+    assert by_name["legs"].struct is Leg
 
 
 def test_to_record_leg_null_tenor_is_none() -> None:

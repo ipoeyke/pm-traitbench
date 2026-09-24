@@ -4,7 +4,7 @@ import pytest
 from pydantic import BaseModel
 
 from pm_traitbench.tables.introspect import ColumnInfo, columns
-from pm_traitbench.tables.schema import DriftEvent, Mandate, Persona, Trait
+from pm_traitbench.tables.schema import DriftEvent, Idea, Leg, Mandate, Persona, Trait
 
 
 def _by_name(infos: list[ColumnInfo]) -> dict[str, ColumnInfo]:
@@ -45,6 +45,21 @@ def test_trait_multipliers_are_nullable_float() -> None:
 def test_unsupported_annotation_raises_type_error() -> None:
     class _Unsupported(BaseModel):
         bad: list[int]
+
+    with pytest.raises(TypeError):
+        columns(_Unsupported)
+
+
+def test_idea_legs_is_list_struct_of_leg() -> None:
+    by_name = _by_name(columns(Idea))
+    assert by_name["legs"].kind == "list_struct"
+    assert by_name["legs"].struct is Leg
+    assert by_name["legs"].nullable is False
+
+
+def test_tuple_of_non_model_raises_type_error() -> None:
+    class _Unsupported(BaseModel):
+        bad: tuple[int, ...]
 
     with pytest.raises(TypeError):
         columns(_Unsupported)
