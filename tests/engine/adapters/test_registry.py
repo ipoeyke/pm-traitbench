@@ -6,6 +6,7 @@ from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.catalogues.models import PreferenceGroup
 from pm_traitbench.engine.adapters import FORM_FOR_PREFERENCE, adapter_for, preferred_form
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
+from pm_traitbench.engine.adapters.rates_credit import RatesCreditAdapter
 from pm_traitbench.enums import AssetClass, Expression, Kind
 from pm_traitbench.errors import EngineError
 from pm_traitbench.tables.schema import Trait
@@ -32,12 +33,19 @@ def test_adapter_for_multi_asset_raises() -> None:
 
 def test_adapter_for_unregistered_class_raises() -> None:
     with pytest.raises(EngineError):
-        adapter_for(AssetClass.RATES_CREDIT, "sovereign_rates", 20)
+        adapter_for(AssetClass.COMMODITIES, "trend", 20)
 
 
 def test_adapter_for_equities_accepts_any_sub_style() -> None:
     assert isinstance(adapter_for(AssetClass.EQUITIES, "value", 20), EquitiesAdapter)
     assert isinstance(adapter_for(AssetClass.EQUITIES, "made_up_sub_style", 20), EquitiesAdapter)
+
+
+def test_adapter_for_rates_credit_builds_the_registered_adapter() -> None:
+    adapter = adapter_for(AssetClass.RATES_CREDIT, "sovereign_rates", 20)
+    assert isinstance(adapter, RatesCreditAdapter)
+    assert adapter.sub_style == "sovereign_rates"
+    assert adapter.horizon_days == 20
 
 
 def test_form_for_preference_covers_every_catalogue_expression_value() -> None:
