@@ -1,0 +1,186 @@
+"""Pool per-PM gate 1 estimates into neutral and active baselines per asset class.
+
+`estimate_all` runs every estimator over every PM, bias parameter and split it
+applies to. `aggregate` then pools those per-PM statistics into one cell per
+`(seed group, asset class, parameter, split)`: a synthetic pool over every
+synthetic seed, each synthetic seed alone, and each real seed alone. A cell
+carries the neutral baseline, the active mean and floor, and the rank
+correlation and calibration a verdict check later turns into a pass or fail.
+"""
+
+from collections import defaultdict
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass
+
+from pm_traitbench.config import BIAS_PARAMS, Gate1Config
+from pm_traitbench.enums import AssetClass, Gate1Split, SeedGroupKind
+from pm_traitbench.gates.gate1._cell_stats import (
+    CellStats,
+    build_cell,
+    pm_ids_by_seed_asset,
+    pool_shortfall,
+    seed_counts,
+)
+from pm_traitbench.gates.gate1.estimate import Estimate
+from pm_traitbench.gates.gate1.estimators import ESTIMATORS
+from pm_traitbench.gates.gate1.inputs import PmInputs
+from pm_traitbench.gates.gate1.splits import days_for, splits_for
+from pm_traitbench.tables.schema import Gate1PmRow
+
+__all__ = ["SYNTHETIC_POOL", "PmEstimate", "estimate_all", "CellStats", "aggregate"]
+
+SYNTHETIC_POOL = "synthetic"
+
+
+@dataclass(frozen=True)
+class PmEstimate:
+    """One PM's recovered statistic for one bias parameter and split."""
+
+    pm_id: str
+    seed: str
+    asset_class: AssetClass
+    is_real_seed: bool
+    param: str
+    split: Gate1Split
+    estimate: Estimate
+    planted: float
+    active: bool
+    drifted: bool
+
+    def to_row(self) -> Gate1PmRow:
+        """This estimate as the row model gate 1 writes to the store."""
+        return Gate1PmRow(
+            pm_id=self.pm_id,
+            param=self.param,
+            split=self.split,
+            seed=self.seed,
+            asset_class=self.asset_class,
+            statistic=self.estimate.value,
+            n=self.estimate.n,
+            planted=self.planted,
+            active=self.active,
+            drifted=self.drifted,
+        )
+
+
+def estimate_all(inputs: Sequence[PmInputs], knobs: Gate1Config) -> list[PmEstimate]:
+    """Run every estimator over every PM, for each param's splits.
+
+    `drifted` is whether the param's trait had a drift event; `planted` is the
+    trait's sampled value, used as-is for every split (including a split
+    after a drift event, per the design decision that split rows never enter
+    a verdict).
+    """
+    results = []
+    for pm in inputs:
+        for param in BIAS_PARAMS:
+            trait = pm.traits[param]
+            drifted = bool(pm.drift_dates[param])
+            for split in splits_for(pm, param):
+                est = ESTIMATORS[param].estimate(pm, days_for(split, pm, param), knobs)
+                results.append(
+                    PmEstimate(
+                        pm_id=pm.pm_id,
+                        seed=pm.seed,
+                        asset_class=pm.asset_class,
+                        is_real_seed=pm.is_real_seed,
+                        param=param,
+                        split=split,
+                        estimate=est,
+                        planted=float(trait.value),
+                        active=trait.active,
+                        drifted=drifted,
+                    )
+                )
+    return results
+
+
+def aggregate(
+    estimates: Sequence[PmEstimate],
+    engine_counts: Mapping[str, Mapping[str, int]],
+    synthetic_seeds: Collection[str],
+    real_seeds: Collection[str],
+    knobs: Gate1Config,
+) -> list[CellStats]:
+    """Pool `estimates` into a synthetic-pool, per-synthetic-seed and per-real-seed cell.
+
+    One cell per `(asset_class, param, split)` that has at least one member: for
+    `ALL`, a drifted PM's estimate is excluded from every group; other splits
+    already hold only the PMs that split applies to. A cell with no member is
+    not emitted.
+    """
+    synthetic_seeds = set(synthetic_seeds)
+    real_seeds = set(real_seeds)
+    pm_ids = pm_ids_by_seed_asset(estimates)
+    shortfall_cache: dict[tuple[AssetClass, str], bool] = {}
+
+    def shortfall_for(asset_class: AssetClass, param: str) -> bool:
+        key = (asset_class, param)
+        if key not in shortfall_cache:
+            shortfall_cache[key] = pool_shortfall(
+                asset_class, param, synthetic_seeds, pm_ids, engine_counts
+            )
+        return shortfall_cache[key]
+
+    by_key: dict[tuple[AssetClass, str, Gate1Split], list[PmEstimate]] = defaultdict(list)
+    for e in estimates:
+        by_key[(e.asset_class, e.param, e.split)].append(e)
+
+    cells: list[CellStats] = []
+    for (asset_class, param, split), key_estimates in by_key.items():
+        members = (
+            [e for e in key_estimates if not e.drifted]
+            if split == Gate1Split.ALL
+            else key_estimates
+        )
+        if not members:
+            continue
+        higher_is_stronger = ESTIMATORS[param].higher_is_stronger
+
+        pool_members = [e for e in members if e.seed in synthetic_seeds]
+        if pool_members:
+            cells.append(
+                build_cell(
+                    SYNTHETIC_POOL,
+                    SeedGroupKind.SYNTHETIC_POOL,
+                    asset_class,
+                    param,
+                    split,
+                    higher_is_stronger,
+                    pool_members,
+                    knobs,
+                    count_p10=None,
+                    count_ok=None,
+                    count_shortfall=shortfall_for(asset_class, param),
+                )
+            )
+
+        for seeds, kind in (
+            (synthetic_seeds, SeedGroupKind.SYNTHETIC_SEED),
+            (real_seeds, SeedGroupKind.REAL_SEED),
+        ):
+            for seed in sorted(seeds):
+                seed_members = [e for e in members if e.seed == seed]
+                if not seed_members:
+                    continue
+                count_p10, count_ok = seed_counts(
+                    seed, asset_class, param, split, pm_ids, engine_counts
+                )
+                cells.append(
+                    build_cell(
+                        seed,
+                        kind,
+                        asset_class,
+                        param,
+                        split,
+                        higher_is_stronger,
+                        seed_members,
+                        knobs,
+                        count_p10=count_p10,
+                        count_ok=count_ok,
+                        count_shortfall=count_ok is False,
+                    )
+                )
+
+    cells.sort(key=lambda c: (c.seed_group_kind, c.seed_group, c.asset_class, c.param, c.split))
+    return cells
