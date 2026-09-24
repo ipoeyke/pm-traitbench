@@ -78,12 +78,10 @@ def _assert_round_trip(
     keeps_tenor: bool,
 ) -> None:
     side_sign = 1 if side == Side.BUY else -1
-    if form == Expression.OUTRIGHT:
-        bullish_sign = adapter.outright_series(instrument_id).bullish_sign
-        expected = adapter.outright_series(instrument_id)
-    else:
-        bullish_sign = adapter.series(form, series_legs).bullish_sign
-        expected = adapter.series(form, series_legs)
+    # The position's own series, built the same way `attempt_entry` builds it from
+    # `build_legs`'s output; independent of `series_for_idea`'s own outright branch.
+    expected = adapter.series(form, series_legs)
+    bullish_sign = expected.bullish_sign
 
     idea_legs = _idea_legs(series_legs, side_sign, bullish_sign, adapter, keeps_tenor=keeps_tenor)
     idea = _idea(expression=form, instrument_id=instrument_id, side=side, legs=idea_legs)
@@ -230,4 +228,20 @@ def test_commodities_calendar_spread(fixture_view, side) -> None:
         series_legs=legs,
         side=side,
         keeps_tenor=True,
+    )
+
+
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+def test_equities_pair_with_non_unit_weight(side) -> None:
+    """A hand-built pair whose legs carry unequal weights, exercising `leg.weight * sign`
+    recovery for a weight other than 1."""
+    adapter = EquitiesAdapter("value", _HORIZON)
+    series_legs = (LegRef("EQ-0001", None, 1.0), LegRef("EQ-0002", None, -0.7))
+    _assert_round_trip(
+        adapter=adapter,
+        form=Expression.PAIR,
+        instrument_id="EQ-0001",
+        series_legs=series_legs,
+        side=side,
+        keeps_tenor=False,
     )
