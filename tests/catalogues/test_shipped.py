@@ -16,7 +16,7 @@ from pm_traitbench.catalogues.loader import (
     render_thesis,
 )
 from pm_traitbench.catalogues.models import ADAPTER_FORMS, Catalogue, RuleVariant
-from pm_traitbench.enums import AssetClass
+from pm_traitbench.enums import AssetClass, Expression
 
 _REPEATED_WORD = re.compile(r"\b(\w+)\s+\1\b", re.IGNORECASE)
 
@@ -281,3 +281,12 @@ def test_every_adapter_forms_cell_has_a_thesis_template() -> None:
         for expression in expressions:
             templates = catalogue.theses.theses[asset_class][expression]
             assert len(templates) >= 2
+
+
+def test_equities_and_commodities_outright_theses_have_no_unit_on_entry_or_target() -> None:
+    # Entry and target for these cells are a quoted price, not a percentage.
+    catalogue = load_catalogue()
+    for asset_class in (AssetClass.EQUITIES, AssetClass.COMMODITIES):
+        for template in catalogue.theses.theses[asset_class][Expression.OUTRIGHT]:
+            assert "{entry}{unit}" not in template, (asset_class, template)
+            assert "{target}{unit}" not in template, (asset_class, template)

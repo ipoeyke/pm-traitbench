@@ -1,9 +1,9 @@
 theses:
   equities:
     outright:
-      - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
-      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
-      - "{name} at {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
+      - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "{name} at {entry}, {side}, target {target} within {horizon} sessions"
     pair:
       - "{side} {name} at {entry}{unit}, looking for {move}{unit} of spread over {horizon} sessions, target {target}{unit}"
       - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
@@ -19,9 +19,9 @@ theses:
       - "the curve on {name} is {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
   commodities:
     outright:
-      - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
-      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
-      - "{name} at {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
+      - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "{name} at {entry}, {side}, target {target} within {horizon} sessions"
     calendar_spread:
       - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
       - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
@@ -37,6 +37,6 @@ outcomes:
     - "cut it at {pnl}{unit}, out on {closer}"
     - "closed out {pnl}{unit}, out on {closer}"
   open:
-    - "still on at {pnl}{unit}, {closer}"
-    - "position stays on at {pnl}{unit}, {closer}"
-    - "open at {pnl}{unit}, {closer}"
+    - "still on at {pnl}{unit}, marked at {closer}"
+    - "position stays on at {pnl}{unit}, marked at {closer}"
+    - "open at {pnl}{unit}, marked at {closer}"
