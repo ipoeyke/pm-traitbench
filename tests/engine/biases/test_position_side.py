@@ -1,5 +1,7 @@
 """Tests for the position-side bias rules and the completed bias-param registry."""
 
+import math
+
 import pytest
 
 from pm_traitbench.config import BIAS_PARAMS, Config
@@ -129,7 +131,7 @@ def test_respond_acked_no_action_when_lambda_inactive() -> None:
 
 def test_respond_breach_share_matches_e_over_many_draws() -> None:
     # False-alarm rate: tolerance 0.02 at SE about sqrt(0.06*0.94/2000) ~= 0.0053
-    # is about 3.8 SE, well under a 1-in-10,000 chance of a spurious failure.
+    # is about 3.8 SE two-sided, roughly 1 in 6,000.
     params = _params({"exit_deficiency": 0.06}, {"loss_aversion_lambda"})
     rng = stream(1, "exit-def-share")
     breaches = sum(
@@ -174,6 +176,20 @@ def test_choose_raising_lambda_raises_add_or_hold_share_and_lowers_cut_share() -
 
     assert add_or_hold_high > add_or_hold_low
     assert cut_high < cut_low
+
+
+def test_choose_matches_hand_computed_softmax_at_lambda_four() -> None:
+    # Oracle: lam=4, L=1, tau=1 gives V_cut=-4, V_hold=0.5, V_add=-1.25, so the
+    # softmax shares are (cut, hold, add) ~= (0.0094, 0.8440, 0.1467). Tolerance
+    # 0.03 at hold's SE (~0.0057 over 4,000 draws) is about 5.2 SE two-sided,
+    # a false-alarm rate under 1 in a million.
+    config = Config()
+    params = _params({"loss_aversion_lambda": 4.0}, {"loss_aversion_lambda"})
+    rng = stream(1, "loss-aversion-oracle")
+    choices = [choose(-1.0, 0.5, params, config, rng, add_allowed=True) for _ in range(4000)]
+    assert _share(PositionAction.CUT, choices) == pytest.approx(0.0094, abs=0.03)
+    assert _share(PositionAction.HOLD, choices) == pytest.approx(0.8440, abs=0.03)
+    assert _share(PositionAction.ADD, choices) == pytest.approx(0.1467, abs=0.03)
 
 
 def test_choose_add_not_allowed_never_returns_add() -> None:
@@ -225,6 +241,23 @@ def test_sell_hazard_gain_to_loss_ratio_equals_d() -> None:
     h_gain = sell_hazard(0.2, PnlState.GAIN, params, config)
     h_loss = sell_hazard(0.2, PnlState.LOSS, params, config)
     assert h_gain / h_loss == pytest.approx(3.0)
+
+
+def test_sell_hazard_gain_matches_absolute_formula_at_d_three() -> None:
+    # Pins the exact scaling (base * (1 + progress) * sqrt(D)), not just a ratio,
+    # so a symmetric error that scales both gain and loss the same way cannot pass.
+    config = Config()
+    params = _params({"disposition_ratio": 3.0}, {"disposition_ratio"})
+    h = sell_hazard(0.2, PnlState.GAIN, params, config)
+    expected = config.engine.base_hazard * 1.2 * math.sqrt(3.0)
+    assert h == pytest.approx(expected)
+
+
+def test_sell_hazard_negative_progress_is_clamped_to_base() -> None:
+    config = Config()
+    params = _params({"disposition_ratio": 3.0}, {"disposition_ratio"})
+    h = sell_hazard(-5.0, PnlState.FLAT, params, config)
+    assert h == pytest.approx(config.engine.base_hazard)
 
 
 def test_sell_hazard_flat_is_unchanged_by_d() -> None:
@@ -295,7 +328,37 @@ def test_evaluate_rho_one_effective_equals_anchor() -> None:
     params = _params({"anchoring_rho": 1.0}, {"anchoring_rho"})
     pos = _position(side=Side.BUY, bullish_sign=1, target_level=110.0)
     result = evaluate(pos, 100.0, [105.0, 108.0], params)
-    assert result.effective_exit_level == pytest.approx(result.anchor_level)
+    # Nearest candidate above level_now=100 is 105.0; compared against the
+    # literal expected anchor, not the returned anchor_level, so a bug that
+    # picks the wrong candidate cannot pass by comparing a value to itself.
+    assert result.anchor_level == pytest.approx(105.0)
+    assert result.effective_exit_level == pytest.approx(105.0)
+
+
+def test_evaluate_rho_half_reached_tracks_the_blended_effective_for_buy() -> None:
+    # An anchor beyond the target (115 > 110) blends to an effective of 112.5,
+    # distinct from both; reached tracks that blended level, not the raw target.
+    params = _params({"anchoring_rho": 0.5}, {"anchoring_rho"})
+    pos = _position(side=Side.BUY, bullish_sign=1, target_level=110.0)
+    result = evaluate(pos, 112.5, [115.0], params)
+    assert result.anchor_level == pytest.approx(115.0)
+    assert result.effective_exit_level == pytest.approx(112.5)
+    assert result.reached is True
+
+
+def test_evaluate_bullish_sign_negative_mirrors_the_short_case() -> None:
+    # BUY with bullish_sign=-1 gives adverse_dir=1, the same as a SELL with
+    # bullish_sign=1: the favourable direction is downward, so anchors below
+    # level_now qualify and the effective level is reached by falling to it.
+    params = _params({"anchoring_rho": 1.0}, {"anchoring_rho"})
+    pos = _position(side=Side.BUY, bullish_sign=-1, target_level=90.0)
+    above = evaluate(pos, 95.0, [85.0, 92.0, 70.0], params)
+    assert above.anchor_level == pytest.approx(92.0)
+    assert above.effective_exit_level == pytest.approx(92.0)
+    assert above.reached is False
+
+    at_target = evaluate(pos, 90.0, [], params)
+    assert at_target.reached is True
 
 
 def test_evaluate_picks_nearest_candidate_on_target_side_for_buy() -> None:
