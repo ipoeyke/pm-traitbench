@@ -2,6 +2,7 @@
 
 import math
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import date, timedelta
 
 import numpy as np
@@ -10,6 +11,7 @@ import pytest
 from pm_traitbench.config import Config
 from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
+from pm_traitbench.engine.adapters.rates_credit import RatesCreditAdapter
 from pm_traitbench.engine.biases import disposition as disposition_module
 from pm_traitbench.engine.biases import loss_aversion as loss_aversion_module
 from pm_traitbench.engine.biases.exit_deficiency import LATE_ROLL_FLAG
@@ -33,6 +35,7 @@ from pm_traitbench.enums import (
     Op,
     PnlState,
     PositionAction,
+    RatingBand,
     Regime,
     RuleResponse,
     RuleScope,
@@ -165,6 +168,45 @@ def _commodity_view(
         curves=curves,
         consensus=[],
         calendar=calendar,
+        regimes=regimes,
+    )
+
+
+def _credit_view(spreads: Sequence[float], *, instrument_id: str) -> MarketView:
+    """A single credit issuer whose spread (bp) is controlled directly, in a range regime."""
+    dates = _dates(len(spreads))
+    instrument = Instrument(
+        instrument_id=instrument_id,
+        family=Family.CREDIT,
+        kind=InstrumentKind.CREDIT_ISSUER,
+        name="Test issuer",
+        currency="USD",
+        sector="sector_01",
+        rating_band=RatingBand.A,
+        commodity_group=None,
+        duration_years=5.0,
+        beta=None,
+        expiry_rule=None,
+    )
+    prices = [
+        Price(
+            seed=_SEED,
+            date=d,
+            instrument_id=instrument_id,
+            price=100.0,
+            spread_bp=spreads[t],
+        )
+        for t, d in enumerate(dates)
+    ]
+    regimes = [RegimeSpan(seed=_SEED, regime=Regime.RANGE, date_start=dates[0], date_end=dates[-1])]
+    return MarketView.build(
+        seed=_SEED,
+        dates=dates,
+        instruments=[instrument],
+        prices=prices,
+        curves=[],
+        consensus=[],
+        calendar=[],
         regimes=regimes,
     )
 
@@ -1159,6 +1201,60 @@ def test_position_day_rows_one_per_open_position(eq_parts) -> None:
     assert row.trade_idea_id == "ti_001"
     assert row.trigger_pending is True
     assert row.action == PositionAction.EXIT
+
+
+def test_position_day_triggers_fired_is_cumulative(eq_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = eq_parts
+    view = _view([0.0, 0.0, -15.0, -15.0], instrument_id="EQ-A")
+    pos = _position("ti_001", "EQ-A", stop_level=-10.0, size_pct_book=10.0, triggers_fired=2)
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    # e=1 acks the stop, so the position survives to a second day.
+    traits = _traits_with(traits, {"exit_deficiency": (1.0, False)})
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["EQ-A"], catalogue, config)
+
+    state, quiet = step(state, 1, view, ctx, idea_rules)
+    assert quiet.position_days[0].triggers_fired == 2
+    state, fired = step(state, 2, view, ctx, idea_rules)
+    assert fired.rule_events
+    assert fired.position_days[0].triggers_fired == 3
+    state, closing = step(state, 3, view, ctx, idea_rules)
+    assert closing.position_days[0].action == PositionAction.EXIT
+    assert closing.position_days[0].triggers_fired == 3
+
+
+def test_credit_buy_stops_out_on_a_spread_widening_with_negative_pnl(neutral_pm, catalogue) -> None:
+    persona, traits, pm_rules = neutral_pm(AssetClass.RATES_CREDIT, "long_short_credit")
+    adapter = RatesCreditAdapter(sub_style="long_short_credit", horizon_days=20)
+    config = Config()
+    view = _credit_view([100.0, 115.0, 115.0], instrument_id="CR-A")
+    # A credit buy is long the bond: a falling spread is good, so the stop sits above entry.
+    series = Series(legs=(LegRef("CR-A", None, 1.0),), bullish_sign=-1, unit="bp")
+    leg = Leg(instrument_id="CR-A", tenor=None, side=Side.BUY, weight=1.0)
+    pos = replace(
+        _position("ti_001", "CR-A", entry_level=100.0, target_level=60.0, stop_level=110.0),
+        series=series,
+        legs=(leg,),
+    )
+    assert pos.adverse_dir == 1
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = {
+        "ti_001": (
+            _stop_rule(persona.pm_id, "ti_001", "r_90", 110.0, adverse_dir=1),
+            _target_rule(persona.pm_id, "ti_001", "r_91", 60.0, adverse_dir=1),
+        )
+    }
+    traits = _traits_with(traits, {"exit_deficiency": (0.0, False)})
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CR-A"], catalogue, config)
+
+    new_state, out = step(state, 1, view, ctx, idea_rules)
+
+    assert new_state.n_positions == 0
+    assert [ev.rule_id for ev in out.rule_events] == ["r_90"]
+    assert out.position_days[0].pnl_unit == pytest.approx(-15.0)
+    assert out.position_days[0].pnl_state == PnlState.LOSS
+    assert [row.side for row in out.ledger_rows] == [Side.SELL]
+    assert "the stop" in out.closed[0][2]
 
 
 def test_last_day_close_out_exits_every_open_position(eq_parts) -> None:

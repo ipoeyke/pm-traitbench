@@ -110,9 +110,8 @@ class ParamSchedule:
             param: config.biases.params[param].neutral.median_value() for param in base_values
         }
 
-        # Only events on a bias trait in this schedule apply; preference
-        # drift has no corresponding param here. Stable sort by date keeps
-        # same-day events in the order they were given.
+        # Only bias-trait events apply (preference drift has no param here); a stable
+        # sort by date keeps same-day events in the order they were given.
         relevant = [e for e in drift_events if e.trait_id in param_by_trait_id]
         ordered = sorted(enumerate(relevant), key=lambda pair: (pair[1].date, pair[0]))
         events = tuple(e for _, e in ordered)

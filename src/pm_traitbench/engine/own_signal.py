@@ -76,9 +76,8 @@ def draw_signal(
 
     coverage = params.value("overconfidence_coverage")
     z_c = z_for_coverage(coverage)
-    # Centred on the conditional mean of the forward move (series units) given the
-    # signal, not the stated thesis, so a neutral PM's realised coverage equals its
-    # stated coverage.
+    # Centred on the forward move's conditional mean given the signal, not the thesis,
+    # so a neutral PM's realised coverage equals its stated coverage.
     centre = series.bullish_sign * skill * own_signal * sd_fwd
     half_width = z_c * sd_fwd * math.sqrt(1 - skill**2)
 

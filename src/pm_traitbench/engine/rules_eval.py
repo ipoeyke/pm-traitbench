@@ -15,9 +15,8 @@ from pm_traitbench.tables.schema import Rule
 
 FieldValues = Mapping[str, float | int | str | frozenset[str]]
 
-# PM-scope params evaluated every day, regardless of trade idea; the rest
-# (stop_loss, max_risk_pct, no_add_before_trigger, max_positions, exclusion)
-# are constraints or sources consulted elsewhere, not daily conditions.
+# PM-scope params evaluated daily; the rest (stop_loss, max_risk_pct, no_add_before_trigger,
+# max_positions, exclusion) are constraints or sources consulted elsewhere.
 DAILY_PM_PARAMS = frozenset({"trim_at_target", "min_holding_period", "roll_before_expiry"})
 
 _NUMERIC_OPS = {Op.LE, Op.GE, Op.LT, Op.GT}
@@ -44,7 +43,13 @@ def condition_holds(rule: Rule, fields: FieldValues) -> bool:
         raise EngineError(f"rule '{rule.rule_id}' op '{rule.op.value}' is invalid on a set field")
 
     if rule.op in _NUMERIC_OPS:
-        left, right = float(value), float(rule.level)  # type: ignore[arg-type]
+        try:
+            left, right = float(value), float(rule.level)  # type: ignore[arg-type]
+        except ValueError:
+            raise EngineError(
+                f"rule '{rule.rule_id}' op '{rule.op.value}' needs numeric values, got "
+                f"field '{rule.field}' = {value!r} and level {rule.level!r}"
+            ) from None
         if rule.op == Op.LE:
             return left <= right
         if rule.op == Op.GE:

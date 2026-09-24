@@ -1,5 +1,6 @@
 """End-to-end tests for the CLI: the pipeline stages run through main()."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -7,9 +8,11 @@ import pytest
 from pm_traitbench import pipeline
 from pm_traitbench.cli import build_parser, main
 from pm_traitbench.config import OutputConfig, load_config
+from pm_traitbench.enums import AssetClass
 from pm_traitbench.tables.specs import (
     DRIFT_EVENTS,
     ENGINE_TABLES,
+    IDEAS,
     MARKET_TABLES,
     PERSONAS,
     RULES,
@@ -149,6 +152,49 @@ def test_engine_force_twice_leaves_one_set_of_idea_rules(fake_cache) -> None:
     assert main(["engine", "--force", *args]) == 0
 
     assert rules_path.read_bytes() == first
+
+
+_SYNTHETIC_CONFIG = """\
+population:
+  asset_classes: [equities, rates_credit, commodities, multi_asset]
+  market_seeds: [A]
+  pilot_market_seeds: [B]
+  pilot_per_cell: 1
+  full_per_cell: 1
+market:
+  universe:
+    n_equities: 20
+    n_sectors: 5
+    n_credit_issuers: 12
+"""
+
+
+def test_sample_market_engine_on_synthetic_seeds_runs_every_direct_asset_class(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "synthetic.yaml"
+    config_path.write_text(_SYNTHETIC_CONFIG, encoding="utf-8")
+    data_dir = tmp_path / "data"
+    args = ["--config", str(config_path), "--data-dir", str(data_dir)]
+
+    for stage in ("sample", "market", "engine"):
+        assert main([stage, *args]) == 0
+
+    store = DataStore(data_dir, load_config(config_path).output)
+    personas = store.read(PERSONAS)
+    asset_class_by_pm = {p.pm_id: p.mandate.asset_class for p in personas}
+    classes_with_ideas = {asset_class_by_pm[idea.pm_id] for idea in store.read(IDEAS)}
+    assert classes_with_ideas == {
+        AssetClass.EQUITIES,
+        AssetClass.RATES_CREDIT,
+        AssetClass.COMMODITIES,
+    }
+    metadata = json.loads((data_dir / "run_metadata" / "engine.json").read_text())
+    multi_asset = sorted(
+        pm_id for pm_id, ac in asset_class_by_pm.items() if ac == AssetClass.MULTI_ASSET
+    )
+    assert multi_asset
+    assert metadata["skipped"] == multi_asset
 
 
 def test_help_output_lists_the_engine_subcommand() -> None:

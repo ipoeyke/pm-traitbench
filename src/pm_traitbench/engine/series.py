@@ -26,9 +26,9 @@ class LegRef:
 class Series:
     """A weighted sum of leg levels, plus how a bullish view reads on it.
 
-    `bullish_sign` is +1 when a higher level favours the idea's stated
-    direction, -1 when a lower level does (e.g. a short outright). `unit` is
-    the unit the resulting level is expressed in.
+    `bullish_sign` belongs to the series, never to an idea's direction: +1 when a rising
+    level is good for a long (prices, a steepener, a calendar spread), -1 when a falling
+    level is (an outright yield or spread). `unit` is the unit the level is expressed in.
     """
 
     legs: tuple[LegRef, ...]

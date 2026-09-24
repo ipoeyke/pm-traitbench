@@ -94,6 +94,9 @@ def step(
     On the horizon's last day, every open position closes out instead, before any trigger or
     discretionary evaluation - a rule-driven trim or add that same day would otherwise sell (or
     add to) the same leg the close-out sells again, producing a duplicate ledger row.
+
+    Entries run after the close-out, so this relies on `NO_ENTRY_LAST_SESSIONS >= 1`: an idea
+    entered on the last day would never close.
     """
     params = ctx.schedule.for_day(view.dates[t], view.regime(t))
 
@@ -139,7 +142,7 @@ def step(
                 pnl_z=pnl_z,
                 pnl_state=pnl_state,
                 sessions_held=t - pos.entry_t,
-                triggers_fired=0,
+                triggers_fired=pos.triggers_fired,
                 trigger_pending=False,
                 action=PositionAction.EXIT,
                 bias_flag=None,
@@ -227,7 +230,7 @@ def step(
             pnl_z=pnl_z,
             pnl_state=pnl_state,
             sessions_held=t - pos.entry_t,
-            triggers_fired=trig.fired_non_hold,
+            triggers_fired=pos.triggers_fired + trig.fired_non_hold,
             trigger_pending=trig.trigger_pending,
             action=action,
             bias_flag=bias_flag,

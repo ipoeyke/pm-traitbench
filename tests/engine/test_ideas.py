@@ -257,6 +257,12 @@ def test_strong_signal_credit_bullish_negative_consistent_stop_and_target(
     assert new_idea is not None
     assert new_idea.position.series.bullish_sign == -1
     idea = new_idea.idea
+    # A bullish credit signal buys the bond: spreads must fall, so the stop sits above entry.
+    assert idea.side == Side.BUY
+    assert idea.stop_level > idea.entry_level
+    assert idea.target_level < idea.entry_level
+    stop, target = new_idea.rules[:2]
+    assert (stop.op, target.op) == (Op.GE, Op.LE)
     rr_lo, rr_hi = config.engine.rr_range
     rr = (idea.target_level - idea.entry_level) / (idea.entry_level - idea.stop_level)
     assert rr_lo <= rr <= rr_hi

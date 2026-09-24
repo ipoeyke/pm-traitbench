@@ -276,6 +276,7 @@ class MarketView:
         total = np.zeros(self.n_days)
         for leg in series.legs:
             total = total + leg.coeff * self._raw_level_series(leg.instrument_id, leg.tenor)
+        total.flags.writeable = False
         self._level_cache[series] = total
         return total
 

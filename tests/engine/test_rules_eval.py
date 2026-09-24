@@ -131,6 +131,12 @@ def test_condition_holds_set_with_other_op_raises() -> None:
         condition_holds(rule, {"event": frozenset({"earnings"})})
 
 
+def test_condition_holds_numeric_op_on_a_text_level_raises_naming_the_rule() -> None:
+    rule = _rule(rule_id="r_07", field="rating_band", op=Op.GE, level="BBB")
+    with pytest.raises(EngineError, match="r_07.*rating_band"):
+        condition_holds(rule, {"rating_band": "AA"})
+
+
 def test_condition_holds_missing_field_raises() -> None:
     rule = _rule(rule_id="r_09", field="sector", op=Op.NE, level="energy")
     with pytest.raises(EngineError, match="r_09"):

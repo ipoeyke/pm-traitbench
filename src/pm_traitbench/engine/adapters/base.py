@@ -161,7 +161,8 @@ def excluded_values(rules: Sequence[Rule], field: str) -> frozenset[str]:
 def standard_anchors(
     adapter: Adapter, pos: Position, view: MarketView, t: int
 ) -> tuple[float, ...]:
-    """Entry level; the round level in range regime; the trailing extreme against the position.
+    """Entry level; the round level in range regime; the trailing extreme on the position's
+    favourable side.
 
     All three in the position's tracked (pre-roll) frame: `entry_level` is never shifted, so it
     is used as-is; the round level and trailing extreme read the raw series, so each is re-based

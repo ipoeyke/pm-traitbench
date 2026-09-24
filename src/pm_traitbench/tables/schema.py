@@ -574,7 +574,9 @@ class PositionDay(BaseModel):
     pnl_z: float = Field(description="Mark-to-market P&L expressed as a z-score.")
     pnl_state: PnlState = Field(description="Categorical P&L state derived from pnl_z.")
     sessions_held: int = Field(ge=0, description="Number of sessions the idea has been held.")
-    triggers_fired: int = Field(ge=0, description="Number of rule triggers fired on this day.")
+    triggers_fired: int = Field(
+        ge=0, description="Rule triggers fired on this idea so far, this day included."
+    )
     trigger_pending: bool = Field(description="Whether a triggered rule is awaiting a response.")
     action: PositionAction = Field(description="Position action taken on this day.")
     bias_flag: str | None = Field(

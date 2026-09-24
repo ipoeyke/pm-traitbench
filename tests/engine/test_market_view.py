@@ -59,6 +59,13 @@ def test_raw_level_equity_is_100_times_log_price(fixture_view: MarketView, fixtu
     assert fixture_view.raw_level("EQ-0001", None, 5) == pytest.approx(100 * math.log(price))
 
 
+def test_cached_level_series_is_read_only(fixture_view: MarketView) -> None:
+    series = Series(legs=(LegRef("EQ-0001", None, 1.0),), bullish_sign=1, unit="pct")
+    fixture_view.level(series, 0)
+    with pytest.raises(ValueError, match="read-only"):
+        fixture_view._level_series(series)[0] = 0.0
+
+
 def test_raw_level_commodity_futures_tenor_is_100_times_log_curve_level(
     fixture_view: MarketView, fixture_market: dict
 ):

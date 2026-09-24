@@ -138,8 +138,8 @@ def test_herding_flag_only_when_active() -> None:
 
 
 def test_herding_follow_share_matches_w_over_many_draws() -> None:
-    # False-alarm rate: tolerance 0.05 at SE 0.011 is about 4.5 SE, so well
-    # under a 1-in-a-million chance of a spurious failure at the true rate.
+    # False-alarm rate: tolerance 0.05 at SE 0.011 is about 4.5 SE, a two-sided
+    # chance of a spurious failure at the true rate of about 1 in 150,000.
     params = _params({"herding_weight": 0.58}, {"herding_weight"})
     rng = stream(1, "herding-share")
     followed = sum(

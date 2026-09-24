@@ -82,8 +82,8 @@ class _CountingRng:
 @pytest.mark.parametrize("bullish_sign", [1, -1])
 @pytest.mark.parametrize("skill", [0.0, 0.15, 0.5])
 def test_own_signal_correlation_matches_skill(skill: float, bullish_sign: int) -> None:
-    # False-alarm rate: tolerance 0.02 is about 2.8 standard errors (~0.007) two-sided
-    # over 20,000 draws, about 0.5% per parametrisation.
+    # Tolerance 0.03 is at least 4.2 SE (SE of r is (1 - skill^2)/sqrt(n), 0.0071 at skill 0):
+    # a two-sided false alarm of about 2e-5 per parametrisation, 7e-5 over all six.
     n_draws = 20_000
     horizon = 20
     config = _config(skill, horizon)
@@ -101,7 +101,7 @@ def test_own_signal_correlation_matches_skill(skill: float, bullish_sign: int) -
         zs[i] = z
         signals[i] = draw.own_signal
     corr = float(np.corrcoef(signals, zs)[0, 1])
-    assert corr == pytest.approx(skill, abs=0.02)
+    assert corr == pytest.approx(skill, abs=0.03)
 
 
 @pytest.mark.parametrize("bullish_sign", [1, -1])
