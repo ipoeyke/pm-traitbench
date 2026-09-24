@@ -10,10 +10,13 @@ from pm_traitbench.enums import (
     AssetClass,
     DriftEventType,
     Expression,
+    Gate1Split,
+    Gate1Verdict,
     Kind,
     Op,
     RuleScope,
     RuleSource,
+    SeedGroupKind,
     Side,
     Split,
     StreetView,
@@ -23,6 +26,8 @@ from pm_traitbench.errors import TableValidationError
 from pm_traitbench.tables.formats import FORMATS
 from pm_traitbench.tables.schema import (
     DriftEvent,
+    Gate1CellRow,
+    Gate1PmRow,
     Idea,
     Leg,
     Mandate,
@@ -167,6 +172,48 @@ def _idea_with_two_legs() -> Idea:
     )
 
 
+def _gate1_pm_row() -> Gate1PmRow:
+    return Gate1PmRow(
+        pm_id="pm_001",
+        param="loss_aversion_lambda",
+        split=Gate1Split.ALL,
+        seed="A",
+        asset_class=AssetClass.EQUITIES,
+        statistic=None,
+        n=12,
+        planted=1.8,
+        active=True,
+        drifted=False,
+    )
+
+
+def _gate1_cell_row() -> Gate1CellRow:
+    return Gate1CellRow(
+        seed_group="pool",
+        seed_group_kind=SeedGroupKind.SYNTHETIC_POOL,
+        asset_class=AssetClass.EQUITIES,
+        param="loss_aversion_lambda",
+        split=Gate1Split.ALL,
+        n_neutral=20,
+        n_active=10,
+        n_missing=1,
+        neutral_mean=1.1,
+        neutral_sd=None,
+        active_mean=1.9,
+        floor=None,
+        active_share_past_floor=0.7,
+        rank_corr=None,
+        count_p10=8.0,
+        calibration=None,
+        gap_ok=True,
+        rank_ok=False,
+        count_ok=None,
+        count_shortfall=False,
+        verdict=Gate1Verdict.PASS,
+        blocking=True,
+    )
+
+
 NON_STRUCT_ROWS = [
     _bias_trait(),
     _preference_trait_with_special_chars(),
@@ -223,6 +270,26 @@ def test_round_trip_idea_with_list_struct_legs(tmp_path: Path, format_name: str)
     fmt.write([to_record(row)], Idea, path)
     records = fmt.read(path, Idea)
     assert [Idea.model_validate(record) for record in records] == [row]
+
+
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
+def test_round_trip_gate1_pm_row(tmp_path: Path, format_name: str) -> None:
+    fmt = FORMATS[format_name]
+    row = _gate1_pm_row()
+    path = tmp_path / f"table.{fmt.extension}"
+    fmt.write([to_record(row)], Gate1PmRow, path)
+    records = fmt.read(path, Gate1PmRow)
+    assert [Gate1PmRow.model_validate(record) for record in records] == [row]
+
+
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
+def test_round_trip_gate1_cell_row(tmp_path: Path, format_name: str) -> None:
+    fmt = FORMATS[format_name]
+    row = _gate1_cell_row()
+    path = tmp_path / f"table.{fmt.extension}"
+    fmt.write([to_record(row)], Gate1CellRow, path)
+    records = fmt.read(path, Gate1CellRow)
+    assert [Gate1CellRow.model_validate(record) for record in records] == [row]
 
 
 def test_jsonl_write_missing_record_column_raises_table_validation_error(tmp_path: Path) -> None:

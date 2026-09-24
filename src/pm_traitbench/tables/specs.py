@@ -9,6 +9,8 @@ from pm_traitbench.tables.schema import (
     ConsensusRow,
     CurvePoint,
     DriftEvent,
+    Gate1CellRow,
+    Gate1PmRow,
     Idea,
     Instrument,
     LedgerRow,
@@ -64,6 +66,12 @@ RULE_EVENTS = TableSpec(
 POSITION_DAYS = TableSpec("position_days", PositionDay, ("pm_id", "date", "trade_idea_id"))
 
 ENGINE_TABLES: tuple[TableSpec, ...] = (IDEAS, LEDGER, RULE_EVENTS, POSITION_DAYS)
+
+GATE1_PM = TableSpec("gate1_pm", Gate1PmRow, ("pm_id", "param", "split"))
+GATE1_CELLS = TableSpec(
+    "gate1_cells", Gate1CellRow, ("seed_group", "asset_class", "param", "split")
+)
+GATE1_TABLES: tuple[TableSpec, ...] = (GATE1_PM, GATE1_CELLS)
 
 HIDDEN_COLUMNS: dict[str, tuple[str, ...]] = {
     "ledger": ("bias_flag", "rule_id"),

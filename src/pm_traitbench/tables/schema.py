@@ -20,6 +20,8 @@ from pm_traitbench.enums import (
     ExpiryRule,
     Expression,
     Family,
+    Gate1Split,
+    Gate1Verdict,
     InstrumentKind,
     Kind,
     Op,
@@ -31,6 +33,7 @@ from pm_traitbench.enums import (
     RuleResponse,
     RuleScope,
     RuleSource,
+    SeedGroupKind,
     Side,
     Split,
     StreetView,
@@ -63,6 +66,9 @@ __all__ = [
     "RuleResponse",
     "PositionAction",
     "PnlState",
+    "Gate1Verdict",
+    "Gate1Split",
+    "SeedGroupKind",
     "Mandate",
     "StatedProfile",
     "Persona",
@@ -80,6 +86,8 @@ __all__ = [
     "LedgerRow",
     "RuleEvent",
     "PositionDay",
+    "Gate1PmRow",
+    "Gate1CellRow",
     "to_record",
     "multiplier_field",
 ]
@@ -598,6 +606,76 @@ class PositionDay(BaseModel):
         if is_flat != (self.pnl_state == PnlState.FLAT):
             raise ValueError("pnl_state must be 'flat' exactly when abs(pnl_z) < 1e-9")
         return self
+
+
+class Gate1PmRow(BaseModel):
+    """A single PM's recovered statistic for one bias parameter and split."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pm_id: str = Field(pattern=_PM_ID_PATTERN, description="Identifier of the PM the row covers.")
+    param: str = Field(description="Name of the bias parameter the statistic estimates.")
+    split: Gate1Split = Field(description="Window of the ledger the statistic was computed over.")
+    seed: str = Field(description="Market seed the row's ledger data comes from.")
+    asset_class: AssetClass = Field(description="Asset class of the PM's mandate.")
+    statistic: float | None = Field(
+        description="Estimator's recovered value; null when the data was too thin to compute."
+    )
+    n: int = Field(
+        ge=0, description="Number of ledger observations the statistic was computed from."
+    )
+    planted: float = Field(description="Trait's sampled value that was planted on the PM.")
+    active: bool = Field(description="Whether the bias was active on the PM.")
+    drifted: bool = Field(description="Whether the trait had a drift event during the run.")
+
+
+class Gate1CellRow(BaseModel):
+    """A neutral-versus-active comparison for one bias parameter, asset class and split."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    seed_group: str = Field(description="Identifier of the seed group the cell aggregates over.")
+    seed_group_kind: SeedGroupKind = Field(
+        description="Kind of seed group the cell aggregates over."
+    )
+    asset_class: AssetClass = Field(description="Asset class the cell covers.")
+    param: str = Field(description="Name of the bias parameter the cell compares.")
+    split: Gate1Split = Field(description="Window of the ledger the cell was computed over.")
+    n_neutral: int = Field(ge=0, description="Number of neutral PMs contributing to the cell.")
+    n_active: int = Field(ge=0, description="Number of active PMs contributing to the cell.")
+    n_missing: int = Field(
+        ge=0, description="Number of PMs excluded from the cell for lacking a usable statistic."
+    )
+    neutral_mean: float | None = Field(description="Mean statistic across neutral PMs.")
+    neutral_sd: float | None = Field(
+        description="Standard deviation of the statistic across neutral PMs."
+    )
+    active_mean: float | None = Field(description="Mean statistic across active PMs.")
+    floor: float | None = Field(
+        description="Statistic level, above the neutral mean, that counts as recovery."
+    )
+    active_share_past_floor: float | None = Field(
+        description="Share of active PMs whose statistic clears the floor."
+    )
+    rank_corr: float | None = Field(
+        description="Rank correlation between planted strength and the recovered statistic."
+    )
+    count_p10: float | None = Field(
+        description="10th percentile of the observation count across the cell's PMs."
+    )
+    calibration: float | None = Field(
+        description="Calibration measure between planted and recovered magnitude."
+    )
+    gap_ok: bool = Field(description="Whether the neutral-to-active gap check passed.")
+    rank_ok: bool = Field(description="Whether the rank correlation check passed.")
+    count_ok: bool | None = Field(
+        description="Whether the observation count check passed; null when not evaluated."
+    )
+    count_shortfall: bool = Field(
+        description="Whether the cell's observation count fell short of the estimator's minimum."
+    )
+    verdict: Gate1Verdict = Field(description="The cell's recovery verdict.")
+    blocking: bool = Field(description="Whether a failing verdict on this cell blocks the gate.")
 
 
 def to_record(row: BaseModel) -> dict[str, Any]:
