@@ -345,6 +345,8 @@ The loop tallies per PM: `loss_side_untriggered_days`, `triggers_fired`, `confli
 
 - Anchoring candidates are anchors strictly between entry and target (found at review: candidates beyond the current level can never be reached before the target).
 
+- Roll bookkeeping: a rolled commodity position retags its legs one month out (`M1 -> M2`, `Mk -> Mk+1`) and records `rolled_until_t` (the expiry day it rolled for); the roll rule and the force roll are skipped while the marker is set; at the close of the expiry day the legs retag back (`M2 -> M1`, `Mk+1 -> Mk`) with no ledger rows, since the curve table relabels the next contract as M1. Found at review: without a marker the roll rule re-fired every day of its window.
+
 ## Limitations to record in the README
 
 - On real seed R1 the credit universe is two index-level issuers and the rates universe one curve, so long_short_credit PMs on the pilot revisit the same two instruments and their `max_positions` rule never binds. Sovereign_rates PMs trade one curve's tenors only.
