@@ -146,7 +146,7 @@ Cross-check on `Config`: `horizon_days` at most a quarter of the horizon in trad
 | Constant | Value | Note |
 |---|---|---|
 | `ENTRY_THRESHOLD` | 1.0 | minimum `abs(own_signal)` to enter; one sd of view |
-| `CONVICTION_CUTS` | (1.0, 1.4, 1.8, 2.3) | `abs(own_signal)` edges for buckets 1-5 |
+| `CONVICTION_CUTS` | (1.0, 1.14, 1.31, 1.53, 1.86) | `abs(own_signal)` lower edges for buckets 1-5: quintiles of a standard normal's absolute value given it exceeds 1, so ranks are equally likely |
 | `SIGNPOSTS_PER_IDEA` | 2 or 3, uniform | plan section 1.3 |
 | `ADD_FRACTION` | 0.5 | an add is half the original size |
 | `RISK_STEPS` | (0.2, 0.4, 0.6, 0.8, 1.0) | size at rank 1-5 as a fraction of the mandate cap, linear |
@@ -232,7 +232,8 @@ z            = forward_move / sd_H                          # standardised reali
 own_signal   = skill * z + sqrt(1 - skill^2) * n,  n ~ N(0, 1), stream(root, "engine", pm_id, "signal", t, attempt)
 thesis_move  = own_signal * sd_H                            # decision 3: unscaled
 forecast     = (1 - theta) * thesis_move + theta * trailing_move   # extrapolation, plan 3.1
-interval     = forecast ± z_c * sd_H * sqrt(1 - skill^2),  z_c = Phi^-1((1 + c) / 2)
+interval     = skill * own_signal * sd_fwd ± z_c * sd_fwd * sqrt(1 - skill^2),  z_c = Phi^-1((1 + c) / 2)
+             # centred on the honest conditional mean, sd_fwd = sd_H * sqrt(fd / H), so realised coverage equals c by construction
 conviction   = 1 + number of CONVICTION_CUTS below abs(own_signal), capped at 5
 ```
 
@@ -339,6 +340,8 @@ The loop tallies per PM: `loss_side_untriggered_days`, `triggers_fired`, `confli
 - `min_holding_period` writes an event row only when overridden by an exit, roll or trim; otherwise it silently blocks discretionary exits.
 
 - Thesis templates carry a `{side}` slot (`long`/`short`, `steepener`/`flattener`, `long the front`/`short the front`) and never a directional verb; signpost templates are direction-neutral; outcome templates take `{closer}` as a rendered phrase (`the stop`, `the target`, `a signpost`, `the trim`, `the roll`, `my call`, `the year end`). Found at review: hard-coded direction words contradicted short ideas and non-target closes.
+
+- The stated interval is centred on the honest conditional mean `skill * own_signal * sd_fwd`, not on the unscaled thesis, so a neutral PM's realised coverage equals `c` (the definition); the thesis target stays unscaled. Conviction cuts are five quintile edges so ranks 1-5 are equally likely.
 
 ## Limitations to record in the README
 
