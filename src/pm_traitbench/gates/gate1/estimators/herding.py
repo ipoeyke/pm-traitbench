@@ -1,11 +1,10 @@
 """Herding: the share of entries on the street's side, among entries where the street took one.
 
 This cannot read the hidden `conflict`/`followed_street` columns: a PM who
-followed the street when the street agreed with them leaves no trace of a
-conflict, so the only observable signal is whether the entered side matches
-the street's overweight/underweight view. The agreement rate this recovers
-rises with the herding weight, and the neutral baseline (entries the PM would
-have taken anyway) absorbs the rate a PM with no herding would show by chance.
+follows the street in a conflict ends on the street's side, so the conflict
+cannot be seen in public data. The agreement rate with a non-neutral street
+view rises with the herding weight, and the neutral baseline absorbs natural
+agreement.
 """
 
 from datetime import date

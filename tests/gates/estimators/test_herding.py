@@ -8,7 +8,7 @@ from tests.gates.conftest import idea_row
 KNOBS = Config().gate1
 
 
-def test_three_of_four_agreeing_entries_gives_quarter_share(make_inputs, fixture_view):
+def test_three_of_four_agreeing_entries_gives_three_quarters_share(make_inputs, fixture_view):
     dates = fixture_view.dates
     # t=1 and t=2: street overweight (score > 0.1); t=3: overweight too; t=11: underweight.
     assert fixture_view.street_view("EQ-0001", 1) == StreetView.OVERWEIGHT

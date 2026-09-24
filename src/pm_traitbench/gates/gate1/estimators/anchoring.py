@@ -4,11 +4,10 @@ import math
 from datetime import date
 
 from pm_traitbench.config import Gate1Config
-from pm_traitbench.enums import PositionAction, Side
+from pm_traitbench.enums import PositionAction
 from pm_traitbench.gates.gate1.estimate import Estimate, EstimatorSpec
 from pm_traitbench.gates.gate1.inputs import PmInputs
-
-_SIDE_SIGN: dict[Side, int] = {Side.BUY: 1, Side.SELL: -1}
+from pm_traitbench.gates.gate1.side_sign import SIDE_SIGN
 
 
 def _discretionary_exits(inputs: PmInputs, days: frozenset[date]):
@@ -22,9 +21,7 @@ def _discretionary_exits(inputs: PmInputs, days: frozenset[date]):
             continue
         if row.anchor_level is None:
             continue
-        idea = ideas.get(row.trade_idea_id)
-        if idea is None:
-            continue
+        idea = ideas[row.trade_idea_id]  # a position day always belongs to a known idea
         if math.isclose(row.anchor_level, idea.target_level, rel_tol=1e-9, abs_tol=1e-9):
             continue
         yield idea, row
@@ -43,8 +40,7 @@ def estimate(inputs: PmInputs, days: frozenset[date], knobs: Gate1Config) -> Est
     for idea, row in _discretionary_exits(inputs, days):
         s = inputs.series[idea.trade_idea_id]
         t = inputs.day_index[row.date]
-        side_sign = _SIDE_SIGN[idea.side]
-        exit_level = idea.entry_level + s.bullish_sign * side_sign * row.pnl_unit
+        exit_level = idea.entry_level + s.bullish_sign * SIDE_SIGN[idea.side] * row.pnl_unit
         band = knobs.anchor_band_k * inputs.view.sd_h(s, t, inputs.horizon_days)
         n += 1
         if abs(exit_level - row.anchor_level) <= band:

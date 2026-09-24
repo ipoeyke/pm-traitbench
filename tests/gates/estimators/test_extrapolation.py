@@ -30,7 +30,7 @@ def test_buy_after_a_run_up_counts_sell_does_not(make_inputs, fixture_view):
     t = {d: i for i, d in enumerate(fixture_view.dates)}[entry_date]
     trailing = fixture_view.trailing_move(series, t, HORIZON)
     sd = fixture_view.sd_h(series, t, HORIZON)
-    assert trailing > sd  # sanity: the fixture date really is a run-up
+    assert trailing > sd  # sanity: confirm the fixture date is a run-up
 
     buy_idea = idea_row(
         trade_idea_id="ti_001", instrument_id="EQ-0004", side=Side.BUY, entry_date=entry_date
@@ -53,10 +53,15 @@ def test_pairs_has_one_entry_per_idea(make_inputs, fixture_view):
         trade_idea_id="ti_001", instrument_id="EQ-0004", side=Side.BUY, entry_date=entry_date
     )
     inputs = make_inputs(ideas=(idea,), series={"ti_001": series})
+    t = {d: i for i, d in enumerate(fixture_view.dates)}[entry_date]
+    expected_ratio = fixture_view.trailing_move(series, t, HORIZON) / fixture_view.sd_h(
+        series, t, HORIZON
+    )
     result = extrapolation.estimate(inputs, frozenset({entry_date}), KNOBS)
     assert len(result.pairs) == 1
     direction, ratio = result.pairs[0]
     assert direction == 1.0
+    assert ratio == expected_ratio
 
 
 def test_entries_outside_days_are_ignored(make_inputs, fixture_view):

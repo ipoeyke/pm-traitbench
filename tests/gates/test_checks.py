@@ -30,5 +30,9 @@ def test_matching_counts_pass(make_inputs):
 )
 def test_each_mismatch_raises_gate1_error_naming_the_count(make_inputs, count_name):
     inputs = make_inputs(engine_counts=_counts(**{count_name: 1}))
-    with pytest.raises(Gate1Error, match=count_name):
+    with pytest.raises(Gate1Error, match=count_name) as excinfo:
         check_counts(inputs)
+    message = str(excinfo.value)
+    assert inputs.pm_id in message
+    assert "recomputed 0" in message
+    assert "engine counted 1" in message
