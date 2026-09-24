@@ -430,3 +430,16 @@ def test_write_run_metadata_extra_colliding_key_raises(tmp_path: Path) -> None:
     config = Config()
     with pytest.raises(ValueError, match="stage"):
         store.write_run_metadata("sampling", config, extra={"stage": "oops"})
+
+
+def test_read_run_metadata_round_trips_and_returns_none_when_absent(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    store.write_run_metadata("sampling", config, extra={"check": {"A": 1}})
+
+    data = store.read_run_metadata("sampling")
+
+    assert data is not None
+    assert data["check"] == {"A": 1}
+    assert data["stage"] == "sampling"
+    assert store.read_run_metadata("unknown_stage") is None

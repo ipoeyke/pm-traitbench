@@ -26,7 +26,11 @@ class Append:
 
 @dataclass(frozen=True)
 class Stage:
-    """A pipeline step: the tables it reads, writes and appends to, and its run function."""
+    """A pipeline step: the tables it reads, writes and appends to, and its run function.
+
+    `verdict`, if set, is a check on the run's extras that may raise after the
+    stage's outputs and metadata are on disk.
+    """
 
     number: int
     name: str
@@ -35,6 +39,7 @@ class Stage:
     reads: tuple[TableSpec, ...] = ()
     writes: tuple[TableSpec, ...] = ()
     appends: tuple[Append, ...] = ()
+    verdict: Callable[[dict[str, Any]], None] | None = None
 
 
 def _frozen(record: dict[str, Any]) -> str:
@@ -89,3 +94,6 @@ def run_stage(stage: Stage, config: Config, store: DataStore, *, force: bool = F
         )
 
     store.write_run_metadata(stage.name, config, extra)
+
+    if stage.verdict is not None:
+        stage.verdict(extra or {})

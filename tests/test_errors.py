@@ -4,6 +4,7 @@ from pm_traitbench.errors import (
     CatalogueError,
     ConfigError,
     EngineError,
+    Gate1Error,
     MarketCheckError,
     PmTraitbenchError,
     SamplingError,
@@ -22,6 +23,7 @@ from pm_traitbench.errors import (
         (SamplingError, 1),
         (MarketCheckError, 1),
         (EngineError, 1),
+        (Gate1Error, 1),
     ],
 )
 def test_subclass_is_pm_traitbench_error_with_exit_code(
@@ -33,3 +35,8 @@ def test_subclass_is_pm_traitbench_error_with_exit_code(
 
 def test_base_error_default_exit_code() -> None:
     assert PmTraitbenchError.exit_code == 1
+
+
+def test_gate1_error_is_a_pipeline_error_with_exit_code_1() -> None:
+    assert issubclass(Gate1Error, PmTraitbenchError)
+    assert Gate1Error.exit_code == 1

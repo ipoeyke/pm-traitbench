@@ -167,3 +167,10 @@ class DataStore:
         path = metadata_dir / f"{stage_name}.json"
         path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         return path
+
+    def read_run_metadata(self, stage_name: str) -> dict[str, Any] | None:
+        """Parsed JSON of `run_metadata/<stage_name>.json`, or None if absent."""
+        path = self._data_dir / "run_metadata" / f"{stage_name}.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
