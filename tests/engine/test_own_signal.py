@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 
 from pm_traitbench.config import Config, EngineConfig
-from pm_traitbench.engine import own_signal
 from pm_traitbench.engine.own_signal import (
     Z_80,
     SignalDraw,
+    conviction_bucket,
     draw_signal,
     signal_sign,
     z_for_coverage,
@@ -79,20 +79,24 @@ class _CountingRng:
         return self._rng.normal(*args, **kwargs)
 
 
+@pytest.mark.parametrize("bullish_sign", [1, -1])
 @pytest.mark.parametrize("skill", [0.0, 0.15, 0.5])
-def test_own_signal_correlation_matches_skill(skill: float) -> None:
-    # False-alarm rate: tolerance 0.02 is about 3 standard errors (~0.007) over 20,000 draws.
+def test_own_signal_correlation_matches_skill(skill: float, bullish_sign: int) -> None:
+    # False-alarm rate: tolerance 0.02 is about 2.8 standard errors (~0.007) two-sided
+    # over 20,000 draws, about 0.5% per parametrisation.
     n_draws = 20_000
     horizon = 20
     config = _config(skill, horizon)
-    series = _series()
+    series = _series(bullish_sign=bullish_sign)
     params = _params(theta=0.0, coverage=0.8)
     zs = np.empty(n_draws)
     signals = np.empty(n_draws)
     for i in range(n_draws):
-        z = float(stream(1, "corr_z", str(skill), i).normal())
-        view = _StubView(sd=1.0, fd=horizon, forward_move_value=z, trailing=0.0)
-        rng = stream(1, "corr_n", str(skill), i)
+        z = float(stream(1, "corr_z", str(skill), str(bullish_sign), i).normal())
+        # forward_move is in series units; bullish_sign * z recovers the drawn z once
+        # draw_signal reads it back in bullish units (see own_signal.py's z formula).
+        view = _StubView(sd=1.0, fd=horizon, forward_move_value=bullish_sign * z, trailing=0.0)
+        rng = stream(1, "corr_n", str(skill), str(bullish_sign), i)
         draw = draw_signal(view, series, 0, params, config, rng)
         zs[i] = z
         signals[i] = draw.own_signal
@@ -100,26 +104,29 @@ def test_own_signal_correlation_matches_skill(skill: float) -> None:
     assert corr == pytest.approx(skill, abs=0.02)
 
 
+@pytest.mark.parametrize("bullish_sign", [1, -1])
 @pytest.mark.parametrize("fd", [20, 5])
-def test_interval_achieves_nominal_coverage(fd: int) -> None:
+def test_interval_achieves_nominal_coverage(fd: int, bullish_sign: int) -> None:
     # False-alarm rate: tolerance 0.02 is about 7 standard errors (~0.003) over 20,000 draws.
-    # The interval is centred on the conditional mean skill * own_signal * sd_fwd, so
-    # coverage is exact for any fd (full window or truncated), not just a tuned one.
+    # The interval is centred on the conditional mean bullish_sign * skill * own_signal *
+    # sd_fwd, so coverage is exact for any fd (full window or truncated) and either sign.
     n_draws = 20_000
     horizon = 20
     skill = 0.15
     sd = 1.0
     sd_fwd = sd * math.sqrt(fd / horizon)
     config = _config(skill, horizon)
-    series = _series()
+    series = _series(bullish_sign=bullish_sign)
     params = _params(theta=0.0, coverage=0.8)
     hits = 0
     for i in range(n_draws):
-        z = float(stream(1, "cov_z", fd, i).normal())
-        view = _StubView(sd=sd, fd=fd, forward_move_value=z * sd_fwd, trailing=0.0)
-        rng = stream(1, "cov_n", fd, i)
+        z = float(stream(1, "cov_z", fd, str(bullish_sign), i).normal())
+        # The series-unit forward move that draw_signal reads back as this same z.
+        forward_move_value = bullish_sign * z * sd_fwd
+        view = _StubView(sd=sd, fd=fd, forward_move_value=forward_move_value, trailing=0.0)
+        rng = stream(1, "cov_n", fd, str(bullish_sign), i)
         draw = draw_signal(view, series, 0, params, config, rng)
-        realized = z * sd_fwd
+        realized = forward_move_value
         if draw.interval_lo <= realized <= draw.interval_hi:
             hits += 1
     coverage = hits / n_draws
@@ -146,16 +153,19 @@ def test_theta_zero_makes_forecast_equal_thesis_move() -> None:
     assert draw.forecast == pytest.approx(draw.thesis_move)
 
 
-def test_bearish_series_flips_thesis_move_sign() -> None:
-    config = _config(skill=0.15)
+def test_bearish_series_reads_a_rising_level_as_a_negative_signal() -> None:
+    # skill=0.99 makes the skill * z term dominate the noise, so own_signal's sign is
+    # (effectively) deterministic across draws; a rising level (forward_move > 0) is bad
+    # for a bearish series, so own_signal should read negative, but thesis_move (the raw
+    # series-unit prediction) should stay positive: the level really does keep rising.
+    config = _config(skill=0.99)
+    series = _series(bullish_sign=-1)
     params = _params(theta=0.0, coverage=0.8)
-    view = _StubView(sd=1.0, fd=20, forward_move_value=0.3, trailing=0.0)
-    bullish = _series(bullish_sign=1)
-    bearish = _series(bullish_sign=-1)
-    draw_bull = draw_signal(view, bullish, 0, params, config, stream(1, "flip", 0))
-    draw_bear = draw_signal(view, bearish, 0, params, config, stream(1, "flip", 0))
-    assert draw_bear.own_signal == pytest.approx(draw_bull.own_signal)
-    assert draw_bear.thesis_move == pytest.approx(-draw_bull.thesis_move)
+    view = _StubView(sd=1.0, fd=20, forward_move_value=1.0, trailing=0.0)
+    for i in range(1_000):
+        draw = draw_signal(view, series, 0, params, config, stream(1, "bearish_dir", i))
+        assert draw.own_signal < 0
+        assert draw.thesis_move > 0
 
 
 def test_zero_forward_days_gives_zero_z_without_calling_forward_move() -> None:
@@ -184,7 +194,7 @@ def test_draws_exactly_one_standard_normal() -> None:
     [(1.0, 1), (1.13, 1), (1.14, 2), (1.86, 5), (5.0, 5)],
 )
 def test_conviction_buckets(own_signal_value: float, expected: int) -> None:
-    assert own_signal._conviction(own_signal_value) == expected
+    assert conviction_bucket(own_signal_value) == expected
 
 
 def test_z_for_coverage_matches_expected_quantile() -> None:
