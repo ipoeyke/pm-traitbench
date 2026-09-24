@@ -6,13 +6,16 @@ import pytest
 
 from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.engine.stage import ENGINE_STAGE
-from pm_traitbench.enums import Gate1Split
+from pm_traitbench.enums import AssetClass, Gate1Split, Gate1Verdict, SeedGroupKind
 from pm_traitbench.errors import Gate1Error, StageIOError
 from pm_traitbench.gates.gate1.stage import GATE1_STAGE
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.specs import GATE1_CELLS, GATE1_PM
 from pm_traitbench.tables.store import DataStore
 from tests.engine.conftest import MULTI_ASSET_PM_ID, NEUTRAL_PMS, stage_config, write_stage_inputs
+
+# From NEUTRAL_PMS: one equities PM, two rates_credit PMs, two commodities PMs.
+_DIRECT_ASSET_CLASSES = (AssetClass.EQUITIES, AssetClass.RATES_CREDIT, AssetClass.COMMODITIES)
 
 
 def test_gate1_stage_writes_both_tables_and_raises_on_the_insufficient_default_thresholds(
@@ -41,6 +44,21 @@ def test_gate1_stage_writes_both_tables_and_raises_on_the_insufficient_default_t
     for pm_id in expected_pm_ids:
         assert all_params_by_pm[pm_id] == set(BIAS_PARAMS)
 
+    # One equities PM, two rates_credit PMs and two commodities PMs: every
+    # pooled synthetic cell falls short of min_pms=5, so every one of them
+    # (one per asset class and bias parameter) is insufficient.
+    cell_rows = store.read(GATE1_CELLS)
+    pooled_all_rows = [
+        row
+        for row in cell_rows
+        if row.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL and row.split == Gate1Split.ALL
+    ]
+    assert {row.asset_class for row in pooled_all_rows} == set(_DIRECT_ASSET_CLASSES)
+    assert {row.param for row in pooled_all_rows} == set(BIAS_PARAMS)
+    assert len(pooled_all_rows) == len(_DIRECT_ASSET_CLASSES) * len(BIAS_PARAMS)
+    for row in pooled_all_rows:
+        assert row.verdict == Gate1Verdict.INSUFFICIENT
+
     metadata_path = tmp_path / "run_metadata" / "gate1.json"
     assert metadata_path.exists()
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -48,16 +66,13 @@ def test_gate1_stage_writes_both_tables_and_raises_on_the_insufficient_default_t
     assert "warnings" in metadata
     assert "thresholds" in metadata
 
-    # Only five direct-asset PMs total, well under min_pms=5 per cell: every
-    # pooled synthetic cell is insufficient, so every cell it covers fails.
     message = str(excinfo.value)
     assert message.startswith("gate 1 failed for: ")
     entries = message.removeprefix("gate 1 failed for: ").split(", ")
     assert entries == metadata["failed"]
-    assert entries
-    for entry in entries:
-        asset_class, param = entry.split("/")
-        assert param in BIAS_PARAMS
+    assert set(entries) == {
+        f"{asset_class}/{param}" for asset_class in _DIRECT_ASSET_CLASSES for param in BIAS_PARAMS
+    }
 
 
 def test_forced_second_run_gives_byte_identical_gate1_tables(

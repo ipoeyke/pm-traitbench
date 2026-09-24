@@ -327,14 +327,14 @@ Each parameter is estimated over the full horizon (split `all`) for every
 direct-asset PM and, when its trait is boosted in a regime or drifts mid-run,
 over that regime and its before/after windows too. The `all`-split estimates
 are then pooled into a neutral baseline and an active mean per asset class,
-over every synthetic seed together (the `synthetic_pool` seed group, which
-blocks the pipeline) and again per seed on its own; a drifted PM's
-`all`-split estimate is dropped from every pooled comparison, since it mixes
-two different trait values. On the default population, each synthetic seed's
-own cell holds 12 PMs per asset class, of which only 1-11 are neutral for any
-given parameter; pooling the three synthetic seeds together is what gives the
-`synthetic_pool` cell enough neutral PMs for a usable baseline, about 36 PMs
-per asset class in all.
+over every synthetic seed together (seed group `synthetic`, seed group kind
+`synthetic_pool` - the one that blocks the pipeline) and again per seed on
+its own; a drifted PM's `all`-split estimate is dropped from every pooled
+comparison, since it mixes two different trait values. On the default
+population, each synthetic seed's own cell holds 12 PMs per asset class, of
+which only 1-11 are neutral for any given parameter; pooling the three
+synthetic seeds together is what gives the pooled `synthetic` cell enough
+neutral PMs for a usable baseline, about 36 PMs per asset class in all.
 
 A cell passes when the active mean sits on the stronger side of the neutral
 mean (per the parameter's own direction) with the neutral standard deviation
@@ -346,9 +346,9 @@ deviations above or below the neutral mean) and the `active_share_past_floor`
 it produces are reported for re-centring the marginals, not part of the pass
 rule. `anchor_band_k` (default 0.1, in horizon-vols) is the anchoring
 estimator's own band width, not a pass-rule knob either. Only the pooled
-`synthetic_pool`/`all` cell blocks the pipeline: every per-seed cell,
-synthetic or real, is reported but never blocks, and every split beyond
-`all` is report-only for the same reason.
+`synthetic`/`all` cell (seed group `synthetic`, kind `synthetic_pool`) blocks
+the pipeline: every per-seed cell, synthetic or real, is reported but never
+blocks, and every split beyond `all` is report-only for the same reason.
 
 Four parameters also carry an opportunity-count minimum (`n_min`): exit
 deficiency 7, loss aversion 16, herding 14, anchoring 29 - each the
@@ -373,8 +373,8 @@ fails on equities, and the other five parameters fail on all three:
   a direct readout of the trait.
 - `herding_weight` on equities: the neutral spread is about half the gap,
   just past the 0.5 limit - a marginal fail, with no mechanism claimed.
-- `loss_aversion_lambda` fails: the add value subtracts lambda times the
-  added loss, so a higher lambda makes adding less attractive, the add rate
+- `loss_aversion_lambda` fails: a higher lambda makes cutting worse but also
+  penalises adding against holding, so the two effects offset, the add rate
   stays flat, and cut is rarely chosen at softmax temperature 1.
 - `disposition_ratio` fails: the planted multiplier sqrt(D), about 1.1 at
   the professional centre, acts on a 0.03 base sell hazard and is swamped by
@@ -391,8 +391,8 @@ fails on equities, and the other five parameters fail on all three:
 Limitations from the model:
 
 - The pooled synthetic baseline hides seed-level effects: a bias that only
-  shows up on one market seed is averaged away in the `synthetic_pool` cell
-  that blocks the pipeline.
+  shows up on one market seed is averaged away in the pooled `synthetic`
+  cell that blocks the pipeline.
 - Herding is measured as agreement with the street's non-neutral view, not
   as a PM crossing its own conflicting signal: a PM who follows the street
   in a conflict ends on the street's side, so the conflict itself cannot be

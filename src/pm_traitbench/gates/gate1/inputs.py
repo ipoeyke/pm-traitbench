@@ -151,6 +151,20 @@ def _build_pm_inputs(
     )
 
 
+def kept_personas(personas: Sequence[Persona], skipped: Collection[str]) -> list[Persona]:
+    """Direct-asset personas gate 1 covers, sorted by `pm_id`.
+
+    Drops multi-asset personas (no adapter routes their legs) and every
+    `pm_id` in `skipped`; shared with the stage module so it builds market
+    views for exactly the seeds `build_inputs` will actually use.
+    """
+    return [
+        persona
+        for persona in sorted(personas, key=lambda p: p.pm_id)
+        if persona.mandate.asset_class != AssetClass.MULTI_ASSET and persona.pm_id not in skipped
+    ]
+
+
 def build_inputs(
     config: Config,
     personas: Sequence[Persona],
@@ -178,9 +192,7 @@ def build_inputs(
     position_days_by_pm = _group_by_pm(position_days)
 
     result = []
-    for persona in sorted(personas, key=lambda p: p.pm_id):
-        if persona.mandate.asset_class == AssetClass.MULTI_ASSET or persona.pm_id in skipped:
-            continue
+    for persona in kept_personas(personas, skipped):
         result.append(
             _build_pm_inputs(
                 config,

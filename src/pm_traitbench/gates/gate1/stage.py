@@ -10,11 +10,10 @@ from typing import Any
 
 from pm_traitbench.config import Config
 from pm_traitbench.engine.stage import build_views
-from pm_traitbench.enums import AssetClass
 from pm_traitbench.errors import Gate1Error
 from pm_traitbench.gates.gate1.aggregate import aggregate, estimate_all
 from pm_traitbench.gates.gate1.checks import check_counts
-from pm_traitbench.gates.gate1.inputs import build_inputs
+from pm_traitbench.gates.gate1.inputs import build_inputs, kept_personas
 from pm_traitbench.gates.gate1.verdict import blocking_failures, count_warnings, judge
 from pm_traitbench.stages import Stage
 from pm_traitbench.tables.specs import (
@@ -55,11 +54,7 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
     position_days = store.read(POSITION_DAYS)
 
     skipped = meta["skipped"]
-    kept_seeds = (
-        persona.market_seed
-        for persona in personas
-        if persona.mandate.asset_class != AssetClass.MULTI_ASSET and persona.pm_id not in skipped
-    )
+    kept_seeds = (persona.market_seed for persona in kept_personas(personas, skipped))
     views = build_views(config, store, kept_seeds)
 
     inputs = build_inputs(
