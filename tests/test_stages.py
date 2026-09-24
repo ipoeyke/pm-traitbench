@@ -8,8 +8,8 @@ import pytest
 from pm_traitbench.config import Config, OutputConfig
 from pm_traitbench.enums import Action, Kind, Op, RuleScope, RuleSource
 from pm_traitbench.errors import StageIOError
-from pm_traitbench.stages import Stage, run_stage
-from pm_traitbench.tables.schema import Rule, Trait
+from pm_traitbench.stages import Append, Stage, run_stage
+from pm_traitbench.tables.schema import Rule, Trait, to_record
 from pm_traitbench.tables.specs import PERSONAS, RULES, TRAITS
 from pm_traitbench.tables.store import DataStore
 
@@ -201,6 +201,13 @@ def test_run_stage_with_force_rejects_a_stage_that_skips_a_table_and_keeps_the_o
     assert metadata.read_bytes() == metadata_before
 
 
+def _owns_idea_rules(record: dict) -> bool:
+    return record["scope"] == RuleScope.IDEA
+
+
+_RULES_APPEND = Append(RULES, owned=_owns_idea_rules)
+
+
 def _append_idea_rule(config: Config, store: DataStore) -> None:
     rows = store.read(RULES)
     idea_rule = _rule("pm_001", "r_02", scope=RuleScope.IDEA, trade_idea_id="ti_001")
@@ -213,13 +220,36 @@ def test_run_stage_appends_existing_table_without_force_and_keeps_original_rows(
     store = DataStore(tmp_path, OutputConfig())
     config = Config()
     store.write(RULES, [_rule("pm_001", "r_01")])
-    stage = Stage(number=1, name="fake", help="h", run=_append_idea_rule, appends=(RULES,))
+    stage = Stage(number=1, name="fake", help="h", run=_append_idea_rule, appends=(_RULES_APPEND,))
 
     # no force: an appends table pre-existing is expected, not an overwrite to guard against
     run_stage(stage, config, store)
 
-    rows = store.read(RULES)
-    assert {row.rule_id for row in rows} == {"r_01", "r_02"}
+    rows = [to_record(row) for row in store.read(RULES)]
+    assert rows == [
+        to_record(_rule("pm_001", "r_01")),
+        to_record(_rule("pm_001", "r_02", scope=RuleScope.IDEA, trade_idea_id="ti_001")),
+    ]
+
+
+def _replace_owned_rows(config: Config, store: DataStore) -> None:
+    kept = [row for row in store.read(RULES) if row.scope == RuleScope.PM]
+    fresh = _rule("pm_001", "r_03", scope=RuleScope.IDEA, trade_idea_id="ti_001")
+    store.write(RULES, [*kept, fresh])
+
+
+def test_run_stage_append_may_replace_rows_it_owns(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    stale = _rule("pm_001", "r_02", scope=RuleScope.IDEA, trade_idea_id="ti_001")
+    store.write(RULES, [_rule("pm_001", "r_01"), stale])
+    stage = Stage(
+        number=1, name="fake", help="h", run=_replace_owned_rows, appends=(_RULES_APPEND,)
+    )
+
+    run_stage(stage, config, store)
+
+    assert [row.rule_id for row in store.read(RULES)] == ["r_01", "r_03"]
 
 
 def test_run_stage_missing_append_raises_and_never_calls_run(tmp_path: Path) -> None:
@@ -231,7 +261,7 @@ def test_run_stage_missing_append_raises_and_never_calls_run(tmp_path: Path) -> 
         nonlocal called
         called = True
 
-    stage = Stage(number=1, name="fake", help="h", run=_run, appends=(RULES,))
+    stage = Stage(number=1, name="fake", help="h", run=_run, appends=(_RULES_APPEND,))
 
     with pytest.raises(StageIOError, match="rules"):
         run_stage(stage, config, store)
@@ -247,9 +277,11 @@ def test_run_stage_append_dropping_original_row_raises(tmp_path: Path) -> None:
     store = DataStore(tmp_path, OutputConfig())
     config = Config()
     store.write(RULES, [_rule("pm_001", "r_01")])
-    stage = Stage(number=1, name="fake", help="h", run=_drop_original_rule, appends=(RULES,))
+    stage = Stage(
+        number=1, name="fake", help="h", run=_drop_original_rule, appends=(_RULES_APPEND,)
+    )
 
-    with pytest.raises(StageIOError, match="altered"):
+    with pytest.raises(StageIOError, match="rules; the table\\(s\\) have been rewritten"):
         run_stage(stage, config, store)
 
 
@@ -265,7 +297,9 @@ def test_run_stage_append_changing_original_row_text_raises(tmp_path: Path) -> N
     store = DataStore(tmp_path, OutputConfig())
     config = Config()
     store.write(RULES, [_rule("pm_001", "r_01")])
-    stage = Stage(number=1, name="fake", help="h", run=_change_original_rule_text, appends=(RULES,))
+    stage = Stage(
+        number=1, name="fake", help="h", run=_change_original_rule_text, appends=(_RULES_APPEND,)
+    )
 
     with pytest.raises(StageIOError, match="altered"):
         run_stage(stage, config, store)
@@ -278,7 +312,7 @@ def test_run_stage_append_not_written_raises_did_not_write(tmp_path: Path) -> No
     def _run(config: Config, store: DataStore) -> None:
         store.read(RULES)
 
-    stage = Stage(number=1, name="fake", help="h", run=_run, appends=(RULES,))
+    stage = Stage(number=1, name="fake", help="h", run=_run, appends=(_RULES_APPEND,))
 
     with pytest.raises(StageIOError, match="did not write"):
         run_stage(stage, config, DataStore(tmp_path, config.output))

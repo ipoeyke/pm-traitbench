@@ -13,6 +13,7 @@ from pm_traitbench.tables.schema import Mandate, Persona, Rule, StatedProfile
 from pm_traitbench.tables.specs import (
     DRIFT_EVENTS,
     ENGINE_TABLES,
+    IDEAS,
     MARKET_CALENDAR,
     MARKET_CONSENSUS,
     MARKET_CURVES,
@@ -145,6 +146,38 @@ def test_engine_stage_writes_four_tables_and_rules_gains_idea_rows(
     written_keys = {(r.pm_id, r.rule_id) for r in written_rules}
     assert original_keys <= written_keys
     assert len(written_keys) > len(original_keys)
+
+
+def _idea_rule_counts(rules: list[Rule]) -> dict[tuple[str, str], int]:
+    counts: dict[tuple[str, str], int] = {}
+    for rule in rules:
+        if rule.scope == RuleScope.IDEA:
+            key = (rule.pm_id, rule.trade_idea_id)
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def test_forced_rerun_replaces_idea_rules_instead_of_stacking_them(
+    tmp_path, fixture_market, neutral_pm
+) -> None:
+    config = _stage_config()
+    store = DataStore(tmp_path, config.output)
+    _, original_rules = _write_stage_inputs(store, fixture_market, neutral_pm)
+
+    run_stage(ENGINE_STAGE, config, store, force=True)
+    first = store.read(RULES)
+    run_stage(ENGINE_STAGE, config, store, force=True)
+    second = store.read(RULES)
+
+    assert len(second) == len(first)
+    assert second == first
+    assert [r for r in second if r.scope == RuleScope.PM] == original_rules
+    idea_keys = {(idea.pm_id, idea.trade_idea_id) for idea in store.read(IDEAS)}
+    counts = _idea_rule_counts(second)
+    assert set(counts) == idea_keys
+    assert counts == _idea_rule_counts(first)
+    rule_keys = [(r.pm_id, r.rule_id) for r in second]
+    assert len(rule_keys) == len(set(rule_keys))
 
 
 def test_run_metadata_has_the_three_extras_and_skips_the_multi_asset_pm(

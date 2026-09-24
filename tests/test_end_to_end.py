@@ -135,6 +135,22 @@ def test_sample_then_market_then_engine_run_through_the_cli_against_a_fetched_ca
     assert (data_dir / "run_metadata" / "engine.json").exists()
 
 
+def test_engine_force_twice_leaves_one_set_of_idea_rules(fake_cache) -> None:
+    config = load_config(_DEMO_CONFIG)
+    data_dir = fake_cache(config).data_dir
+    args = ["--config", str(_DEMO_CONFIG), "--data-dir", str(data_dir)]
+    assert main(["sample", *args]) == 0
+    assert main(["market", *args]) == 0
+
+    rules_path = data_dir / f"{RULES.name}.jsonl"
+    assert main(["engine", *args]) == 0
+    first = rules_path.read_bytes()
+    assert main(["engine", "--force", *args]) == 0
+    assert main(["engine", "--force", *args]) == 0
+
+    assert rules_path.read_bytes() == first
+
+
 def test_help_output_lists_the_engine_subcommand() -> None:
     help_text = build_parser(pipeline.STAGES).format_help()
     assert "engine" in help_text

@@ -8,9 +8,9 @@ from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.config import Config
 from pm_traitbench.engine.loop import run_pm
 from pm_traitbench.engine.market_view import MarketView
-from pm_traitbench.enums import AssetClass
+from pm_traitbench.enums import AssetClass, RuleScope
 from pm_traitbench.market.axis import build_axis
-from pm_traitbench.stages import Stage
+from pm_traitbench.stages import Append, Stage
 from pm_traitbench.tables.schema import (
     DriftEvent,
     Idea,
@@ -50,7 +50,7 @@ def _group_by_pm(rows: list) -> dict[str, list]:
 
 def run(config: Config, store: DataStore) -> dict[str, Any]:
     """Run every PM's daily loop and write the four engine tables plus the
-    rules table extended with every idea-scope rule created along the way.
+    rules table: its PM-scope rows followed by this run's idea-scope rules.
 
     One `MarketView` is built per distinct market seed among the personas, on
     the config's published horizon; a `multi_asset` persona has no adapter
@@ -58,7 +58,8 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
     """
     personas = store.read(PERSONAS)
     traits: list[Trait] = store.read(TRAITS)
-    rules: list[Rule] = store.read(RULES)
+    # Idea-scope rows belong to an earlier engine run and are replaced, never reused.
+    rules: list[Rule] = [rule for rule in store.read(RULES) if rule.scope == RuleScope.PM]
     drift_events: list[DriftEvent] = store.read(DRIFT_EVENTS)
     instruments = store.read(MARKET_INSTRUMENTS)
     prices = store.read(MARKET_PRICES)
@@ -136,5 +137,5 @@ ENGINE_STAGE = Stage(
     run=run,
     reads=(PERSONAS, TRAITS, RULES, DRIFT_EVENTS, *MARKET_TABLES),
     writes=ENGINE_TABLES,
-    appends=(RULES,),
+    appends=(Append(RULES, owned=lambda record: record["scope"] == RuleScope.IDEA),),
 )
