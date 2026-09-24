@@ -232,12 +232,14 @@
 
 **Files:**
 - Create: `src/pm_traitbench/engine/own_signal.py`
+- Create: `src/pm_traitbench/engine/biases/__init__.py` (empty docstring module for now; the registry is filled in Tasks 13 and 14)
+- Create: `src/pm_traitbench/engine/biases/extrapolation.py`
 - Test: `tests/engine/test_own_signal.py`
 
 **Interfaces:**
 - Produces:
   - `SignalDraw` frozen dataclass: `own_signal: float`, `sd_h: float`, `thesis_move: float`, `forecast: float`, `interval_lo: float`, `interval_hi: float`, `conviction: int`.
-  - `draw_signal(view: MarketView, series: Series, t: int, params: EffectiveParams, config: Config, rng: np.random.Generator) -> SignalDraw`. Binding formulas: `H = config.engine.horizon_days`; `sd = view.sd_h(series, t, H)`; `fd = view.forward_days(t, H)`; `sd_fwd = sd * sqrt(fd / H)` (truncated forward window); `z = view.forward_move(series, t, H) / sd_fwd` (0 when `fd == 0`); `own_signal = skill * z + sqrt(1 - skill^2) * n` with `n` one standard normal from `rng`; `thesis_move = bullish_sign * own_signal * sd` (the signal is in bullish units; the thesis move is in series units, so a bearish series flips); `trailing = view.trailing_move(series, t, H)`; `forecast = (1 - theta) * thesis_move + theta * trailing` with `theta = params.value("extrapolation_theta")`; `c = params.value("overconfidence_coverage")`; `z_c = scipy.stats.norm.ppf((1 + c) / 2)`; half-width `w = z_c * sd * sqrt(1 - skill^2)`; `interval_lo, interval_hi = forecast - w, forecast + w`; `conviction = 1 + sum(1 for cut in CONVICTION_CUTS[1:] if abs(own_signal) >= cut)`, capped at 5 (bucket 1 covers `[1.0, 1.4)`).
+  - `draw_signal(view: MarketView, series: Series, t: int, params: EffectiveParams, config: Config, rng: np.random.Generator) -> SignalDraw`. Binding formulas: `H = config.engine.horizon_days`; `sd = view.sd_h(series, t, H)`; `fd = view.forward_days(t, H)`; `sd_fwd = sd * sqrt(fd / H)` (truncated forward window); `z = view.forward_move(series, t, H) / sd_fwd` (0 when `fd == 0`); `own_signal = skill * z + sqrt(1 - skill^2) * n` with `n` one standard normal from `rng`; `thesis_move = bullish_sign * own_signal * sd` (the signal is in bullish units; the thesis move is in series units, so a bearish series flips); `trailing = view.trailing_move(series, t, H)`; `forecast = extrapolation.blend(thesis_move, trailing, params)` where `biases/extrapolation.py` defines `blend(thesis_move, trailing_move, params) -> float = (1 - theta) * thesis_move + theta * trailing_move` with `theta = params.value("extrapolation_theta")` (the bias lives in its own module so the registry can point at it); `c = params.value("overconfidence_coverage")`; `z_c = scipy.stats.norm.ppf((1 + c) / 2)`; half-width `w = z_c * sd * sqrt(1 - skill^2)`; `interval_lo, interval_hi = forecast - w, forecast + w`; `conviction = 1 + sum(1 for cut in CONVICTION_CUTS[1:] if abs(own_signal) >= cut)`, capped at 5 (bucket 1 covers `[1.0, 1.4)`).
   - `z_for_coverage(c: float) -> float` and `Z_80 = z_for_coverage(0.8)` (about 1.2816).
   - `signal_sign(draw) -> Side` (`buy` when `own_signal > 0`).
 - Consumes: `MarketView`, `Series`, `EffectiveParams`.
@@ -397,11 +399,11 @@
 ### Task 13: Entry-side bias rules and the registry
 
 **Files:**
-- Create: `src/pm_traitbench/engine/biases/__init__.py`
+- Modify: `src/pm_traitbench/engine/biases/__init__.py`
+- Modify: `src/pm_traitbench/engine/biases/extrapolation.py`
 - Create: `src/pm_traitbench/engine/biases/herding.py`
 - Create: `src/pm_traitbench/engine/biases/overconfidence.py`
 - Create: `src/pm_traitbench/engine/biases/conviction.py`
-- Create: `src/pm_traitbench/engine/biases/extrapolation.py`
 - Test: `tests/engine/biases/test_entry_side.py`
 
 **Interfaces:**
@@ -409,7 +411,7 @@
 - Produces `herding.py`: `HerdingDecision(conflict: bool, followed_street: bool | None, side: Side, flag: str | None)`; `decide(own_side: Side, street: StreetView | None, params: EffectiveParams, rng) -> HerdingDecision`. Binding: `street None or neutral` -> no conflict; street `overweight` means bullish; conflict when the street's side differs from `own_side`; on conflict draw `u`; `u < w` -> side becomes the street's, `followed_street True`, `flag = "herding:followed_street"` when `params.is_active("herding_weight")` else `None`; otherwise `followed_street False`.
 - Produces `overconfidence.py`: `size_factor(params) -> tuple[float, str | None]` = `(Z_80 / z_for_coverage(c), "overconfidence:oversized" if active and factor > 1 else None)`.
 - Produces `conviction.py`: `size_rank(conviction: int, params, rng) -> tuple[int, str | None]`: `u ~ U(1, 5)`, `rank = int(round((1 - m) * conviction + m * u))` clipped to 1-5, flag `"conviction:mis_sized"` when active and `rank != conviction`.
-- Produces `extrapolation.py`: `blend(thesis_move, trailing_move, params) -> float` (the formula already used in `own_signal.py`; move it here and have `own_signal.py` import it, so the bias lives in one place) and `entered_after_run(trailing_move, sd_h, side_sign, bullish_sign) -> bool` = `bullish_sign * side_sign * trailing_move > sd_h` (the opportunity counter for Gate 1).
+- Produces in `extrapolation.py` (which already holds `blend`): `entered_after_run(trailing_move, sd_h, side_sign, bullish_sign) -> bool` = `bullish_sign * side_sign * trailing_move > sd_h` (the opportunity counter for Gate 1).
 - Produces `join_flags(flags: Sequence[str | None]) -> str | None` in `biases/__init__.py`: drops `None`, orders by `BIAS_FLAG_ORDER` prefix, joins with `;`.
 
 - [ ] **Step 1: Write failing tests**: herding with `w=0` never follows, `w=1` always follows on conflict, no conflict when street neutral or `None`, the flag only when active; over 2,000 draws with `w=0.58` the follow share is within 0.05 of 0.58; overconfidence factor is 1 at `c=0.8`, greater than 1 at `c=0.4`, flag only when active; conviction with `m=0` returns the conviction, with `m=1` the rank correlation with conviction over 2,000 draws of random convictions is below 0.15, flag only when active and different; `blend` at `theta` 0 and 1; `entered_after_run` sign cases; `join_flags` ordering and `None`.
