@@ -2,6 +2,7 @@
 write its ideas, ledger, rule events and position days.
 """
 
+from collections.abc import Iterable
 from typing import Any
 
 from pm_traitbench.catalogues.loader import load_catalogue
@@ -48,6 +49,38 @@ def _group_by_pm(rows: list) -> dict[str, list]:
     return by_pm
 
 
+def build_views(config: Config, store: DataStore, seeds: Iterable[str]) -> dict[str, MarketView]:
+    """One `MarketView` per distinct seed, on the config's published horizon.
+
+    Shared by the engine, which builds a view per persona's market seed, and
+    by any later stage that re-reads the engine's ideas and needs the same
+    view back.
+    """
+    instruments = store.read(MARKET_INSTRUMENTS)
+    prices = store.read(MARKET_PRICES)
+    curves = store.read(MARKET_CURVES)
+    consensus = store.read(MARKET_CONSENSUS)
+    calendar = store.read(MARKET_CALENDAR)
+    regimes = store.read(MARKET_REGIMES)
+
+    axis = build_axis(config.timeline(), config.market.burn_in_days)
+    dates = axis.dates[axis.horizon]
+
+    return {
+        seed: MarketView.build(
+            seed=seed,
+            dates=dates,
+            instruments=instruments,
+            prices=prices,
+            curves=curves,
+            consensus=consensus,
+            calendar=calendar,
+            regimes=regimes,
+        )
+        for seed in sorted(set(seeds))
+    }
+
+
 def run(config: Config, store: DataStore) -> dict[str, Any]:
     """Run every PM's daily loop and write the four engine tables plus the
     rules table: its PM-scope rows followed by this run's idea-scope rules.
@@ -61,30 +94,9 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
     # Idea-scope rows belong to an earlier engine run and are replaced, never reused.
     rules: list[Rule] = [rule for rule in store.read(RULES) if rule.scope == RuleScope.PM]
     drift_events: list[DriftEvent] = store.read(DRIFT_EVENTS)
-    instruments = store.read(MARKET_INSTRUMENTS)
-    prices = store.read(MARKET_PRICES)
-    curves = store.read(MARKET_CURVES)
-    consensus = store.read(MARKET_CONSENSUS)
-    calendar = store.read(MARKET_CALENDAR)
-    regimes = store.read(MARKET_REGIMES)
-
-    axis = build_axis(config.timeline(), config.market.burn_in_days)
-    dates = axis.dates[axis.horizon]
 
     catalogue = load_catalogue()
-
-    views: dict[str, MarketView] = {}
-    for seed in sorted({persona.market_seed for persona in personas}):
-        views[seed] = MarketView.build(
-            seed=seed,
-            dates=dates,
-            instruments=instruments,
-            prices=prices,
-            curves=curves,
-            consensus=consensus,
-            calendar=calendar,
-            regimes=regimes,
-        )
+    views = build_views(config, store, (persona.market_seed for persona in personas))
 
     traits_by_pm = _group_by_pm(traits)
     rules_by_pm = _group_by_pm(rules)

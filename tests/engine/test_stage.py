@@ -5,9 +5,10 @@ import json
 import pytest
 
 from pm_traitbench.config import Config
-from pm_traitbench.engine.stage import ENGINE_STAGE
+from pm_traitbench.engine.stage import ENGINE_STAGE, build_views
 from pm_traitbench.enums import Action, AssetClass, Op, RuleScope, RuleSource, Split, Typicality
 from pm_traitbench.errors import EngineError, StageIOError
+from pm_traitbench.market.axis import build_axis
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.schema import Mandate, Persona, Rule, StatedProfile
 from pm_traitbench.tables.specs import (
@@ -206,6 +207,19 @@ def test_second_run_without_force_raises_stage_io_error(
 
     with pytest.raises(StageIOError):
         run_stage(ENGINE_STAGE, config, store)
+
+
+def test_build_views_returns_a_view_on_the_published_horizon(
+    tmp_path, fixture_market, neutral_pm
+) -> None:
+    config = _stage_config()
+    store = DataStore(tmp_path, config.output)
+    _write_stage_inputs(store, fixture_market, neutral_pm)
+
+    views = build_views(config, store, ["T"])
+
+    axis = build_axis(config.timeline(), config.market.burn_in_days)
+    assert views["T"].dates == axis.dates[axis.horizon]
 
 
 def test_unknown_rule_field_fails_before_any_engine_table_is_written(
