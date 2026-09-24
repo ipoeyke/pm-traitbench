@@ -2,7 +2,7 @@
 winner's response, including a commodity roll and a forced late roll.
 
 `handle_triggers` is pure: it never mutates its `position` argument, only
-returns a new one. Row-builder helpers here are reused by `discretionary.py`.
+returns a new one. Row-builder helpers here are reused by `ideas.py` and `discretionary.py`.
 """
 
 from collections.abc import Sequence
@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from typing import TYPE_CHECKING
 
-from pm_traitbench.engine.adapters.base import leg_side, tracked_level
+from pm_traitbench.engine.adapters.base import Adapter, leg_side, tracked_level
 from pm_traitbench.engine.adapters.base import pnl_unit as compute_pnl_unit
 from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
 from pm_traitbench.engine.biases import join_flags
@@ -20,6 +20,7 @@ from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.params import EffectiveParams
 from pm_traitbench.engine.precedence import resolve
 from pm_traitbench.engine.rules_eval import evaluate_day
+from pm_traitbench.engine.series import LegRef
 from pm_traitbench.engine.state import PmState, Position
 from pm_traitbench.engine.templates import render_outcome
 from pm_traitbench.enums import Action, PnlState, PositionAction, RuleResponse, RuleScope, Side
@@ -62,6 +63,56 @@ def mandate_cap(pm_rules: Sequence[Rule]) -> float:
     return float(rule.level)
 
 
+def ledger_rows(
+    position: Position,
+    legs: Sequence[tuple[LegRef, Side]],
+    pct_traded: float,
+    *,
+    pm_id: str,
+    adapter: Adapter,
+    book_size: float,
+    view: MarketView,
+    t: int,
+    bias_flag: str | None,
+    rule_id: str | None,
+) -> tuple[LedgerRow, ...]:
+    """One ledger row per (leg, side), trading `pct_traded` of book.
+
+    Size scales `size_at_entry` by `pct_traded`, so a closed idea's signed sizes net to zero.
+    """
+    size = position.size_at_entry * pct_traded / position.original_size_pct_book
+    risk_amount = book_size * pct_traded / 100
+    return tuple(
+        LedgerRow(
+            pm_id=pm_id,
+            date=view.dates[t],
+            trade_idea_id=position.trade_idea_id,
+            instrument_id=leg.instrument_id,
+            tenor=leg.tenor,
+            instrument_type=adapter.instrument_type(leg.instrument_id, view),
+            side=side,
+            size=size,
+            risk_amount=adapter.leg_risk_amount(leg, size, view, risk_amount),
+            price_or_yield=adapter.leg_price(leg, view, t),
+            stated_conviction=position.conviction,
+            bias_flag=bias_flag,
+            rule_id=rule_id,
+        )
+        for leg, side in legs
+    )
+
+
+def leg_sides(
+    position: Position, side_sign: int, adapter: Adapter
+) -> tuple[tuple[LegRef, Side], ...]:
+    """Each series leg with its ledger side for a trade in direction `side_sign`."""
+    bullish_sign = position.series.bullish_sign
+    return tuple(
+        (leg, leg_side(side_sign, bullish_sign, leg.coeff, adapter.leg_bullish(leg)))
+        for leg in position.series.legs
+    )
+
+
 def _leg_rows(
     position: Position,
     size_pct_book: float,
@@ -73,32 +124,18 @@ def _leg_rows(
     rule_id: str | None,
 ) -> tuple[LedgerRow, ...]:
     """One ledger row per series leg at `size_pct_book`, direction from `side_sign`."""
-    adapter = ctx.adapter
-    book_size = ctx.persona.mandate.book_size
-    legs = position.series.legs
-    bullish_sign = position.series.bullish_sign
-    size, risk_amount = adapter.size_and_risk(size_pct_book, legs, view, t, book_size)
-    rows = []
-    for leg in legs:
-        side = leg_side(side_sign, bullish_sign, leg.coeff, adapter.leg_bullish(leg))
-        rows.append(
-            LedgerRow(
-                pm_id=ctx.persona.pm_id,
-                date=view.dates[t],
-                trade_idea_id=position.trade_idea_id,
-                instrument_id=leg.instrument_id,
-                tenor=leg.tenor,
-                instrument_type=adapter.instrument_type(leg.instrument_id, view),
-                side=side,
-                size=size,
-                risk_amount=adapter.leg_risk_amount(leg, size, view, risk_amount),
-                price_or_yield=adapter.leg_price(leg, view, t),
-                stated_conviction=position.conviction,
-                bias_flag=bias_flag,
-                rule_id=rule_id,
-            )
-        )
-    return tuple(rows)
+    return ledger_rows(
+        position,
+        leg_sides(position, side_sign, ctx.adapter),
+        size_pct_book,
+        pm_id=ctx.persona.pm_id,
+        adapter=ctx.adapter,
+        book_size=ctx.persona.mandate.book_size,
+        view=view,
+        t=t,
+        bias_flag=bias_flag,
+        rule_id=rule_id,
+    )
 
 
 def exit_rows(
@@ -173,36 +210,26 @@ def roll_rows(
     bias_flag: str | None,
 ) -> tuple[LedgerRow, ...]:
     """A sell row for the old leg and a buy row for the new leg, per rolled pair."""
-    book_size = ctx.persona.mandate.book_size
-    size, risk_amount = adapter.size_and_risk(
-        position.size_pct_book, position.series.legs, view, t, book_size
-    )
-    rows = []
     bullish_sign = position.series.bullish_sign
+    legs: list[tuple[LegRef, Side]] = []
     for (old_leg, _old_level), (new_leg, _new_level) in adapter.roll_legs(position, view, t):
         entry_side = leg_side(
             position.side_sign, bullish_sign, old_leg.coeff, adapter.leg_bullish(old_leg)
         )
         close_side = Side.SELL if entry_side == Side.BUY else Side.BUY
-        for leg, side in ((old_leg, close_side), (new_leg, entry_side)):
-            rows.append(
-                LedgerRow(
-                    pm_id=ctx.persona.pm_id,
-                    date=view.dates[t],
-                    trade_idea_id=position.trade_idea_id,
-                    instrument_id=leg.instrument_id,
-                    tenor=leg.tenor,
-                    instrument_type=adapter.instrument_type(leg.instrument_id, view),
-                    side=side,
-                    size=size,
-                    risk_amount=adapter.leg_risk_amount(leg, size, view, risk_amount),
-                    price_or_yield=adapter.leg_price(leg, view, t),
-                    stated_conviction=position.conviction,
-                    bias_flag=bias_flag,
-                    rule_id=None,
-                )
-            )
-    return tuple(rows)
+        legs.extend(((old_leg, close_side), (new_leg, entry_side)))
+    return ledger_rows(
+        position,
+        legs,
+        position.size_pct_book,
+        pm_id=ctx.persona.pm_id,
+        adapter=adapter,
+        book_size=ctx.persona.mandate.book_size,
+        view=view,
+        t=t,
+        bias_flag=bias_flag,
+        rule_id=None,
+    )
 
 
 def apply_roll(
@@ -455,9 +482,9 @@ def handle_triggers(
 
     fields = ctx.adapter.position_fields(position, view, t, state, pnl)
     rules = (*ctx.pm_rules, *idea_rules_for_id)
-    if position.rolled_until_t is not None:
-        # Already mid-roll (today's force roll or an earlier one): the roll rule stays silent
-        # until the retag unwinds the day after expiry.
+    if position.rolled_until_t is not None or position.roll_breached:
+        # Mid-roll or already breached: the roll rule stays silent until the retag unwinds
+        # the day after expiry; a breached roll waits for the force roll.
         rules = tuple(r for r in rules if r.param != "roll_before_expiry")
     position, fired = evaluate_day(position, rules, fields)
     fired_non_hold = tuple(r for r in fired if r.action != Action.HOLD)

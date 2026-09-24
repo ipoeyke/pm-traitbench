@@ -37,6 +37,7 @@ from pm_traitbench.engine.params import EffectiveParams
 from pm_traitbench.engine.series import Series
 from pm_traitbench.engine.state import PmState, Position, idea_id, rule_id
 from pm_traitbench.engine.templates import idea_name, render_signpost_text, render_thesis
+from pm_traitbench.engine.triggers import ledger_rows, leg_sides
 from pm_traitbench.enums import (
     Action,
     AssetClass,
@@ -124,9 +125,15 @@ def _draw_form(
     return forms[int(rng.choice(len(forms), p=probs))]
 
 
-def _signpost_kinds(rng: np.random.Generator, event_types_present: bool) -> list[str]:
-    """The signpost kinds for one idea: 2 or 3, without replacement from those available."""
-    available = ["level", "relative"] + (["event"] if event_types_present else [])
+def _signpost_kinds(
+    rng: np.random.Generator, event_types_present: bool, has_peers: bool
+) -> list[str]:
+    """The signpost kinds for one idea: 2 or 3, without replacement from those available.
+
+    `relative` needs a peer other than the candidate, else its move is identically zero.
+    """
+    available = ["level"] + (["relative"] if has_peers else [])
+    available += ["event"] if event_types_present else []
     n = min(int(rng.choice(SIGNPOSTS_PER_IDEA)), len(available))
     return list(rng.choice(available, size=n, replace=False))
 
@@ -150,7 +157,8 @@ def _build_signposts(
 ) -> tuple[Rule, ...]:
     """This idea's 2 or 3 idea-scope signpost rules."""
     event_types = view.event_types(candidate)
-    kinds = _signpost_kinds(rng_signposts, bool(event_types))
+    has_peers = bool(set(adapter.peer_ids(candidate, view.instruments)) - {candidate})
+    kinds = _signpost_kinds(rng_signposts, bool(event_types), has_peers)
     peer = adapter.peer_label(candidate)
     rows: list[Rule] = []
     for kind in kinds:
@@ -401,29 +409,9 @@ def attempt_entry(
         size_rank=rank,
     )
 
-    size, risk_amount = adapter.size_and_risk(
+    size_at_entry, _ = adapter.size_and_risk(
         size_pct_book, legs, view, t, persona.mandate.book_size
     )
-    bias_flag = join_flags([decision.flag, overconfidence_flag, conviction_flag])
-    ledger_rows = tuple(
-        LedgerRow(
-            pm_id=persona.pm_id,
-            date=view.dates[t],
-            trade_idea_id=trade_idea_id,
-            instrument_id=leg.instrument_id,
-            tenor=leg.tenor,
-            instrument_type=adapter.instrument_type(leg.instrument_id, view),
-            side=leg_side(side_sign, series.bullish_sign, leg.coeff, adapter.leg_bullish(leg)),
-            size=size,
-            risk_amount=adapter.leg_risk_amount(leg, size, view, risk_amount),
-            price_or_yield=adapter.leg_price(leg, view, t),
-            stated_conviction=draw.conviction,
-            bias_flag=bias_flag,
-            rule_id=None,
-        )
-        for leg in legs
-    )
-
     position = Position(
         trade_idea_id=trade_idea_id,
         expression=form,
@@ -439,12 +427,25 @@ def attempt_entry(
         forecast=draw.forecast,
         size_pct_book=size_pct_book,
         original_size_pct_book=size_pct_book,
+        size_at_entry=size_at_entry,
         conviction=draw.conviction,
         size_rank=rank,
         triggers_fired=0,
         consumed_rule_ids=frozenset(),
         run_counters=(),
         size_changed_t=t,
+    )
+    ledger = ledger_rows(
+        position,
+        leg_sides(position, side_sign, adapter),
+        size_pct_book,
+        pm_id=persona.pm_id,
+        adapter=adapter,
+        book_size=persona.mandate.book_size,
+        view=view,
+        t=t,
+        bias_flag=join_flags([decision.flag, overconfidence_flag, conviction_flag]),
+        rule_id=None,
     )
 
     trailing_move = view.trailing_move(series, t, config.engine.horizon_days)
@@ -459,7 +460,7 @@ def attempt_entry(
         position=position,
         idea=idea_row,
         rules=(stop_row, target_row, *signpost_rows),
-        ledger_rows=ledger_rows,
+        ledger_rows=ledger,
         conflict=decision.conflict,
         entered_after_run=entered_after_run,
     )

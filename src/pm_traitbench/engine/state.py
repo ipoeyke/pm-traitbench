@@ -42,6 +42,8 @@ class Position:
     forecast: float
     size_pct_book: float
     original_size_pct_book: float
+    # Adapter-unit size bought at entry; every later ledger row scales it by % of book.
+    size_at_entry: float
     conviction: int
     size_rank: int
     triggers_fired: int
@@ -95,7 +97,8 @@ class PmState:
 
     @property
     def held_instruments(self) -> frozenset[str]:
-        return frozenset(p.instrument_id for p in self.positions)
+        """Every instrument any open position trades, a pair's partner leg included."""
+        return frozenset(leg.instrument_id for p in self.positions for leg in p.legs)
 
     def position(self, trade_idea_id: str) -> Position:
         for p in self.positions:

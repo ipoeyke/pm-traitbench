@@ -13,6 +13,7 @@ from pm_traitbench.engine.biases import herding, overconfidence
 from pm_traitbench.engine.biases.herding import HerdingDecision
 from pm_traitbench.engine.constants import NO_ENTRY_LAST_SESSIONS
 from pm_traitbench.engine.ideas import attempt_entry, entries_for_day
+from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.own_signal import SignalDraw
 from pm_traitbench.engine.params import EffectiveParams
 from pm_traitbench.engine.series import LegRef, Series
@@ -84,6 +85,7 @@ def _dummy_position(instrument_id: str, n: int) -> Position:
         forecast=0.0,
         size_pct_book=1.0,
         original_size_pct_book=1.0,
+        size_at_entry=1.0,
         conviction=1,
         size_rank=1,
         triggers_fired=0,
@@ -417,6 +419,131 @@ def test_preferred_form_pair_with_weight_one_always_draws_pair(
         assert new_idea is not None
         assert new_idea.idea.expression == Expression.PAIR
         assert new_idea.ledger_rows[0].side != new_idea.ledger_rows[1].side
+
+
+def test_pair_partner_is_held_so_neither_leg_is_drawn_again(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    state = PmState(
+        pm_id=_PM_ID, positions=(_dummy_position("EQ-0004", 1),), next_idea=2, next_rule=1
+    )
+    traits = [
+        *setup["traits"],
+        Trait(
+            pm_id=_PM_ID,
+            trait_id="t_99",
+            kind=Kind.PREFERENCE,
+            param="pair_vs_outright",
+            value="express the view as a pair trade",
+            active=True,
+            mult_range=None,
+            mult_risk_off=None,
+            mult_risk_on=None,
+        ),
+    ]
+    config = Config(engine=EngineConfig(preferred_form_weight=1.0))
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+
+    def _attempt(state: PmState, attempt: int):
+        return attempt_entry(
+            state,
+            _T,
+            setup["view"],
+            setup["adapter"],
+            _params(),
+            setup["persona"],
+            setup["rules"],
+            traits,
+            setup["universe"],
+            config,
+            setup["catalogue"],
+            _rng_for(config, _PM_ID),
+            attempt=attempt,
+        )
+
+    state, pair_idea = _attempt(state, 0)
+    assert pair_idea is not None
+    assert pair_idea.idea.expression == Expression.PAIR
+    pair_names = {leg.instrument_id for leg in pair_idea.idea.legs}
+    assert len(pair_names) == 2
+    assert pair_names <= state.held_instruments
+
+    state, next_idea = _attempt(state, 1)
+    assert next_idea is not None
+    assert next_idea.idea.instrument_id not in pair_names
+    assert not {leg.instrument_id for leg in next_idea.idea.legs} & pair_names
+
+
+def _rates_credit_ideas(view, neutral_pm, catalogue, sub_style, monkeypatch, n_attempts=20):
+    persona, traits, rules = neutral_pm(AssetClass.RATES_CREDIT, sub_style)
+    adapter = RatesCreditAdapter(sub_style=sub_style, horizon_days=20)
+    universe = adapter.universe(view.instruments, rules)
+    config = Config()
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+    new_ideas = []
+    for attempt in range(n_attempts):
+        state = PmState(pm_id=_PM_ID, positions=(), next_idea=1, next_rule=1)
+        _, new_idea = attempt_entry(
+            state,
+            _T,
+            view,
+            adapter,
+            _params(),
+            persona,
+            rules,
+            traits,
+            universe,
+            config,
+            catalogue,
+            _rng_for(config, _PM_ID),
+            attempt=attempt,
+        )
+        assert new_idea is not None
+        new_ideas.append(new_idea)
+    return new_ideas
+
+
+def test_sovereign_rates_ideas_never_carry_a_relative_signpost(
+    fixture_view, neutral_pm, catalogue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new_ideas = _rates_credit_ideas(
+        fixture_view, neutral_pm, catalogue, "sovereign_rates", monkeypatch
+    )
+    assert any(i.idea.expression == Expression.OUTRIGHT for i in new_ideas)
+    for new_idea in new_ideas:
+        assert all(r.field != "relative_move" for r in new_idea.rules)
+
+
+def test_credit_relative_signpost_needs_a_same_band_peer(
+    fixture_market, fixture_view, neutral_pm, catalogue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    alone = _rates_credit_ideas(
+        fixture_view, neutral_pm, catalogue, "long_short_credit", monkeypatch
+    )
+    assert all(r.field != "relative_move" for i in alone for r in i.rules)
+
+    band = fixture_view.instruments["CR-IG-001"].rating_band
+    instruments = [
+        i.model_copy(update={"rating_band": band}) if i.instrument_id == "CR-IG-002" else i
+        for i in fixture_market["instruments"]
+    ]
+    peered_view = MarketView.build(
+        seed=fixture_view.seed,
+        dates=fixture_market["dates"],
+        instruments=instruments,
+        prices=fixture_market["prices"],
+        curves=fixture_market["curves"],
+        consensus=fixture_market["consensus"],
+        calendar=fixture_market["calendar"],
+        regimes=fixture_market["regimes"],
+    )
+    peered = _rates_credit_ideas(
+        peered_view, neutral_pm, catalogue, "long_short_credit", monkeypatch
+    )
+    assert any(r.field == "relative_move" for i in peered for r in i.rules)
 
 
 def test_max_positions_rule_stops_entries(equities_setup, monkeypatch: pytest.MonkeyPatch) -> None:

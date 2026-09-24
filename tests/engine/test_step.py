@@ -20,6 +20,7 @@ from pm_traitbench.engine.params import ParamSchedule
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import PmState, Position
 from pm_traitbench.engine.step import PmContext, step
+from pm_traitbench.engine.triggers import exit_rows, trim_half
 from pm_traitbench.enums import (
     Action,
     AssetClass,
@@ -181,6 +182,7 @@ def _position(
     forecast: float = 8.0,
     size_pct_book: float = 5.0,
     original_size_pct_book: float | None = None,
+    size_at_entry: float | None = None,
     conviction: int = 3,
     size_rank: int = 3,
     triggers_fired: int = 0,
@@ -209,6 +211,9 @@ def _position(
         size_pct_book=size_pct_book,
         original_size_pct_book=(
             original_size_pct_book if original_size_pct_book is not None else size_pct_book
+        ),
+        size_at_entry=(
+            size_at_entry if size_at_entry is not None else original_size_pct_book or size_pct_book
         ),
         conviction=conviction,
         size_rank=size_rank,
@@ -385,6 +390,53 @@ def test_stop_crossed_closes_position_with_one_exit_row(eq_parts) -> None:
     assert "the stop" in out.closed[0][2]
     assert out.opportunities["exits"] == 1
     assert out.opportunities["triggers_fired"] == 1
+
+
+def test_commodity_exit_sells_the_contracts_bought_at_entry_after_a_price_move(
+    cm_parts,
+) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    view = _commodity_view([460.0, 455.0, 440.0], [461.0, 456.0, 441.0], expiry_t=2)
+    legs = (LegRef("CM-CRD", Tenor.M1, 1.0),)
+    size_at_entry, _ = adapter.size_and_risk(5.0, legs, view, 0, persona.mandate.book_size)
+    repriced, _ = adapter.size_and_risk(5.0, legs, view, 1, persona.mandate.book_size)
+    assert repriced != size_at_entry
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=0,
+        entry_level=460.0,
+        target_level=1000.0,
+        stop_level=457.0,
+        size_pct_book=5.0,
+        size_at_entry=size_at_entry,
+        tenor=Tenor.M1,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    traits = _traits_with(traits, {"exit_deficiency": (0.0, False)})
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
+
+    new_state, out = step(state, 1, view, ctx, idea_rules)
+
+    assert new_state.n_positions == 0
+    assert [(row.side, row.size) for row in out.ledger_rows] == [(Side.SELL, size_at_entry)]
+
+
+def test_commodity_trim_then_exit_sizes_sum_to_the_entry_size(cm_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    view = _commodity_view([460.0, 455.0, 440.0], [461.0, 456.0, 441.0], expiry_t=2)
+    legs = (LegRef("CM-CRD", Tenor.M1, 1.0),)
+    size_at_entry, _ = adapter.size_and_risk(5.0, legs, view, 0, persona.mandate.book_size)
+    pos = _position(
+        "ti_001", "CM-CRD", size_pct_book=5.0, size_at_entry=size_at_entry, tenor=Tenor.M1
+    )
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
+
+    trimmed, trim_rows = trim_half(pos, ctx, view, 1)
+    close_rows = exit_rows(trimmed, ctx, view, 2, None, None)
+
+    assert sum(row.size for row in (*trim_rows, *close_rows)) == pytest.approx(size_at_entry)
 
 
 def test_stop_and_signpost_same_day_two_events_one_exit(eq_parts) -> None:
@@ -640,7 +692,9 @@ def test_roll_does_not_spuriously_stop_out_via_raw_m2_level_in_backwardation(cm_
             assert out.ledger_rows == ()
 
 
-def test_breached_roll_force_rolls_at_expiry_with_late_roll_flag(cm_parts) -> None:
+def test_breached_roll_fires_once_then_force_rolls_at_expiry_with_late_roll_flag(
+    cm_parts,
+) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = cm_parts
     m1 = [100.0] * 13
     m2 = [102.0] * 13
@@ -653,7 +707,6 @@ def test_breached_roll_force_rolls_at_expiry_with_late_roll_flag(cm_parts) -> No
         target_level=1000.0,
         stop_level=-1000.0,
         tenor=Tenor.M1,
-        roll_breached=True,
     )
     state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
     idea_rules = _idea_rules_for(pos, persona.pm_id)
@@ -663,33 +716,29 @@ def test_breached_roll_force_rolls_at_expiry_with_late_roll_flag(cm_parts) -> No
     ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
     roll_rule = next(r for r in pm_rules if r.param == "roll_before_expiry")
 
-    for t in range(9, 12):
+    roll_events = []
+    for t in range(4, 12):
         state, out = step(state, t, view, ctx, idea_rules)
         assert state.n_positions == 1
         assert out.position_days[0].pnl_unit == pytest.approx(10.0)
+        roll_events.extend((t, ev) for ev in out.rule_events if ev.rule_id == roll_rule.rule_id)
         pos_now = state.position("ti_001")
-        roll_events = [ev for ev in out.rule_events if ev.rule_id == roll_rule.rule_id]
-        if t == 9:
-            # The day before expiry, the roll rule still fires normally and breaches.
-            assert len(roll_events) == 1
-            assert roll_events[0].response == RuleResponse.ACKED_NO_ACTION
-            assert out.ledger_rows == ()
-            assert pos_now.series.legs[0].tenor == Tenor.M1
-            assert pos_now.rolled_until_t is None
-        elif t == 10:
+        if t == 10:
             assert len(out.ledger_rows) == 2
             assert all(row.bias_flag == LATE_ROLL_FLAG for row in out.ledger_rows)
             assert pos_now.series.legs[0].tenor == Tenor.M2
             assert pos_now.rolled_until_t == 10
-            # The force roll runs first, unconditionally, before rule evaluation on the expiry
-            # day itself, so the roll rule is never evaluated that day and writes no event row.
-            assert roll_events == []
         else:
             assert out.ledger_rows == ()
-            assert pos_now.series.legs[0].tenor == Tenor.M1
-            assert pos_now.rolled_until_t is None
+        if 5 <= t < 10:
+            # Breached on its first firing day and silent until the force roll.
+            assert pos_now.roll_breached is True
 
+    assert [t for t, _ in roll_events] == [5]
+    assert roll_events[0][1].response == RuleResponse.ACKED_NO_ACTION
     final_pos = state.position("ti_001")
+    assert final_pos.series.legs[0].tenor == Tenor.M1
+    assert final_pos.rolled_until_t is None
     assert final_pos.entry_level == pytest.approx(90.0)
     assert final_pos.rolled_offset == pytest.approx(0.0)
     assert final_pos.roll_breached is False

@@ -69,6 +69,7 @@ def _make_position(
         forecast=105.0,
         size_pct_book=2.0,
         original_size_pct_book=2.0,
+        size_at_entry=2.0,
         conviction=1,
         size_rank=1,
         triggers_fired=1,

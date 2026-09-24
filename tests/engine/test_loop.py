@@ -8,7 +8,15 @@ from pm_traitbench.config import Config, SeedConfig
 from pm_traitbench.engine import loop as loop_module
 from pm_traitbench.engine.loop import run_pm
 from pm_traitbench.engine.step import step as real_step
-from pm_traitbench.enums import Action, AssetClass, Op, RuleResponse, RuleScope, RuleSource
+from pm_traitbench.enums import (
+    Action,
+    AssetClass,
+    Op,
+    RuleResponse,
+    RuleScope,
+    RuleSource,
+    Side,
+)
 from pm_traitbench.errors import EngineError
 from pm_traitbench.tables.schema import Rule
 
@@ -48,6 +56,30 @@ def test_ledger_and_idea_rules_reference_ideas_that_exist(
             assert row.trade_idea_id in idea_ids
         for rule in result.idea_rules:
             assert rule.trade_idea_id in idea_ids
+
+
+@pytest.mark.parametrize("exit_deficiency", [0.0, 0.5])
+def test_signed_ledger_sizes_net_to_zero_per_idea_and_instrument(
+    neutral_pm, catalogue, fixture_view, engine_config, exit_deficiency
+) -> None:
+    for asset_class, sub_style in _NEUTRAL_PMS:
+        result = _run(
+            neutral_pm,
+            catalogue,
+            fixture_view,
+            asset_class,
+            sub_style,
+            engine_config,
+            exit_deficiency=exit_deficiency,
+        )
+        assert result.ideas, f"{asset_class}/{sub_style} produced no ideas"
+        net: dict[tuple[str, str], float] = {}
+        for row in result.ledger:
+            key = (row.trade_idea_id, row.instrument_id)
+            sign = 1.0 if row.side == Side.BUY else -1.0
+            net[key] = net.get(key, 0.0) + sign * row.size
+        for key, total in net.items():
+            assert total == pytest.approx(0.0, abs=1e-9), (asset_class, sub_style, key)
 
 
 def test_every_idea_is_closed_with_exit_date_and_outcome(

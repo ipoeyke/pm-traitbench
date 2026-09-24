@@ -1,6 +1,6 @@
 """Tests for engine position and PM state: sign helpers, counters and ordering."""
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
@@ -35,6 +35,7 @@ def _make_position(
         forecast=105.0,
         size_pct_book=1.0,
         original_size_pct_book=1.0,
+        size_at_entry=1.0,
         conviction=1,
         size_rank=1,
         triggers_fired=0,
@@ -182,6 +183,14 @@ def test_pm_state_held_instruments() -> None:
     state = PmState(pm_id="pm_001", positions=(), next_idea=1, next_rule=1)
     state = state.add_position(_make_position(trade_idea_id="ti_001"))
     assert state.held_instruments == frozenset({"EQ-0001"})
+
+
+def test_pm_state_held_instruments_include_a_pair_partner() -> None:
+    base = _make_position(trade_idea_id="ti_001")
+    partner = Leg(instrument_id="EQ-0002", tenor=None, side=Side.SELL, weight=1.0)
+    pair = replace(base, expression=Expression.PAIR, legs=(*base.legs, partner))
+    state = PmState(pm_id="pm_001", positions=(pair,), next_idea=2, next_rule=1)
+    assert state.held_instruments == frozenset({"EQ-0001", "EQ-0002"})
 
 
 def test_idea_id_and_rule_id_formatting() -> None:
