@@ -129,6 +129,9 @@ def run_pm(
                 update={"exit_date": exit_date, "outcome": outcome}
             )
 
+    if open_ideas:
+        raise EngineError(f"idea(s) {sorted(open_ideas)} never closed by the end of the horizon")
+
     return PmResult(
         ideas=list(closed_ideas.values()),
         idea_rules=idea_rule_rows,

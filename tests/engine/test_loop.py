@@ -1,9 +1,13 @@
 """Tests for the per-PM daily loop: `run_pm` end to end on the fixture market."""
 
+from dataclasses import replace
+
 import pytest
 
 from pm_traitbench.config import Config, SeedConfig
+from pm_traitbench.engine import loop as loop_module
 from pm_traitbench.engine.loop import run_pm
+from pm_traitbench.engine.step import step as real_step
 from pm_traitbench.enums import Action, AssetClass, Op, RuleResponse, RuleScope, RuleSource
 from pm_traitbench.errors import EngineError
 from pm_traitbench.tables.schema import Rule
@@ -57,6 +61,21 @@ def test_every_idea_is_closed_with_exit_date_and_outcome(
             assert idea.outcome is not None
 
 
+def test_run_pm_raises_if_an_idea_never_closes(
+    neutral_pm, catalogue, fixture_view, engine_config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    persona, traits, pm_rules = neutral_pm(AssetClass.EQUITIES, "equity_long_short")
+
+    def fake_step(state, t, view, ctx, idea_rules_arg):
+        new_state, day_out = real_step(state, t, view, ctx, idea_rules_arg)
+        return new_state, replace(day_out, closed=())
+
+    monkeypatch.setattr(loop_module, "step", fake_step)
+
+    with pytest.raises(EngineError, match="never closed"):
+        run_pm(persona, traits, pm_rules, [], fixture_view, engine_config, catalogue)
+
+
 def test_no_position_day_before_its_idea_entry_date(
     neutral_pm, catalogue, fixture_view, engine_config
 ) -> None:
@@ -70,6 +89,7 @@ def test_no_position_day_before_its_idea_entry_date(
 def test_rule_event_responses_are_only_acted_or_overridden_when_e_is_zero(
     neutral_pm, catalogue, fixture_view, engine_config
 ) -> None:
+    total_events = 0
     for asset_class, sub_style in _NEUTRAL_PMS:
         result = _run(
             neutral_pm,
@@ -80,8 +100,10 @@ def test_rule_event_responses_are_only_acted_or_overridden_when_e_is_zero(
             engine_config,
             exit_deficiency=0.0,
         )
+        total_events += len(result.rule_events)
         for event in result.rule_events:
             assert event.response in (RuleResponse.ACTED, RuleResponse.OVERRIDDEN)
+    assert total_events > 0
 
 
 def test_opportunities_ideas_equals_len_ideas(

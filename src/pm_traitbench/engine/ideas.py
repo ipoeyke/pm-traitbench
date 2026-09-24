@@ -358,9 +358,8 @@ def attempt_entry(
         rng=rng_templates,
     )
 
-    # A position's own legs always carry the literal traded tenor (a commodity outright still
-    # tracks M1 internally, for roll math); the persisted idea's legs describe its structural
-    # form instead, and only carry a tenor for curve and calendar-spread forms.
+    # Position.legs keeps the literal traded tenor (a commodity outright still tracks M1,
+    # for roll math); the idea's own legs only carry a tenor for curve/calendar-spread forms.
     position_legs = tuple(
         Leg(
             instrument_id=leg.instrument_id,

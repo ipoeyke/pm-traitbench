@@ -88,11 +88,19 @@ class MarketView:
         calendar: Sequence[CalendarEvent],
         regimes: Sequence[RegimeSpan],
     ) -> "MarketView":
-        """Build one seed's view; rows for other seeds are ignored."""
+        """Build one seed's view; rows for other seeds are ignored.
+
+        An instrument with no price or curve row on this seed (coverage can differ
+        by seed, e.g. real versus synthetic) is dropped rather than kept unpriced.
+        """
         dates_t = tuple(dates)
         date_index = {day: i for i, day in enumerate(dates_t)}
         n_days = len(dates_t)
-        instruments_by_id = {i.instrument_id: i for i in instruments}
+        covered_ids = {row.instrument_id for row in prices if row.seed == seed}
+        covered_ids |= {row.curve_id for row in curves if row.seed == seed}
+        instruments_by_id = {
+            i.instrument_id: i for i in instruments if i.instrument_id in covered_ids
+        }
 
         raw_levels = cls._build_raw_levels(
             seed, dates_t, date_index, n_days, instruments_by_id, prices, curves

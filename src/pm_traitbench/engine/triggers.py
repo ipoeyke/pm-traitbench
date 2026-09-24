@@ -43,6 +43,7 @@ class TriggerOutcome:
     fired_non_hold: int
     closed: tuple[str, date, str] | None
     sold: bool
+    rolled_today: bool
 
 
 def find_pm_rule(rules: Sequence[Rule], param: str) -> Rule | None:
@@ -398,6 +399,7 @@ def _execute_fired(
         fired_non_hold=len(fired_non_hold),
         closed=closed,
         sold=sold,
+        rolled_today=rolled_today,
     )
     return outcome, rolled_today
 
@@ -420,6 +422,7 @@ def _apply_force_roll(
         ledger_rows=outcome.ledger_rows + rows,
         action=action,
         bias_flag=bias_flag,
+        rolled_today=True,
     )
 
 
@@ -454,6 +457,7 @@ def handle_triggers(
             fired_non_hold=0,
             closed=None,
             sold=False,
+            rolled_today=False,
         )
         rolled_today = False
     else:

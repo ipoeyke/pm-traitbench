@@ -560,6 +560,10 @@ def test_render_thesis_unit_pct_renders_as_percent_sign() -> None:
     assert render_thesis("{target}{unit}", target=103.5, unit="pct") == "103.5%"
 
 
+def test_render_thesis_unit_none_renders_as_no_suffix() -> None:
+    assert render_thesis("{move}{unit}", move=5.2, unit=None) == "+5.2"
+
+
 def test_render_thesis_fills_side_slot() -> None:
     assert (
         render_thesis("{side} {name}", side="steepener", name="2Y versus 10Y")

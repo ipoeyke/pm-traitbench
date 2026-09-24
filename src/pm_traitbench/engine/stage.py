@@ -74,16 +74,10 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
 
     views: dict[str, MarketView] = {}
     for seed in sorted({persona.market_seed for persona in personas}):
-        # A real seed's instrument coverage can be narrower than a synthetic one's (only the
-        # commodities and FX pairs it actually fetched or simulated): offering a PM an
-        # instrument with no price or curve on its own seed would fail the first day it traded.
-        seed_ids = {row.instrument_id for row in prices if row.seed == seed}
-        seed_ids |= {row.curve_id for row in curves if row.seed == seed}
-        seed_instruments = [inst for inst in instruments if inst.instrument_id in seed_ids]
         views[seed] = MarketView.build(
             seed=seed,
             dates=dates,
-            instruments=seed_instruments,
+            instruments=instruments,
             prices=prices,
             curves=curves,
             consensus=consensus,

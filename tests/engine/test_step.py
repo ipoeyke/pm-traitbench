@@ -730,6 +730,42 @@ def test_force_roll_without_a_roll_rule_carries_no_flag(cm_parts) -> None:
     assert final_pos.rolled_offset == pytest.approx(0.0)
 
 
+def test_force_roll_skips_discretionary_even_when_loss_aversion_would_add(
+    cm_parts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    pm_rules_no_roll = tuple(r for r in pm_rules if r.param != "roll_before_expiry")
+    m1 = [100.0] * 13
+    m2 = [102.0] * 13
+    view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=0,
+        entry_level=110.0,
+        target_level=1000.0,
+        stop_level=-1000.0,
+        tenor=Tenor.M1,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    traits = _traits_with(traits, {"exit_deficiency": (0.0, False)})
+    ctx = _ctx(persona, traits, pm_rules_no_roll, adapter, ["CM-CRD"], catalogue, config)
+    monkeypatch.setattr(
+        loss_aversion_module,
+        "choose",
+        lambda *a, **kw: LossSideChoice(PositionAction.ADD, "loss_aversion:add"),
+    )
+
+    state, out = step(state, 10, view, ctx, idea_rules)
+
+    assert state.n_positions == 1
+    assert out.position_days[0].pnl_unit == pytest.approx(-10.0)
+    assert len(out.ledger_rows) == 2
+    keys = {(row.instrument_id, row.tenor, row.side) for row in out.ledger_rows}
+    assert keys == {("CM-CRD", Tenor.M1, Side.SELL), ("CM-CRD", Tenor.M2, Side.BUY)}
+
+
 # --- Discretionary block -------------------------------------------------------
 
 

@@ -206,6 +206,45 @@ def test_regime_matches_the_fixture_spans(fixture_view: MarketView):
     assert fixture_view.regime(30) == Regime.RISK_OFF
 
 
+def test_build_drops_an_instrument_with_no_price_or_curve_rows_on_the_seed():
+    dates = [date(2026, 1, 5), date(2026, 1, 6)]
+
+    def _equity(instrument_id: str, name: str) -> Instrument:
+        return Instrument(
+            instrument_id=instrument_id,
+            family=Family.EQUITIES,
+            kind=InstrumentKind.EQUITY,
+            name=name,
+            currency="USD",
+            sector="sector_01",
+            rating_band=None,
+            commodity_group=None,
+            duration_years=None,
+            beta=1.0,
+            expiry_rule=None,
+        )
+
+    covered = _equity("EQ-0001", "Equity 0001")
+    uncovered = _equity("EQ-0002", "Equity 0002")
+    prices = [
+        Price(seed="T", date=d, instrument_id="EQ-0001", price=100.0, spread_bp=None) for d in dates
+    ]
+
+    view = MarketView.build(
+        seed="T",
+        dates=dates,
+        instruments=[covered, uncovered],
+        prices=prices,
+        curves=[],
+        consensus=[],
+        calendar=[],
+        regimes=[],
+    )
+
+    assert "EQ-0001" in view.instruments
+    assert "EQ-0002" not in view.instruments
+
+
 def test_regime_raises_outside_every_span():
     dates = [date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 7)]
     view = MarketView.build(
