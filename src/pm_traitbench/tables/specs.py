@@ -65,8 +65,6 @@ POSITION_DAYS = TableSpec("position_days", PositionDay, ("pm_id", "date", "trade
 
 ENGINE_TABLES: tuple[TableSpec, ...] = (IDEAS, LEDGER, RULE_EVENTS, POSITION_DAYS)
 
-_ENGINE_KEY_COLUMNS = {"pm_id", "date", "trade_idea_id"}
-
 HIDDEN_COLUMNS: dict[str, tuple[str, ...]] = {
     "ledger": ("bias_flag", "rule_id"),
     "ideas": (
@@ -81,7 +79,7 @@ HIDDEN_COLUMNS: dict[str, tuple[str, ...]] = {
         "size_rank",
     ),
     "position_days": tuple(
-        name for name in PositionDay.model_fields if name not in _ENGINE_KEY_COLUMNS
+        name for name in PositionDay.model_fields if name not in set(POSITION_DAYS.key)
     ),
 }
 

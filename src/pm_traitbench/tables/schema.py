@@ -483,8 +483,12 @@ class Idea(BaseModel):
             raise ValueError("exit_date must not be before entry_date")
 
         is_multi_leg = self.expression in MULTI_LEG_FORMS
-        if is_multi_leg != (len(self.legs) == 2):
-            raise ValueError(f"expression '{self.expression.value}' has an invalid leg count")
+        expected_legs = 2 if is_multi_leg else 1
+        if len(self.legs) != expected_legs:
+            raise ValueError(
+                f"expression '{self.expression.value}' requires {expected_legs} leg(s), "
+                f"got {len(self.legs)}"
+            )
         requires_tenor = self.expression in (Expression.CURVE, Expression.CALENDAR_SPREAD)
         for leg in self.legs:
             if requires_tenor and leg.tenor is None:

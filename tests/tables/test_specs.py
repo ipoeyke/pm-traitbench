@@ -1,5 +1,5 @@
 from pm_traitbench.tables.schema import PositionDay
-from pm_traitbench.tables.specs import ENGINE_TABLES, HIDDEN_COLUMNS
+from pm_traitbench.tables.specs import ENGINE_TABLES, HIDDEN_COLUMNS, POSITION_DAYS
 
 _EXPECTED_ENGINE_TABLES = {
     "ideas": ("pm_id", "trade_idea_id"),
@@ -23,6 +23,5 @@ def test_hidden_columns_names_real_columns() -> None:
 
 
 def test_position_days_hidden_columns_equal_non_key_columns() -> None:
-    key = {"pm_id", "date", "trade_idea_id"}
-    expected = tuple(name for name in PositionDay.model_fields if name not in key)
-    assert HIDDEN_COLUMNS["position_days"] == expected
+    expected = set(PositionDay.model_fields) - set(POSITION_DAYS.key)
+    assert set(HIDDEN_COLUMNS["position_days"]) == expected

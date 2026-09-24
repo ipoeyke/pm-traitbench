@@ -908,6 +908,19 @@ def _curve_idea(**overrides) -> Idea:
     return _outright_idea(**fields)
 
 
+def _calendar_spread_idea(**overrides) -> Idea:
+    fields = dict(
+        instrument_id="CM-CL",
+        expression=Expression.CALENDAR_SPREAD,
+        legs=(
+            _leg(instrument_id="CM-CL", tenor=Tenor.M1, side=Side.BUY),
+            _leg(instrument_id="CM-CL", tenor=Tenor.M2, side=Side.SELL),
+        ),
+    )
+    fields.update(overrides)
+    return _outright_idea(**fields)
+
+
 def _closed_idea(**overrides) -> Idea:
     fields = dict(
         exit_date=datetime.date(2026, 1, 20),
@@ -1007,6 +1020,12 @@ def test_curve_idea_valid() -> None:
     assert all(leg.tenor is not None for leg in idea.legs)
 
 
+def test_calendar_spread_idea_valid() -> None:
+    idea = _calendar_spread_idea()
+    assert idea.expression == Expression.CALENDAR_SPREAD
+    assert all(leg.tenor is not None for leg in idea.legs)
+
+
 def test_closed_idea_valid() -> None:
     idea = _closed_idea()
     assert idea.exit_date is not None
@@ -1052,12 +1071,33 @@ def test_idea_rejects_outright_with_two_legs() -> None:
         _outright_idea(legs=(_leg(), _leg(instrument_id="EQ-MSFT")))
 
 
+def test_idea_rejects_outright_with_three_legs() -> None:
+    with pytest.raises(ValidationError):
+        _outright_idea(
+            legs=(
+                _leg(),
+                _leg(instrument_id="EQ-MSFT"),
+                _leg(instrument_id="EQ-GOOG"),
+            )
+        )
+
+
 def test_idea_rejects_curve_leg_without_tenor() -> None:
     with pytest.raises(ValidationError):
         _curve_idea(
             legs=(
                 _leg(instrument_id="SV-US", tenor=Tenor.Y2, side=Side.BUY),
                 _leg(instrument_id="SV-US", tenor=None, side=Side.SELL),
+            )
+        )
+
+
+def test_idea_rejects_calendar_spread_leg_without_tenor() -> None:
+    with pytest.raises(ValidationError):
+        _calendar_spread_idea(
+            legs=(
+                _leg(instrument_id="CM-CL", tenor=Tenor.M1, side=Side.BUY),
+                _leg(instrument_id="CM-CL", tenor=None, side=Side.SELL),
             )
         )
 
@@ -1203,4 +1243,4 @@ def test_engine_models_survive_to_record_round_trip() -> None:
     rows = [_leg(), _outright_idea(), _ledger_row(), _rule_event(), _position_day()]
     for row in rows:
         record = to_record(row)
-        assert isinstance(record, dict)
+        assert type(row).model_validate(record) == row
