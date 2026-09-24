@@ -36,7 +36,7 @@ class Adapter(Protocol):
         view: MarketView,
         t: int,
         universe: Sequence[str],
-        h: int,
+        held: frozenset[str],
         rng: np.random.Generator,
     ) -> tuple[LegRef, ...] | None: ...
 
@@ -92,7 +92,7 @@ def target_reached(pos: Position, level_now: float) -> bool:
 
 
 def common_fields(
-    pos: Position, state: PmState, t: int, pnl_unit: float, target_reached: bool
+    pos: Position, state: PmState, t: int, pnl_unit: float, target_hit_now: bool
 ) -> dict[str, float | int]:
     """Rule fields every adapter shares.
 
@@ -105,7 +105,7 @@ def common_fields(
         "triggers_fired": pos.triggers_fired,
         "n_positions": state.n_positions,
         "size_pct_book": pos.size_pct_book,
-        "target_hit": 1 if target_reached else 0,
+        "target_hit": 1 if target_hit_now else 0,
         "level": level_now,
     }
 

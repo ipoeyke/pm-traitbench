@@ -27,17 +27,17 @@ def _preference_trait(param: str, value: str) -> Trait:
 
 def test_adapter_for_multi_asset_raises() -> None:
     with pytest.raises(EngineError):
-        adapter_for(AssetClass.MULTI_ASSET, "global_macro")
+        adapter_for(AssetClass.MULTI_ASSET, "global_macro", 20)
 
 
 def test_adapter_for_unregistered_class_raises() -> None:
     with pytest.raises(EngineError):
-        adapter_for(AssetClass.RATES_CREDIT, "sovereign_rates")
+        adapter_for(AssetClass.RATES_CREDIT, "sovereign_rates", 20)
 
 
 def test_adapter_for_equities_accepts_any_sub_style() -> None:
-    assert isinstance(adapter_for(AssetClass.EQUITIES, "value"), EquitiesAdapter)
-    assert isinstance(adapter_for(AssetClass.EQUITIES, "made_up_sub_style"), EquitiesAdapter)
+    assert isinstance(adapter_for(AssetClass.EQUITIES, "value", 20), EquitiesAdapter)
+    assert isinstance(adapter_for(AssetClass.EQUITIES, "made_up_sub_style", 20), EquitiesAdapter)
 
 
 def test_form_for_preference_covers_every_catalogue_expression_value() -> None:

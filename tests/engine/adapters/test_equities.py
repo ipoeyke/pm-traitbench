@@ -7,6 +7,7 @@ import pytest
 
 from pm_traitbench.engine.adapters.base import leg_side, pnl_unit, relative_move
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
+from pm_traitbench.engine.constants import TRAILING_HIGH_DAYS
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import PmState, Position
 from pm_traitbench.enums import (
@@ -21,6 +22,8 @@ from pm_traitbench.enums import (
 from pm_traitbench.errors import EngineError
 from pm_traitbench.market.levels import log_grid_step
 from pm_traitbench.tables.schema import Leg, Rule
+
+_HORIZON = 10
 
 
 def _exclusion_rule(sector: str) -> Rule:
@@ -76,49 +79,92 @@ def _make_position(
 
 
 def test_universe_drops_excluded_sector(fixture_instruments) -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     instruments = {i.instrument_id: i for i in fixture_instruments}
     result = adapter.universe(instruments, [_exclusion_rule("sector_02")])
     assert result == ("EQ-0001", "EQ-0002", "EQ-0003")
 
 
 def test_universe_keeps_every_equity_without_an_exclusion(fixture_instruments) -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     instruments = {i.instrument_id: i for i in fixture_instruments}
     result = adapter.universe(instruments, [])
     assert result == ("EQ-0001", "EQ-0002", "EQ-0003", "EQ-0004")
 
 
 def test_build_legs_outright_is_one_leg_weight_one() -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     legs = adapter.build_legs(
-        Expression.OUTRIGHT, "EQ-0001", None, 0, (), 10, np.random.default_rng(0)
+        Expression.OUTRIGHT, "EQ-0001", None, 0, (), frozenset(), np.random.default_rng(0)
     )
     assert legs == (LegRef("EQ-0001", None, 1.0),)
 
 
 def test_build_legs_pair_picks_same_sector_partner_not_candidate(fixture_view) -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     universe = ("EQ-0001", "EQ-0002", "EQ-0003")
+    t = 40
+
     legs = adapter.build_legs(
-        Expression.PAIR, "EQ-0001", fixture_view, 40, universe, 10, np.random.default_rng(0)
+        Expression.PAIR, "EQ-0001", fixture_view, t, universe, frozenset(), np.random.default_rng(0)
     )
     assert legs is not None
     assert legs[0] == LegRef("EQ-0001", None, 1.0)
-    assert legs[1].instrument_id in ("EQ-0002", "EQ-0003")
-    assert legs[1].coeff == -1.0
+
+    same_sector = [iid for iid in universe if iid != "EQ-0001"]
+    expected_partner = min(
+        same_sector,
+        key=lambda iid: (
+            fixture_view.trailing_move(adapter.outright_series(iid), t, _HORIZON),
+            iid,
+        ),
+    )
+    assert legs[1] == LegRef(expected_partner, None, -1.0)
+
+
+def test_build_legs_pair_excludes_held_instruments(fixture_view) -> None:
+    adapter = EquitiesAdapter("value", _HORIZON)
+    universe = ("EQ-0001", "EQ-0002", "EQ-0003")
+    t = 40
+    same_sector = [iid for iid in universe if iid != "EQ-0001"]
+    expected_partner = min(
+        same_sector,
+        key=lambda iid: (
+            fixture_view.trailing_move(adapter.outright_series(iid), t, _HORIZON),
+            iid,
+        ),
+    )
+
+    legs = adapter.build_legs(
+        Expression.PAIR,
+        "EQ-0001",
+        fixture_view,
+        t,
+        universe,
+        frozenset({expected_partner}),
+        np.random.default_rng(0),
+    )
+    assert legs is not None
+    assert legs[1].instrument_id != expected_partner
+    assert legs[1].instrument_id in same_sector
 
 
 def test_build_legs_pair_returns_none_without_a_partner(fixture_view) -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     legs = adapter.build_legs(
-        Expression.PAIR, "EQ-0001", fixture_view, 40, ("EQ-0001",), 10, np.random.default_rng(0)
+        Expression.PAIR,
+        "EQ-0001",
+        fixture_view,
+        40,
+        ("EQ-0001",),
+        frozenset(),
+        np.random.default_rng(0),
     )
     assert legs is None
 
 
 def test_pnl_unit_buy_and_sell() -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     series = adapter.outright_series("EQ-0001")
     buy = _make_position(series=series, side=Side.BUY, entry_level=100.0)
     sell = _make_position(series=series, side=Side.SELL, entry_level=100.0)
@@ -132,7 +178,7 @@ def test_leg_side_pair_buy_gives_buy_then_sell() -> None:
 
 
 def test_position_fields_has_every_field_and_target_hit_flips(fixture_view) -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     series = adapter.outright_series("EQ-0001")
     levels = [fixture_view.level(series, t) for t in range(fixture_view.n_days)]
     target_level = sum(levels) / len(levels)
@@ -160,39 +206,64 @@ def test_position_fields_has_every_field_and_target_hit_flips(fixture_view) -> N
 
 
 def test_size_and_risk(fixture_view) -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     legs = (LegRef("EQ-0001", None, 1.0),)
     size, risk = adapter.size_and_risk(5.0, legs, fixture_view, 0, 1e8)
     assert size == pytest.approx(5.0)
     assert risk == pytest.approx(5e6)
 
 
-def test_anchors_include_round_level_only_in_range(fixture_view) -> None:
-    adapter = EquitiesAdapter("value")
-    series = adapter.outright_series("EQ-0001")
-    pos = _make_position(series=series, side=Side.BUY, entry_level=fixture_view.level(series, 0))
-
-    range_anchors = adapter.anchors(pos, fixture_view, 10)
-    risk_off_anchors = adapter.anchors(pos, fixture_view, 45)
-
-    assert len(range_anchors) == 3
-    assert len(risk_off_anchors) == 2
-
-
-def test_relative_move_sign_flips_with_side(fixture_view) -> None:
-    adapter = EquitiesAdapter("value")
+def test_anchors_round_level_and_trailing_extreme_by_side(fixture_view) -> None:
+    adapter = EquitiesAdapter("value", _HORIZON)
     series = adapter.outright_series("EQ-0001")
     entry_level = fixture_view.level(series, 0)
     buy = _make_position(series=series, side=Side.BUY, entry_level=entry_level)
     sell = _make_position(series=series, side=Side.SELL, entry_level=entry_level)
+    t_range, t_risk_off = 10, 45
 
-    move_buy = relative_move(fixture_view, adapter, buy, 40, 10)
-    move_sell = relative_move(fixture_view, adapter, sell, 40, 10)
-    assert move_buy == pytest.approx(-move_sell)
+    buy_range = adapter.anchors(buy, fixture_view, t_range)
+    buy_risk_off = adapter.anchors(buy, fixture_view, t_risk_off)
+    assert len(buy_range) == 3
+    assert len(buy_risk_off) == 2
+
+    level_now = fixture_view.level(series, t_range)
+    expected_round_level = adapter.round_step(series, level_now)
+    assert buy_range[1] == pytest.approx(expected_round_level)
+
+    # buy: target sits above entry (adverse_dir < 0), so the anchor is the trailing high.
+    assert buy_range[2] == pytest.approx(
+        fixture_view.trailing_high(series, t_range, TRAILING_HIGH_DAYS)
+    )
+    # sell: target sits below entry (adverse_dir > 0), so the anchor is the trailing low.
+    sell_range = adapter.anchors(sell, fixture_view, t_range)
+    assert sell_range[2] == pytest.approx(
+        fixture_view.trailing_low(series, t_range, TRAILING_HIGH_DAYS)
+    )
+
+
+def test_relative_move_matches_view_computation_and_is_nonzero(fixture_view) -> None:
+    adapter = EquitiesAdapter("value", _HORIZON)
+    series = adapter.outright_series("EQ-0001")
+    entry_level = fixture_view.level(series, 0)
+    buy = _make_position(series=series, side=Side.BUY, entry_level=entry_level)
+    sell = _make_position(series=series, side=Side.SELL, entry_level=entry_level)
+    t = 40
+
+    peers = adapter.peer_ids("EQ-0001", fixture_view.instruments)
+    peer_move = fixture_view.peer_move(peers, adapter.outright_series, t, _HORIZON)
+    own_move = fixture_view.trailing_move(series, t, _HORIZON)
+    expected = series.bullish_sign * buy.side_sign * (own_move - peer_move)
+
+    move_buy = relative_move(fixture_view, adapter, buy, t, _HORIZON)
+    move_sell = relative_move(fixture_view, adapter, sell, t, _HORIZON)
+
+    assert move_buy == pytest.approx(expected)
+    assert move_buy != pytest.approx(0.0)
+    assert move_sell == pytest.approx(-move_buy)
 
 
 def test_stop_distance_reads_pnl_from_entry_rule() -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     series = adapter.outright_series("EQ-0001")
     rule = Rule(
         pm_id="pm_001",
@@ -213,7 +284,7 @@ def test_stop_distance_reads_pnl_from_entry_rule() -> None:
 
 
 def test_stop_distance_raises_for_a_field_it_does_not_serve() -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     series = adapter.outright_series("EQ-0001")
     rule = Rule(
         pm_id="pm_001",
@@ -235,38 +306,41 @@ def test_stop_distance_raises_for_a_field_it_does_not_serve() -> None:
 
 
 def test_forms_returns_outright_and_pair_for_any_sub_style() -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     assert adapter.forms("value") == (Expression.OUTRIGHT, Expression.PAIR)
-    assert EquitiesAdapter("growth").forms("growth") == (Expression.OUTRIGHT, Expression.PAIR)
+    assert EquitiesAdapter("growth", _HORIZON).forms("growth") == (
+        Expression.OUTRIGHT,
+        Expression.PAIR,
+    )
 
 
 def test_peer_ids_and_label(fixture_instruments) -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     instruments = {i.instrument_id: i for i in fixture_instruments}
     assert adapter.peer_ids("EQ-0001", instruments) == ("EQ-0002", "EQ-0003")
     assert adapter.peer_label("EQ-0001") == "sector"
 
 
 def test_leg_bullish_is_always_positive() -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     assert adapter.leg_bullish(LegRef("EQ-0001", None, 1.0)) == 1
     assert adapter.leg_bullish(LegRef("EQ-0001", None, -1.0)) == 1
 
 
 def test_instrument_type_reads_view(fixture_view) -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     assert adapter.instrument_type("EQ-0001", fixture_view) == InstrumentKind.EQUITY
 
 
 def test_leg_price_recovers_raw_price(fixture_view) -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     price = adapter.leg_price(LegRef("EQ-0001", None, 1.0), fixture_view, 0)
     expected = math.exp(fixture_view.raw_level("EQ-0001", None, 0) / 100.0)
     assert price == pytest.approx(expected)
 
 
 def test_round_step_returns_a_round_level_near_the_price(fixture_view) -> None:
-    adapter = EquitiesAdapter("value")
+    adapter = EquitiesAdapter("value", _HORIZON)
     series = adapter.outright_series("EQ-0001")
     level = fixture_view.level(series, 0)
     rounded = adapter.round_step(series, level)

@@ -12,7 +12,15 @@ from pm_traitbench.engine.constants import TRAILING_HIGH_DAYS
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import PmState, Position
-from pm_traitbench.enums import Action, AssetClass, Expression, InstrumentKind, Regime, RuleScope
+from pm_traitbench.enums import (
+    Action,
+    AssetClass,
+    Expression,
+    InstrumentKind,
+    Op,
+    Regime,
+    RuleScope,
+)
 from pm_traitbench.errors import EngineError
 from pm_traitbench.market.levels import log_grid_step, nearest_level
 from pm_traitbench.tables.schema import Instrument, Rule
@@ -25,6 +33,7 @@ class EquitiesAdapter:
     """Equities: single-name outrights and same-sector pair trades."""
 
     sub_style: str
+    horizon_days: int
     asset_class: AssetClass = field(default=AssetClass.EQUITIES, init=False)
 
     FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -49,7 +58,9 @@ class EquitiesAdapter:
             rule.level
             for rule in rules
             if rule.scope == RuleScope.PM
+            and rule.param == "exclusion"
             and rule.action == Action.EXCLUDE
+            and rule.op == Op.NE
             and rule.field == "sector"
         }
         candidates = (
@@ -64,19 +75,27 @@ class EquitiesAdapter:
         return (Expression.OUTRIGHT, Expression.PAIR)
 
     def _pair_partner(
-        self, instrument_id: str, view: MarketView, t: int, universe: Sequence[str], h: int
+        self,
+        instrument_id: str,
+        view: MarketView,
+        t: int,
+        universe: Sequence[str],
+        held: frozenset[str],
     ) -> str | None:
         sector = view.instruments[instrument_id].sector
         candidates = [
             iid
             for iid in universe
-            if iid != instrument_id and view.instruments[iid].sector == sector
+            if iid != instrument_id and iid not in held and view.instruments[iid].sector == sector
         ]
         if not candidates:
             return None
         return min(
             candidates,
-            key=lambda iid: (view.trailing_move(self.outright_series(iid), t, h), iid),
+            key=lambda iid: (
+                view.trailing_move(self.outright_series(iid), t, self.horizon_days),
+                iid,
+            ),
         )
 
     def build_legs(
@@ -86,13 +105,13 @@ class EquitiesAdapter:
         view: MarketView,
         t: int,
         universe: Sequence[str],
-        h: int,
+        held: frozenset[str],
         rng: np.random.Generator,
     ) -> tuple[LegRef, ...] | None:
         if form == Expression.OUTRIGHT:
             return (LegRef(instrument_id, None, 1.0),)
         if form == Expression.PAIR:
-            partner = self._pair_partner(instrument_id, view, t, universe, h)
+            partner = self._pair_partner(instrument_id, view, t, universe, held)
             if partner is None:
                 return None
             return (LegRef(instrument_id, None, 1.0), LegRef(partner, None, -1.0))
@@ -120,7 +139,7 @@ class EquitiesAdapter:
         fields["pnl_from_entry"] = pnl_unit
         fields["sector"] = view.instruments[pos.instrument_id].sector
         fields["event"] = view.events_on(pos.instrument_id, t)
-        fields["relative_move"] = relative_move(view, self, pos, t, TRAILING_HIGH_DAYS)
+        fields["relative_move"] = relative_move(view, self, pos, t, self.horizon_days)
         return fields
 
     def size_and_risk(

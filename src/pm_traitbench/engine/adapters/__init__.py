@@ -12,19 +12,19 @@ from pm_traitbench.enums import AssetClass, Expression, Kind
 from pm_traitbench.errors import EngineError
 from pm_traitbench.tables.schema import Trait
 
-ADAPTERS: dict[AssetClass, Callable[[str], Adapter]] = {
+ADAPTERS: dict[AssetClass, Callable[[str, int], Adapter]] = {
     AssetClass.EQUITIES: EquitiesAdapter,
 }
 
 
-def adapter_for(asset_class: AssetClass, sub_style: str) -> Adapter:
-    """The adapter for a PM's asset class and sub-style."""
+def adapter_for(asset_class: AssetClass, sub_style: str, horizon_days: int) -> Adapter:
+    """The adapter for a PM's asset class, sub-style and idea horizon."""
     if asset_class == AssetClass.MULTI_ASSET:
         raise EngineError("multi_asset has no single adapter; ideas route per leg asset class")
     factory = ADAPTERS.get(asset_class)
     if factory is None:
         raise EngineError(f"no adapter registered for asset class '{asset_class.value}'")
-    return factory(sub_style)
+    return factory(sub_style, horizon_days)
 
 
 FORM_FOR_PREFERENCE: dict[tuple[str, str], Expression | None] = {
