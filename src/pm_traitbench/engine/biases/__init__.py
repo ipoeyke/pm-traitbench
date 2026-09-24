@@ -3,18 +3,39 @@
 from collections.abc import Sequence
 from types import ModuleType
 
-from pm_traitbench.engine.biases import conviction, extrapolation, herding, overconfidence
+from pm_traitbench.config import BIAS_PARAMS
+from pm_traitbench.engine.biases import (
+    anchoring,
+    conviction,
+    disposition,
+    exit_deficiency,
+    extrapolation,
+    herding,
+    loss_aversion,
+    overconfidence,
+)
 from pm_traitbench.engine.constants import BIAS_FLAG_ORDER
 
-# Registers the entry-side bias modules by the param that drives them; the
-# position-side modules are added separately, along with a check that the
-# keys equal BIAS_PARAMS.
+# Registers every bias module by the param that drives it.
 BIAS_RULES: dict[str, ModuleType] = {
     "extrapolation_theta": extrapolation,
     "herding_weight": herding,
     "overconfidence_coverage": overconfidence,
     "conviction_size_miscalibration": conviction,
+    "loss_aversion_lambda": loss_aversion,
+    "disposition_ratio": disposition,
+    "anchoring_rho": anchoring,
+    "exit_deficiency": exit_deficiency,
 }
+
+
+def _check_registry(rules: dict[str, ModuleType], params: tuple[str, ...]) -> None:
+    """Raise if the registry's keys do not exactly match the configured bias params."""
+    if set(rules) != set(params):
+        raise ValueError(f"BIAS_RULES keys {set(rules)} must equal BIAS_PARAMS {set(params)}")
+
+
+_check_registry(BIAS_RULES, BIAS_PARAMS)
 
 
 def join_flags(flags: Sequence[str | None]) -> str | None:
