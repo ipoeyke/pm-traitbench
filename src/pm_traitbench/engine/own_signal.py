@@ -2,8 +2,10 @@
 
 The own signal blends skill-weighted knowledge of the true forward move with
 idiosyncratic noise, in bullish units. The forecast then blends the resulting
-thesis move with the trailing trend (extrapolation bias); the interval width
-reflects the PM's residual uncertainty net of overconfidence.
+thesis move with the trailing trend (extrapolation bias). The forecast interval
+is centred on the conditional mean of the forward move given the signal, with
+width set by overconfidence, so it is a calibrated statement about the raw
+market outcome rather than about the (possibly biased) stated forecast.
 """
 
 import math
@@ -63,10 +65,10 @@ def draw_signal(
     skill = config.engine.skill
     sd = view.sd_h(series, t, horizon)
     fd = view.forward_days(t, horizon)
+    sd_fwd = sd * math.sqrt(fd / horizon)
     if fd == 0:
         z = 0.0
     else:
-        sd_fwd = sd * math.sqrt(fd / horizon)
         z = view.forward_move(series, t, horizon) / sd_fwd
 
     n = float(rng.normal())
@@ -78,15 +80,18 @@ def draw_signal(
 
     coverage = params.value("overconfidence_coverage")
     z_c = z_for_coverage(coverage)
-    half_width = z_c * sd * math.sqrt(1 - skill**2)
+    # Centred on the conditional mean of the forward move given the signal, not the
+    # stated thesis, so a neutral PM's realised coverage equals its stated coverage.
+    centre = skill * own_signal * sd_fwd
+    half_width = z_c * sd_fwd * math.sqrt(1 - skill**2)
 
     return SignalDraw(
         own_signal=own_signal,
         sd_h=sd,
         thesis_move=thesis_move,
         forecast=forecast,
-        interval_lo=forecast - half_width,
-        interval_hi=forecast + half_width,
+        interval_lo=centre - half_width,
+        interval_hi=centre + half_width,
         conviction=_conviction(own_signal),
     )
 

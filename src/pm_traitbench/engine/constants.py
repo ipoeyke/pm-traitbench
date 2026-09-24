@@ -5,7 +5,9 @@ from pm_traitbench.enums import Tenor
 # Entry requires the own signal to reach one sd of view.
 ENTRY_THRESHOLD = 1.0
 # Conviction tiers at successive multiples of one sd of view, the first at entry.
-CONVICTION_CUTS = (1.0, 1.4, 1.8, 2.3)
+# Lower edges for buckets 1-5: quintiles of a standard normal's absolute value given it
+# exceeds 1, so ranks are equally likely.
+CONVICTION_CUTS = (1.0, 1.14, 1.31, 1.53, 1.86)
 # Each idea carries two or three signposts to track toward its target.
 SIGNPOSTS_PER_IDEA = (2, 3)
 # An add buys half the position's original size.

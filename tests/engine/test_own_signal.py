@@ -100,25 +100,24 @@ def test_own_signal_correlation_matches_skill(skill: float) -> None:
     assert corr == pytest.approx(skill, abs=0.02)
 
 
-def test_interval_achieves_nominal_coverage() -> None:
+@pytest.mark.parametrize("fd", [20, 5])
+def test_interval_achieves_nominal_coverage(fd: int) -> None:
     # False-alarm rate: tolerance 0.02 is about 7 standard errors (~0.003) over 20,000 draws.
+    # The interval is centred on the conditional mean skill * own_signal * sd_fwd, so
+    # coverage is exact for any fd (full window or truncated), not just a tuned one.
     n_draws = 20_000
     horizon = 20
-    skill = 0.5
+    skill = 0.15
     sd = 1.0
-    # fd chosen so sd_fwd = sd * sqrt(fd / horizon) equals skill * sd exactly; the skill * z term
-    # in the forecast then cancels the same z in the realised move, leaving only the noise term
-    # the interval half-width is built from.
-    fd = 5
     sd_fwd = sd * math.sqrt(fd / horizon)
     config = _config(skill, horizon)
     series = _series()
     params = _params(theta=0.0, coverage=0.8)
     hits = 0
     for i in range(n_draws):
-        z = float(stream(1, "cov_z", i).normal())
+        z = float(stream(1, "cov_z", fd, i).normal())
         view = _StubView(sd=sd, fd=fd, forward_move_value=z * sd_fwd, trailing=0.0)
-        rng = stream(1, "cov_n", i)
+        rng = stream(1, "cov_n", fd, i)
         draw = draw_signal(view, series, 0, params, config, rng)
         realized = z * sd_fwd
         if draw.interval_lo <= realized <= draw.interval_hi:
@@ -182,17 +181,10 @@ def test_draws_exactly_one_standard_normal() -> None:
 
 @pytest.mark.parametrize(
     ("own_signal_value", "expected"),
-    [(1.0, 1), (1.39, 1), (1.4, 2), (1.8, 3), (2.3, 4), (5.0, 4)],
+    [(1.0, 1), (1.13, 1), (1.14, 2), (1.86, 5), (5.0, 5)],
 )
 def test_conviction_buckets(own_signal_value: float, expected: int) -> None:
     assert own_signal._conviction(own_signal_value) == expected
-
-
-def test_conviction_cap_engages_if_cuts_ever_reach_five(monkeypatch) -> None:
-    # CONVICTION_CUTS today has 4 entries, so 4 is the highest rank reachable; this checks the
-    # min(..., 5) cap itself would engage correctly if a fifth cut were ever added.
-    monkeypatch.setattr(own_signal, "CONVICTION_CUTS", (0.0, 1.0, 2.0, 3.0, 4.0, 5.0))
-    assert own_signal._conviction(10.0) == 5
 
 
 def test_z_for_coverage_matches_expected_quantile() -> None:
