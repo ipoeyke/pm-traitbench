@@ -228,11 +228,11 @@ Pair legs: the long leg is the candidate, the short leg is the same-sector name 
 For a candidate series key at day `t`, horizon H:
 
 ```
-z            = forward_move / sd_H                          # standardised realised move
+z            = bullish_sign * forward_move / sd_fwd         # standardised realised move in bullish units
 own_signal   = skill * z + sqrt(1 - skill^2) * n,  n ~ N(0, 1), stream(root, "engine", pm_id, "signal", t, attempt)
 thesis_move  = own_signal * sd_H                            # decision 3: unscaled
 forecast     = (1 - theta) * thesis_move + theta * trailing_move   # extrapolation, plan 3.1
-interval     = skill * own_signal * sd_fwd ± z_c * sd_fwd * sqrt(1 - skill^2),  z_c = Phi^-1((1 + c) / 2)
+interval     = bullish_sign * skill * own_signal * sd_fwd ± z_c * sd_fwd * sqrt(1 - skill^2),  z_c = Phi^-1((1 + c) / 2)   # series units
              # centred on the honest conditional mean, sd_fwd = sd_H * sqrt(fd / H), so realised coverage equals c by construction
 conviction   = 1 + number of CONVICTION_CUTS below abs(own_signal), capped at 5
 ```
