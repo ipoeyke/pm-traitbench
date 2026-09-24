@@ -56,8 +56,7 @@ def handle_discretionary(
     min_holding = float(min_holding_rule.level) if min_holding_rule is not None else 0.0
     can_exit = (t - position.entry_t) >= min_holding
 
-    # anchors() reads raw legs; re-base into the same pre-roll frame as level_now/entry_level.
-    anchors = tuple(a - position.rolled_offset for a in ctx.adapter.anchors(position, view, t))
+    anchors = ctx.adapter.anchors(position, view, t)
     anchored = anchoring.evaluate(position, level_now, anchors, params)
     anchor_level = anchored.anchor_level
     effective_exit_level = anchored.effective_exit_level

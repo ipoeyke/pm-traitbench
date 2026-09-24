@@ -14,6 +14,7 @@ from pm_traitbench.engine.biases import disposition as disposition_module
 from pm_traitbench.engine.biases import loss_aversion as loss_aversion_module
 from pm_traitbench.engine.biases.exit_deficiency import LATE_ROLL_FLAG
 from pm_traitbench.engine.biases.loss_aversion import LossSideChoice
+from pm_traitbench.engine.discretionary import handle_discretionary
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.params import ParamSchedule
 from pm_traitbench.engine.series import LegRef, Series
@@ -29,6 +30,7 @@ from pm_traitbench.enums import (
     Family,
     InstrumentKind,
     Op,
+    PnlState,
     PositionAction,
     Regime,
     RuleResponse,
@@ -106,6 +108,7 @@ def _commodity_view(
     expiry_t: int,
     *,
     instrument_id: str = "CM-CRD",
+    regime: Regime = Regime.RANGE,
 ) -> MarketView:
     """A single-commodity market with M1/M2 curve levels controlled directly, and one expiry."""
     dates = _dates(len(m1_levels))
@@ -152,7 +155,7 @@ def _commodity_view(
             affected="commodities",
         )
     ]
-    regimes = [RegimeSpan(seed=_SEED, regime=Regime.RANGE, date_start=dates[0], date_end=dates[-1])]
+    regimes = [RegimeSpan(seed=_SEED, regime=regime, date_start=dates[0], date_end=dates[-1])]
     return MarketView.build(
         seed=_SEED,
         dates=dates,
@@ -752,6 +755,66 @@ def test_anchoring_exit_when_rho_one_and_level_at_anchor(
     assert position_day.bias_flag == "anchoring:exit_at_anchor"
     assert position_day.action == PositionAction.EXIT
     assert position_day.anchor_level == 15.0
+
+
+def test_anchors_fall_back_to_target_when_none_qualify_mid_roll(cm_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    # Backwardation, mid-roll: M2's raw level (98) re-bases to a tracked level of 100. Entry
+    # (150) sits above that, so the only candidate (the trailing high, also 100 once shifted)
+    # fails the entry-side filter - unlike `entry_level` itself, which must not be shifted a
+    # second time into a phantom in-range candidate.
+    m1 = [100.0] * 8
+    m2 = [98.0] * 8
+    view = _commodity_view(m1, m2, expiry_t=7, instrument_id="CM-CRD", regime=Regime.RISK_OFF)
+    t = 5
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=t,
+        entry_level=150.0,
+        target_level=200.0,
+        stop_level=-1000.0,
+        tenor=Tenor.M2,
+        rolled_offset=-2.0,
+    )
+    traits = _traits_with(traits, {"exit_deficiency": (0.0, False)})
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
+    params = ctx.schedule.for_day(view.dates[t], view.regime(t))
+
+    result = handle_discretionary(pos, view, t, ctx, params, 100.0, -10.0, PnlState.LOSS, -1.0)
+
+    assert result.position is not None
+    assert result.anchor_level == pytest.approx(200.0)
+    assert result.effective_exit_level == pytest.approx(200.0)
+    assert result.bias_flag is None or "anchoring:exit_at_anchor" not in result.bias_flag
+
+
+def test_anchor_uses_the_shifted_trailing_high_mid_roll(cm_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    # Same backwardation curve, but entry (90) and target (105) bracket the shifted trailing
+    # high (100), so it is correctly chosen as the anchor.
+    m1 = [100.0] * 8
+    m2 = [98.0] * 8
+    view = _commodity_view(m1, m2, expiry_t=7, instrument_id="CM-CRD", regime=Regime.RISK_OFF)
+    t = 5
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=t,
+        entry_level=90.0,
+        target_level=105.0,
+        stop_level=-1000.0,
+        tenor=Tenor.M2,
+        rolled_offset=-2.0,
+    )
+    traits = _traits_with(traits, {"exit_deficiency": (0.0, False)})
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
+    params = ctx.schedule.for_day(view.dates[t], view.regime(t))
+
+    result = handle_discretionary(pos, view, t, ctx, params, 100.0, 2.0, PnlState.GAIN, 10.0 / 15.0)
+
+    assert result.position is not None
+    assert result.anchor_level == pytest.approx(100.0)
 
 
 def test_disposition_hazard_sells_a_gain_early(eq_parts, monkeypatch: pytest.MonkeyPatch) -> None:
