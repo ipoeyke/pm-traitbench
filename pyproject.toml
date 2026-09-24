@@ -36,7 +36,6 @@ select = ["E", "F", "I", "UP", "B"]
 "tests/market/test_stage.py" = ["F811"]
 "tests/test_end_to_end.py" = ["F811"]
 "tests/gates/conftest.py" = ["F811"]
-"tests/gates/test_inputs.py" = ["F811"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

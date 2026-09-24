@@ -8,7 +8,6 @@ import pytest
 from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.enums import Gate1Split, Regime
 from pm_traitbench.gates.gate1.splits import days_for, splits_for
-from tests.engine.conftest import fixture_market, fixture_view  # noqa: F401
 
 
 def _with_multiplier(inputs, param: str, **mults):

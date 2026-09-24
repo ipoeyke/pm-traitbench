@@ -11,6 +11,7 @@ from datetime import date
 import pytest
 
 from pm_traitbench.config import BIAS_PARAMS
+from pm_traitbench.engine.step import _OPPORTUNITY_KEYS
 from pm_traitbench.enums import (
     AssetClass,
     Expression,
@@ -158,7 +159,7 @@ def make_inputs(fixture_view):
             view=fixture_view,
             day_index=day_index,
             horizon_days=20,
-            engine_counts={},
+            engine_counts={key: 0 for key in _OPPORTUNITY_KEYS},
         )
         defaults.update(overrides)
         return PmInputs(**defaults)

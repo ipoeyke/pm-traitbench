@@ -20,9 +20,11 @@ _SPLIT_REGIME: dict[Gate1Split, Regime] = {split: regime for regime, split in _R
 
 
 def splits_for(inputs: PmInputs, param: str) -> tuple[Gate1Split, ...]:
-    """Splits worth computing for `param`: `ALL`, a split per regime the trait is boosted in
-    (a multiplier above 1.0, missing counts as 1.0), then `BEFORE` and `AFTER` when the
-    trait drifted. Order: `ALL`, regimes in enum order, `BEFORE`, `AFTER`.
+    """Splits worth computing for `param`.
+
+    Always `ALL`, plus a split per regime the trait is boosted in (a multiplier
+    above 1.0, missing counts as 1.0), then `BEFORE` and `AFTER` when the trait
+    drifted. Order: `ALL`, regimes in enum order, `BEFORE`, `AFTER`.
     """
     trait = inputs.traits[param]
     splits = [Gate1Split.ALL]

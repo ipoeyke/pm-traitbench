@@ -112,6 +112,8 @@ def _build_pm_inputs(
         raise Gate1Error(f"PM '{pm_id}' is missing bias trait(s): {sorted(missing)}")
     if pm_id not in engine_counts:
         raise Gate1Error(f"PM '{pm_id}' has no entry in engine_counts")
+    if persona.market_seed not in views:
+        raise Gate1Error(f"PM '{pm_id}' has no market view for seed '{persona.market_seed}'")
 
     view = views[persona.market_seed]
     day_index = {day: t for t, day in enumerate(view.dates)}
