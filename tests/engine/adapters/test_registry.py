@@ -3,7 +3,7 @@
 import pytest
 
 from pm_traitbench.catalogues.loader import load_catalogue
-from pm_traitbench.catalogues.models import PreferenceGroup
+from pm_traitbench.catalogues.models import ADAPTER_FORMS, PreferenceGroup
 from pm_traitbench.engine.adapters import FORM_FOR_PREFERENCE, adapter_for, preferred_form
 from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
@@ -76,3 +76,13 @@ def test_preferred_form_scans_traits_in_order() -> None:
     )
     mapped = _preference_trait("pair_vs_outright", "express the view as a pair trade")
     assert preferred_form([unmapped, mapped]) == Expression.PAIR
+
+
+def test_catalogue_adapter_forms_match_each_adapters_forms() -> None:
+    catalogue = load_catalogue()
+    for asset_class, expected in ADAPTER_FORMS.items():
+        forms: set[Expression] = set()
+        for sub_style in catalogue.sub_styles[asset_class]:
+            adapter = adapter_for(asset_class, sub_style.name, 20)
+            forms.update(adapter.forms(sub_style.name))
+        assert forms == set(expected), asset_class

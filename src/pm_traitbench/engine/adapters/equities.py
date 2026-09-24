@@ -177,8 +177,9 @@ class EquitiesAdapter:
             )
         )
 
-    def peer_label(self, instrument_id: str) -> str:
-        return "sector"
+    def peer_label(self, instrument_id: str, instruments: Mapping[str, Instrument]) -> str:
+        """The candidate's sector label, as signpost text names it."""
+        return str(instruments[instrument_id].sector).replace("_", " ")
 
     def leg_bullish(self, leg: LegRef) -> int:
         return 1

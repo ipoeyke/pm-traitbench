@@ -220,8 +220,11 @@ class RatesCreditAdapter:
             )
         )
 
-    def peer_label(self, instrument_id: str) -> str:
-        return "curve" if self._is_sovereign() else "rating band"
+    def peer_label(self, instrument_id: str, instruments: Mapping[str, Instrument]) -> str:
+        """The peer a relative signpost names: the 10Y, or the issuer's rating band."""
+        if self._is_sovereign():
+            return "the 10Y"
+        return f"the {instruments[instrument_id].rating_band.value} band"
 
     def leg_bullish(self, leg: LegRef) -> int:
         return -1

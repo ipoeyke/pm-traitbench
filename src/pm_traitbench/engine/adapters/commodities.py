@@ -191,8 +191,9 @@ class CommoditiesAdapter:
             )
         )
 
-    def peer_label(self, instrument_id: str) -> str:
-        return "commodity group"
+    def peer_label(self, instrument_id: str, instruments: Mapping[str, Instrument]) -> str:
+        """The candidate's commodity group, as signpost text names it."""
+        return instruments[instrument_id].commodity_group.value.replace("_", " ")
 
     def leg_bullish(self, leg: LegRef) -> int:
         return 1

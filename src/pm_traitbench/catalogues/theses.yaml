@@ -5,27 +5,27 @@ theses:
       - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
       - "{name} at {entry}, {side}, target {target} within {horizon} sessions"
     pair:
-      - "{side} {name} at {entry}{unit}, looking for {move}{unit} of spread over {horizon} sessions, target {target}{unit}"
-      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
-      - "the spread on {name} is {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
+      - "{side} {name} at {entry}, looking for {move}{unit} of spread over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "the spread on {name} is {entry}, {side}, target {target} within {horizon} sessions"
   rates_credit:
     outright:
-      - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
-      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
-      - "{name} at {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
+      - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "{name} at {entry}, {side}, target {target} within {horizon} sessions"
     curve:
-      - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
-      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
-      - "the curve on {name} is {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
+      - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "the curve on {name} is {entry}, {side}, target {target} within {horizon} sessions"
   commodities:
     outright:
       - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
       - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
       - "{name} at {entry}, {side}, target {target} within {horizon} sessions"
     calendar_spread:
-      - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
-      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
-      - "the spread on {name} is {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
+      - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "the spread on {name} is {entry}, {side}, target {target} within {horizon} sessions"
 
 outcomes:
   win:

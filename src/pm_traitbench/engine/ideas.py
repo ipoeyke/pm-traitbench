@@ -7,7 +7,6 @@ rows) per attempt. `attempt_entry` and `entries_for_day` are pure: neither
 mutates its `state` argument, both return a new one.
 """
 
-import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 
@@ -36,7 +35,12 @@ from pm_traitbench.engine.own_signal import draw_signal, signal_sign
 from pm_traitbench.engine.params import EffectiveParams
 from pm_traitbench.engine.series import Series
 from pm_traitbench.engine.state import PmState, Position, idea_id, rule_id
-from pm_traitbench.engine.templates import idea_name, render_signpost_text, render_thesis
+from pm_traitbench.engine.templates import (
+    idea_name,
+    level_text,
+    render_signpost_text,
+    render_thesis,
+)
 from pm_traitbench.engine.triggers import ledger_rows, leg_sides
 from pm_traitbench.enums import (
     Action,
@@ -52,7 +56,6 @@ from pm_traitbench.errors import EngineError
 from pm_traitbench.tables.schema import Idea, LedgerRow, Leg, Persona, Rule, Trait
 
 _SIDE_SIGN: dict[Side, int] = {Side.BUY: 1, Side.SELL: -1}
-_UNIT_WORDS: dict[str, str] = {"pct": "%", "bp": "bp"}
 _PRICE_QUOTED_OUTRIGHT_CLASSES = (AssetClass.EQUITIES, AssetClass.COMMODITIES)
 
 
@@ -97,14 +100,14 @@ def _side_word(expression: Expression, side: Side) -> str:
     return "long" if side == Side.BUY else "short"
 
 
-def _stop_text(level: float, unit: str, adverse_dir: int) -> str:
+def _stop_text(level: float, unit: str, adverse_dir: int, price_quoted: bool) -> str:
     word = "above" if adverse_dir > 0 else "below"
-    return f"stop {word} {level:g}{_UNIT_WORDS[unit]}"
+    return f"stop {word} {level_text(level, unit, price_quoted=price_quoted)}"
 
 
-def _target_text(level: float, unit: str, adverse_dir: int) -> str:
+def _target_text(level: float, unit: str, adverse_dir: int, price_quoted: bool) -> str:
     word = "below" if adverse_dir > 0 else "above"
-    return f"target {word} {level:g}{_UNIT_WORDS[unit]}"
+    return f"target {word} {level_text(level, unit, price_quoted=price_quoted)}"
 
 
 def _draw_form(
@@ -149,6 +152,7 @@ def _build_signposts(
     series: Series,
     entry_level: float,
     adverse_dir: int,
+    price_quoted: bool,
     signpost_k: float,
     sd: float,
     next_rid: Callable[[], str],
@@ -159,7 +163,7 @@ def _build_signposts(
     event_types = view.event_types(candidate)
     has_peers = bool(set(adapter.peer_ids(candidate, view.instruments)) - {candidate})
     kinds = _signpost_kinds(rng_signposts, bool(event_types), has_peers)
-    peer = adapter.peer_label(candidate)
+    peer = adapter.peer_label(candidate, view.instruments)
     rows: list[Rule] = []
     for kind in kinds:
         if kind == "event":
@@ -179,8 +183,8 @@ def _build_signposts(
                 "level",
                 level=level,
                 unit=unit,
+                price_quoted=price_quoted,
                 window=window,
-                peer=peer,
                 rng=rng_templates,
             )
         else:
@@ -190,7 +194,7 @@ def _build_signposts(
                 catalogue,
                 adapter.asset_class,
                 "relative",
-                level=level,
+                level=abs(level),
                 unit=unit,
                 peer=peer,
                 rng=rng_templates,
@@ -287,6 +291,9 @@ def attempt_entry(
     stop_level = entry_level + adverse_dir * stop_distance
     target_level = entry_level - adverse_dir * rr * stop_distance
 
+    price_quoted = (
+        form == Expression.OUTRIGHT and adapter.asset_class in _PRICE_QUOTED_OUTRIGHT_CLASSES
+    )
     trade_idea_id = idea_id(state.next_idea)
     rule_counter = state.next_rule
 
@@ -309,7 +316,7 @@ def attempt_entry(
         unit=series.unit,
         window=1,
         action=Action.EXIT,
-        text=_stop_text(stop_level, series.unit, adverse_dir),
+        text=_stop_text(stop_level, series.unit, adverse_dir, price_quoted),
     )
     target_row = Rule(
         pm_id=persona.pm_id,
@@ -324,7 +331,7 @@ def attempt_entry(
         unit=series.unit,
         window=1,
         action=Action.TARGET,
-        text=_target_text(target_level, series.unit, adverse_dir),
+        text=_target_text(target_level, series.unit, adverse_dir, price_quoted),
     )
     rng_templates = rng_for("templates", t, attempt)
     signpost_rows = _build_signposts(
@@ -337,6 +344,7 @@ def attempt_entry(
         series=series,
         entry_level=entry_level,
         adverse_dir=adverse_dir,
+        price_quoted=price_quoted,
         signpost_k=config.engine.signpost_k,
         sd=draw.sd_h,
         next_rid=_next_rid,
@@ -344,24 +352,20 @@ def attempt_entry(
         rng_templates=rng_templates,
     )
 
-    if form == Expression.OUTRIGHT and adapter.asset_class in _PRICE_QUOTED_OUTRIGHT_CLASSES:
-        entry_arg: float = round(math.exp(entry_level / 100.0), 2)
-        target_arg: float = round(math.exp(target_level / 100.0), 2)
-        unit_arg: str | None = None
-    else:
-        entry_arg, target_arg, unit_arg = entry_level, target_level, series.unit
-
     name = idea_name(view, legs, form)
+    # The expected move in the trade's own direction, so a herding follow never shows the conflict.
+    stated_move = series.bullish_sign * side_sign * abs(draw.forecast)
     thesis = render_thesis(
         catalogue,
         adapter.asset_class,
         form,
         side=_side_word(form, side),
         name=name,
-        entry=entry_arg,
-        target=target_arg,
-        move=draw.forecast,
-        unit=unit_arg,
+        entry=entry_level,
+        target=target_level,
+        move=stated_move,
+        unit=series.unit,
+        price_quoted=price_quoted,
         horizon=config.engine.horizon_days,
         rng=rng_templates,
     )

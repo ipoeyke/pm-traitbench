@@ -411,14 +411,14 @@ def test_anchors_outside_range_has_no_round_level(fixture_view) -> None:
 def test_peer_ids_curve_is_itself(fixture_view) -> None:
     adapter = RatesCreditAdapter("sovereign_rates", _HORIZON)
     assert adapter.peer_ids("RT-USD", fixture_view.instruments) == ("RT-USD",)
-    assert adapter.peer_label("RT-USD") == "curve"
+    assert adapter.peer_label("RT-USD", fixture_view.instruments) == "the 10Y"
 
 
 def test_peer_ids_credit_is_same_rating_band(fixture_instruments) -> None:
     adapter = RatesCreditAdapter("long_short_credit", _HORIZON)
     instruments = {i.instrument_id: i for i in fixture_instruments}
     assert adapter.peer_ids("CR-IG-001", instruments) == ("CR-IG-001",)
-    assert adapter.peer_label("CR-IG-001") == "rating band"
+    assert adapter.peer_label("CR-IG-001", instruments) == "the AA band"
 
 
 def test_relative_move_curve_compares_against_10y(fixture_view) -> None:

@@ -1,5 +1,7 @@
 """Tests for idea generation: `attempt_entry` and `entries_for_day`."""
 
+import math
+import re
 from collections.abc import Callable
 
 import numpy as np
@@ -665,3 +667,111 @@ def test_entries_for_day_collects_multiple_attempts(
     assert len(new_ideas) == 4
     assert new_state.n_positions == 4
     assert new_state.next_idea == 1 + len(new_ideas)
+
+
+def _enter(setup, *, attempt: int = 0, state: PmState | None = None):
+    return attempt_entry(
+        state or setup["state"],
+        _T,
+        setup["view"],
+        setup["adapter"],
+        _params(),
+        setup["persona"],
+        setup["rules"],
+        setup["traits"],
+        setup["universe"],
+        setup["config"],
+        setup["catalogue"],
+        _rng_for(setup["config"], _PM_ID),
+        attempt=attempt,
+    )
+
+
+def test_stop_text_quotes_an_equity_price_not_the_log_level() -> None:
+    text = ideas_module._stop_text(100.0 * math.log(55.0), "pct", -1, True)
+    assert text == "stop below 55.00"
+    assert "400" not in text
+
+
+def test_equity_outright_rule_texts_quote_prices(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+    _, new_idea = _enter(equities_setup)
+    assert new_idea is not None
+    assert new_idea.idea.expression == Expression.OUTRIGHT
+    for rule in new_idea.rules:
+        if rule.field == "level":
+            price = f"{math.exp(float(rule.level) / 100.0):.2f}"
+            assert price in rule.text, rule.text
+            assert "%" not in rule.text, rule.text
+
+
+def test_rates_stop_text_is_in_bp(
+    fixture_view, neutral_pm, catalogue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new_ideas = _rates_credit_ideas(
+        fixture_view, neutral_pm, catalogue, "sovereign_rates", monkeypatch, n_attempts=3
+    )
+    for new_idea in new_ideas:
+        stop = new_idea.rules[0]
+        assert stop.param == "stop"
+        assert stop.text.endswith(f"{float(stop.level):.1f}bp")
+
+
+def test_relative_signpost_text_quotes_a_positive_magnitude_and_the_peer(
+    fixture_market, fixture_view, neutral_pm, catalogue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    band = fixture_view.instruments["CR-IG-001"].rating_band
+    instruments = [
+        i.model_copy(update={"rating_band": band}) if i.instrument_id == "CR-IG-002" else i
+        for i in fixture_market["instruments"]
+    ]
+    view = MarketView.build(
+        seed=fixture_view.seed,
+        dates=fixture_market["dates"],
+        instruments=instruments,
+        prices=fixture_market["prices"],
+        curves=fixture_market["curves"],
+        consensus=fixture_market["consensus"],
+        calendar=fixture_market["calendar"],
+        regimes=fixture_market["regimes"],
+    )
+    new_ideas = _rates_credit_ideas(view, neutral_pm, catalogue, "long_short_credit", monkeypatch)
+    relative = [r for i in new_ideas for r in i.rules if r.field == "relative_move"]
+    assert relative
+    for rule in relative:
+        assert float(rule.level) < 0
+        assert f"{abs(float(rule.level)):.1f}bp" in rule.text
+        assert not re.search(r"-\d", rule.text), rule.text
+        assert f"the {band.value} band" in rule.text
+
+
+def test_herding_follow_thesis_move_points_the_way_of_the_side(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+
+    def _follow(own_side, street, params, rng) -> HerdingDecision:
+        flipped = Side.SELL if own_side == Side.BUY else Side.BUY
+        return HerdingDecision(
+            conflict=True, followed_street=True, side=flipped, flag="herding:followed"
+        )
+
+    monkeypatch.setattr(herding, "decide", _follow)
+    captured: dict = {}
+    real_render = ideas_module.render_thesis
+
+    def _capture(*args, **kwargs):
+        captured.update(kwargs)
+        return real_render(*args, **kwargs)
+
+    monkeypatch.setattr(ideas_module, "render_thesis", _capture)
+    _, new_idea = _enter(equities_setup)
+    assert new_idea is not None
+    assert new_idea.idea.side == Side.SELL
+    assert new_idea.idea.forecast > 0
+    assert captured["move"] < 0
+    assert captured["unit"] == "pct"
+    assert captured["price_quoted"] is True

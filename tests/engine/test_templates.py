@@ -1,10 +1,13 @@
 """Tests for catalogue-driven idea names, theses, outcomes and signpost text."""
 
+import math
+
 import numpy as np
 
 from pm_traitbench.engine.series import LegRef
 from pm_traitbench.engine.templates import (
     idea_name,
+    level_text,
     render_outcome,
     render_signpost_text,
     render_thesis,
@@ -28,14 +31,25 @@ def test_idea_name_pair(fixture_view) -> None:
     assert name == f"{first} versus {second}"
 
 
-def test_idea_name_curve_orders_short_tenor_first(fixture_view) -> None:
+def test_idea_name_curve_names_the_currency_and_orders_short_tenor_first(fixture_view) -> None:
     legs = (LegRef("RT-USD", Tenor.Y10, 1.0), LegRef("RT-USD", Tenor.Y2, -1.0))
-    assert idea_name(fixture_view, legs, Expression.CURVE) == "2Y versus 10Y"
+    assert idea_name(fixture_view, legs, Expression.CURVE) == "USD 2Y versus 10Y"
 
 
-def test_idea_name_calendar_spread_orders_front_month_first(fixture_view) -> None:
+def test_idea_name_rates_outright_names_the_currency_and_tenor(fixture_view) -> None:
+    legs = (LegRef("RT-USD", Tenor.Y10, 1.0),)
+    assert idea_name(fixture_view, legs, Expression.OUTRIGHT) == "USD 10Y"
+
+
+def test_idea_name_calendar_spread_names_the_commodity_front_month_first(fixture_view) -> None:
     legs = (LegRef("CM-CRD", Tenor.M5, -1.0), LegRef("CM-CRD", Tenor.M1, 1.0))
-    assert idea_name(fixture_view, legs, Expression.CALENDAR_SPREAD) == "M1 versus M5"
+    assert idea_name(fixture_view, legs, Expression.CALENDAR_SPREAD) == "Crude M1 versus M5"
+
+
+def test_level_text_quotes_a_price_or_a_fixed_precision_series_level() -> None:
+    assert level_text(100.0 * math.log(55.0), "pct", price_quoted=True) == "55.00"
+    assert level_text(420.06, "bp", price_quoted=False) == "420.1bp"
+    assert level_text(-4.5, "pct", price_quoted=False) == "-4.50%"
 
 
 def test_render_thesis_contains_entry_and_target(catalogue) -> None:
@@ -50,6 +64,7 @@ def test_render_thesis_contains_entry_and_target(catalogue) -> None:
         target=15.67,
         move=1.2,
         unit="pct",
+        price_quoted=False,
         horizon=20,
         rng=rng,
     )
@@ -69,6 +84,7 @@ def test_render_thesis_rounds_entry_and_target_for_bp_series(catalogue) -> None:
         target=145.987654321,
         move=5.4,
         unit="bp",
+        price_quoted=False,
         horizon=20,
         rng=rng,
     )
@@ -105,3 +121,24 @@ def test_render_signpost_text_event_contains_event(catalogue) -> None:
         catalogue, AssetClass.RATES_CREDIT, "event", event="cb_meeting", rng=rng
     )
     assert "cb meeting" in text
+
+
+def test_render_thesis_keeps_trailing_zeros_on_a_quoted_price(catalogue) -> None:
+    for seed in range(3):
+        text = render_thesis(
+            catalogue,
+            AssetClass.COMMODITIES,
+            Expression.OUTRIGHT,
+            side="long",
+            name="silver",
+            entry=100.0 * math.log(31.2),
+            target=100.0 * math.log(37.0),
+            move=5.0,
+            unit="pct",
+            price_quoted=True,
+            horizon=20,
+            rng=np.random.default_rng(seed),
+        )
+        assert "31.20" in text
+        assert "37.00" in text
+        assert "%" not in text.replace("+5.00%", "")

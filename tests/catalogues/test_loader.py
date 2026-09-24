@@ -523,6 +523,17 @@ def test_thesis_template_with_unknown_slot_raises_naming_the_cell(tmp_path: Path
         _check(catalogue)
 
 
+def test_thesis_template_without_side_slot_raises_naming_the_cell(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "theses.yaml"
+    data = _load_yaml(path)
+    data["theses"]["commodities"]["outright"][0] = "{name} at {entry}, target {target}"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="commodities.*outright.*side"):
+        _check(catalogue)
+
+
 def test_outcomes_key_draw_is_rejected(tmp_path: Path) -> None:
     _copy_shipped(tmp_path)
     path = tmp_path / "theses.yaml"
@@ -537,13 +548,13 @@ def test_render_signpost_fills_every_slot_and_replaces_event_underscores() -> No
     rendered = render_signpost(
         "if {event} passes and it holds under {level} for {window} sessions, "
         "versus {peer}, i'm out",
-        level=100.0,
-        unit="pct",
+        level="4.55%",
         window=5,
         event="rating_downgrade",
-        peer="the sector",
+        peer="the AA band",
     )
     assert "rating downgrade" in rendered
+    assert "under 4.55% for 5 sessions" in rendered
     assert "{" not in rendered and "}" not in rendered
 
 
@@ -573,7 +584,7 @@ def test_render_thesis_fills_side_slot() -> None:
 
 def test_render_thesis_maps_closer_to_a_phrase() -> None:
     assert render_thesis("out on {closer}", closer="stop") == "out on the stop"
-    assert render_thesis("out on {closer}", closer="horizon_end") == "out on the year end"
+    assert render_thesis("out on {closer}", closer="horizon_end") == "out on the horizon end"
 
 
 def test_render_thesis_unknown_closer_raises_catalogue_error() -> None:

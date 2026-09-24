@@ -121,33 +121,70 @@ def _assert_clean(rendered: str, context: Any) -> None:
     assert "  " not in rendered, context
 
 
+# Slot values as the engine passes them: levels arrive rendered (a bare price for a
+# price-quoted outright, else the series level with its unit), relative moves as magnitudes.
+_ENGINE_LEVELS: dict[AssetClass, tuple[str, ...]] = {
+    AssetClass.EQUITIES: ("55.00", "-4.55%"),
+    AssetClass.RATES_CREDIT: ("420.1bp", "35.0bp"),
+    AssetClass.COMMODITIES: ("15823.82", "1.33%"),
+}
+_ENGINE_RELATIVE: dict[AssetClass, tuple[str, str]] = {
+    AssetClass.EQUITIES: ("7.15%", "information technology"),
+    AssetClass.RATES_CREDIT: ("30.2bp", "the BBB band"),
+    AssetClass.COMMODITIES: ("4.55%", "industrial metals"),
+}
+_ENGINE_THESIS: dict[AssetClass, dict[Expression, dict[str, str]]] = {
+    AssetClass.EQUITIES: {
+        Expression.OUTRIGHT: {"name": "Equity 0001", "entry": "21.84", "target": "34.09"},
+        Expression.PAIR: {"name": "Equity 0001 versus Equity 0002", "entry": "3.10%"},
+    },
+    AssetClass.RATES_CREDIT: {
+        Expression.OUTRIGHT: {"name": "USD 10Y", "entry": "420.1bp", "target": "380.0bp"},
+        Expression.CURVE: {"name": "USD 2Y versus 10Y", "entry": "35.0bp"},
+    },
+    AssetClass.COMMODITIES: {
+        Expression.OUTRIGHT: {"name": "silver", "entry": "31.20", "target": "37.26"},
+        Expression.CALENDAR_SPREAD: {"name": "crude M1 versus M5", "entry": "1.33%"},
+    },
+}
+
+
+def _assert_engine_text(rendered: str, context: Any) -> None:
+    _assert_clean(rendered, context)
+    assert not re.search(r"\d\.\d{3}", rendered), context
+
+
 def _assert_every_engine_template_renders_cleanly(catalogue: Catalogue) -> None:
-    """Render every signpost, thesis and outcome template with sample slots, cleanly."""
+    """Render every signpost, thesis and outcome template with engine-realistic slots."""
     for asset_class in ADAPTER_FORMS:
         signpost = catalogue.signposts[asset_class]
         for template in signpost.event:
             _assert_clean(
                 render_signpost(template, event="rating_downgrade"), (asset_class, "event")
             )
-        for template in signpost.level:
-            rendered = render_signpost(template, level=100.0, unit="pct", window=5)
-            _assert_clean(rendered, (asset_class, "level", template))
+        for level in _ENGINE_LEVELS[asset_class]:
+            for template in signpost.level:
+                rendered = render_signpost(template, level=level, window=5)
+                _assert_engine_text(rendered, (asset_class, "level", template))
+        magnitude, peer = _ENGINE_RELATIVE[asset_class]
         for template in signpost.relative:
-            rendered = render_signpost(template, level=1.5, unit="bp", peer="the sector")
-            _assert_clean(rendered, (asset_class, "relative", template))
+            rendered = render_signpost(template, level=magnitude, peer=peer)
+            _assert_engine_text(rendered, (asset_class, "relative", template))
+            assert "-" not in rendered, (asset_class, template)
         for expression in ADAPTER_FORMS[asset_class]:
+            slots = _ENGINE_THESIS[asset_class][expression]
             for template in catalogue.theses.theses[asset_class][expression]:
                 rendered = render_thesis(
                     template,
-                    name="AAPL",
-                    entry=100.0,
-                    target=110.0,
-                    move=5.0,
-                    unit="pct",
+                    name=slots["name"],
+                    entry=slots["entry"],
+                    target=slots.get("target", slots["entry"]),
+                    move="+5.00",
+                    unit="bp" if asset_class == AssetClass.RATES_CREDIT else "pct",
                     horizon=20,
                     side="long",
                 )
-                _assert_clean(rendered, (asset_class, expression, template))
+                _assert_engine_text(rendered, (asset_class, expression, template))
     for kind, templates in catalogue.theses.outcomes.items():
         for closer in CLOSER_PHRASES:
             for template in templates:

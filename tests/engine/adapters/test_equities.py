@@ -319,7 +319,7 @@ def test_peer_ids_and_label(fixture_instruments) -> None:
     adapter = EquitiesAdapter("value", _HORIZON)
     instruments = {i.instrument_id: i for i in fixture_instruments}
     assert adapter.peer_ids("EQ-0001", instruments) == ("EQ-0002", "EQ-0003")
-    assert adapter.peer_label("EQ-0001") == "sector"
+    assert adapter.peer_label("EQ-0001", instruments) == "sector 01"
 
 
 def test_leg_bullish_is_always_positive() -> None:

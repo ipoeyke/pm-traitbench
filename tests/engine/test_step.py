@@ -1177,7 +1177,7 @@ def test_last_day_close_out_exits_every_open_position(eq_parts) -> None:
     assert new_state.n_positions == 0
     assert len(out.closed) == 1
     assert out.closed[0][0] == "ti_001"
-    assert "the year end" in out.closed[0][2]
+    assert "the horizon end" in out.closed[0][2]
     row = out.position_days[0]
     assert row.action == PositionAction.EXIT
     assert row.bias_flag is None
@@ -1212,7 +1212,7 @@ def test_last_day_close_out_runs_before_any_trigger_is_evaluated(eq_parts) -> No
     assert len(out.ledger_rows) == 1
     assert out.ledger_rows[0].side == Side.SELL
     assert len(out.closed) == 1
-    assert "the year end" in out.closed[0][2]
+    assert "the horizon end" in out.closed[0][2]
     row = out.position_days[0]
     assert row.action == PositionAction.EXIT
     assert row.trigger_pending is False

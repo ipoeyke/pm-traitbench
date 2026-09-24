@@ -34,14 +34,15 @@ _FILE_NAMES = (
     "theses.yaml",
 )
 
+# A signpost's {level} slot arrives rendered with its own unit (or as a bare price).
 _SIGNPOST_SLOTS: dict[str, frozenset[str]] = {
     "event": frozenset({"event"}),
-    "level": frozenset({"level", "unit", "window"}),
-    "relative": frozenset({"level", "unit", "peer"}),
+    "level": frozenset({"level", "window"}),
+    "relative": frozenset({"level", "peer"}),
 }
 _THESIS_SLOTS = frozenset({"name", "entry", "target", "move", "unit", "horizon", "side"})
 _OUTCOME_SLOTS = frozenset({"pnl", "unit", "closer"})
-_UNIT_DISPLAY = {"pct": "%", "bp": "bp"}
+UNIT_DISPLAY: dict[str, str] = {"pct": "%", "bp": "bp"}
 
 # What closed the idea, in the PM's own words; the engine passes the closing
 # rule's param name, "discretionary", or "horizon_end" for a still-open idea.
@@ -52,7 +53,7 @@ CLOSER_PHRASES: dict[str, str] = {
     "trim_at_target": "the trim",
     "roll": "the roll",
     "discretionary": "my call",
-    "horizon_end": "the year end",
+    "horizon_end": "the horizon end",
 }
 
 
@@ -142,18 +143,18 @@ def render_template(template: str, level: float | str, unit: str | None) -> str:
 def render_signpost(
     template: str,
     *,
-    level: float | None = None,
-    unit: str | None = None,
+    level: str | None = None,
     window: int | None = None,
     event: str | None = None,
     peer: str | None = None,
 ) -> str:
-    """Render a signpost template, filling whichever of its slots are given."""
+    """Render a signpost template, filling whichever of its slots are given.
+
+    `level` arrives already rendered, unit included, by the engine's level formatter.
+    """
     slots: dict[str, str] = {}
     if level is not None:
-        slots["level"] = format(level, "g")
-    if unit is not None:
-        slots["unit"] = _UNIT_DISPLAY.get(unit, unit)
+        slots["level"] = level
     if window is not None:
         slots["window"] = str(window)
     if event is not None:
@@ -168,12 +169,13 @@ def render_thesis(template: str, **slots: Any) -> str:
 
     ``move`` and ``pnl`` render signed to one decimal when given as floats;
     ``closer`` maps through ``CLOSER_PHRASES``; every other slot renders with ``str``.
+    Every thesis template must carry ``{side}``, so direction is never implied by a sign.
     """
     rendered: dict[str, str] = {}
     for key, value in slots.items():
         if key == "unit":
             # None means a quoted price: no unit suffix, not an omitted slot.
-            rendered[key] = _UNIT_DISPLAY.get(value, value) if value is not None else ""
+            rendered[key] = UNIT_DISPLAY.get(value, value) if value is not None else ""
             continue
         if value is None:
             continue
@@ -386,11 +388,11 @@ def _check_engine_templates(catalogue: Catalogue) -> None:
                     f"theses: asset class '{asset_class}' expression '{expression}' "
                     "has no templates"
                 )
-            _check_no_unknown_slots(
-                templates,
-                _THESIS_SLOTS,
-                f"theses: asset class '{asset_class}' expression '{expression}'",
-            )
+            context = f"theses: asset class '{asset_class}' expression '{expression}'"
+            _check_no_unknown_slots(templates, _THESIS_SLOTS, context)
+            for template in templates:
+                if "side" not in _template_fields(template, context):
+                    raise CatalogueError(f"{context}: template '{template}' has no {{side}} slot")
     for kind, templates in catalogue.theses.outcomes.items():
         _check_no_unknown_slots(templates, _OUTCOME_SLOTS, f"outcomes: kind '{kind}'")
 

@@ -368,7 +368,7 @@ def test_anchors_outside_range_has_no_round_level(fixture_view) -> None:
 def test_peer_ids_same_commodity_group_includes_self(fixture_view) -> None:
     adapter = CommoditiesAdapter("commodity_futures_directional", _HORIZON)
     assert adapter.peer_ids("CM-CRD", fixture_view.instruments) == ("CM-CRD",)
-    assert adapter.peer_label("CM-CRD") == "commodity group"
+    assert adapter.peer_label("CM-CRD", fixture_view.instruments) == "energy"
 
 
 def test_relative_move_compares_against_same_group(fixture_view) -> None:
