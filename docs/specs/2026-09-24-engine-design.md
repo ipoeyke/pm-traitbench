@@ -338,6 +338,8 @@ The loop tallies per PM: `loss_side_untriggered_days`, `triggers_fired`, `confli
 - An idea `target` row firing alone exits the whole position; with `trim_at_target` present the trim wins and half comes off.
 - `min_holding_period` writes an event row only when overridden by an exit, roll or trim; otherwise it silently blocks discretionary exits.
 
+- Thesis templates carry a `{side}` slot (`long`/`short`, `steepener`/`flattener`, `long the front`/`short the front`) and never a directional verb; signpost templates are direction-neutral; outcome templates take `{closer}` as a rendered phrase (`the stop`, `the target`, `a signpost`, `the trim`, `the roll`, `my call`, `the year end`). Found at review: hard-coded direction words contradicted short ideas and non-target closes.
+
 ## Limitations to record in the README
 
 - On real seed R1 the credit universe is two index-level issuers and the rates universe one curve, so long_short_credit PMs on the pilot revisit the same two instruments and their `max_positions` rule never binds. Sovereign_rates PMs trade one curve's tenors only.
