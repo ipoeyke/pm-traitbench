@@ -13,7 +13,7 @@ from datetime import date
 
 import numpy as np
 
-from pm_traitbench.engine.constants import SD_FLOOR, TRAILING_SD_DAYS
+from pm_traitbench.engine.constants import MIN_SD_DAYS, SD_FLOOR, TRAILING_SD_DAYS
 from pm_traitbench.engine.series import Series
 from pm_traitbench.enums import (
     SOVEREIGN_TENORS,
@@ -70,6 +70,7 @@ class MarketView:
     _event_types: dict[str, frozenset[EventType]] = field(repr=False)
     _expiry_days: dict[str, tuple[int, ...]] = field(repr=False)
     _regime_by_day: tuple[Regime | None, ...] = field(repr=False)
+    _level_cache: dict[Series, np.ndarray] = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def n_days(self) -> int:
@@ -226,17 +227,13 @@ class MarketView:
                 continue
             for t, day in enumerate(dates):
                 if row.date_start <= day <= row.date_end:
+                    if by_day[t] is not None:
+                        raise EngineError(f"overlapping regime spans cover {day}")
                     by_day[t] = row.regime
         return tuple(by_day)
 
-    def raw_level(self, instrument_id: str, tenor: Tenor | None, t: int) -> float:
-        """The unit-normalised level for one instrument leg on day `t`.
-
-        Equity or commodity outright: `100 * ln(price)`. Commodity futures
-        tenor: `100 * ln(curve level)`. Sovereign curve tenor: `100 * curve
-        level` (a percent yield times 100 is basis points). Credit issuer:
-        `spread_bp`. Anything else is not a level the engine recognises.
-        """
+    def _raw_level_series(self, instrument_id: str, tenor: Tenor | None) -> np.ndarray:
+        """The full-horizon raw level array for one instrument leg, looked up once per call site."""
         instrument = self.instruments.get(instrument_id)
         if instrument is None:
             raise EngineError(f"unknown instrument '{instrument_id}'")
@@ -246,36 +243,57 @@ class MarketView:
                 f"no raw level for instrument '{instrument_id}' "
                 f"(kind {instrument.kind.value}) at tenor {tenor}"
             )
-        return float(self._raw_levels[key][t])
+        return self._raw_levels[key]
+
+    def raw_level(self, instrument_id: str, tenor: Tenor | None, t: int) -> float:
+        """The unit-normalised level for one instrument leg on day `t`.
+
+        Equity or commodity outright: `100 * ln(price)`. Commodity futures
+        tenor: `100 * ln(curve level)`. Sovereign curve tenor: `100 * curve
+        level` (a percent yield times 100 is basis points). Credit issuer:
+        `spread_bp`. Anything else is not a level the engine recognises.
+        """
+        return float(self._raw_level_series(instrument_id, tenor)[t])
+
+    def _level_series(self, series: Series) -> np.ndarray:
+        """The full-horizon level array for a series, cached per series (legs are hashable).
+
+        The engine evaluates the same series many times (per idea, per day),
+        so this is computed once and sliced thereafter rather than summing
+        legs on every call.
+        """
+        cached = self._level_cache.get(series)
+        if cached is not None:
+            return cached
+        total = np.zeros(self.n_days)
+        for leg in series.legs:
+            total = total + leg.coeff * self._raw_level_series(leg.instrument_id, leg.tenor)
+        self._level_cache[series] = total
+        return total
 
     def level(self, series: Series, t: int) -> float:
         """The series level on day `t`: the coefficient-weighted sum of its legs."""
-        return sum(
-            leg.coeff * self.raw_level(leg.instrument_id, leg.tenor, t) for leg in series.legs
-        )
+        return float(self._level_series(series)[t])
 
     def daily_moves(self, series: Series, t: int) -> np.ndarray:
         """Day-over-day level changes over the trailing `TRAILING_SD_DAYS` window ending at `t`."""
         lo = max(0, t - TRAILING_SD_DAYS)
-        levels = np.array([self.level(series, day) for day in range(lo, t + 1)])
-        return np.diff(levels)
+        return np.diff(self._level_series(series)[lo : t + 1])
 
     def sd_h(self, series: Series, t: int, h: int) -> float:
         """Realised volatility of the series over an `h`-day horizon, floored at `SD_FLOOR`.
 
         Normally the sample standard deviation (ddof=1) of `daily_moves`,
-        scaled by `sqrt(h)`. On day 0 or 1 there are fewer than two trailing
-        moves to take a sample sd of, so the engine instead looks ahead over
-        `TRAILING_SD_DAYS` days from day 0 - a one-time look-ahead used only
-        to give the earliest days a volatility scale, never for the level
-        itself.
+        scaled by `sqrt(h)`. Whenever that window holds fewer than
+        `MIN_SD_DAYS` moves (early in the horizon), the engine instead looks
+        ahead over `0 .. min(TRAILING_SD_DAYS, n_days - 1)` - a one-time
+        look-ahead used only to give the earliest days a volatility scale,
+        never for the level itself.
         """
-        if t < 2:
+        moves = self.daily_moves(series, t)
+        if len(moves) < MIN_SD_DAYS:
             hi = min(TRAILING_SD_DAYS, self.n_days - 1)
-            levels = np.array([self.level(series, day) for day in range(hi + 1)])
-            moves = np.diff(levels)
-        else:
-            moves = self.daily_moves(series, t)
+            moves = np.diff(self._level_series(series)[: hi + 1])
         sd = float(np.std(moves, ddof=1)) if len(moves) >= 2 else 0.0
         return max(sd * math.sqrt(h), SD_FLOOR)
 
@@ -294,12 +312,12 @@ class MarketView:
     def trailing_high(self, series: Series, t: int, days: int) -> float:
         """Highest level over the trailing `days` sessions up to and including `t`."""
         lo = max(0, t - days)
-        return max(self.level(series, day) for day in range(lo, t + 1))
+        return float(np.max(self._level_series(series)[lo : t + 1]))
 
     def trailing_low(self, series: Series, t: int, days: int) -> float:
         """Lowest level over the trailing `days` sessions up to and including `t`."""
         lo = max(0, t - days)
-        return min(self.level(series, day) for day in range(lo, t + 1))
+        return float(np.min(self._level_series(series)[lo : t + 1]))
 
     def street_view(self, instrument_id: str, t: int) -> StreetView | None:
         """The street's categorical view on day `t`, or None if the instrument has no consensus."""
