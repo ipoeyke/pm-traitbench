@@ -34,21 +34,26 @@ _FILE_NAMES = (
     "theses.yaml",
 )
 
-# The direct asset classes an engine adapter builds ideas for; multi_asset
-# combines these rather than getting its own signpost or thesis templates.
-_DIRECT_ASSET_CLASSES: tuple[AssetClass, ...] = (
-    AssetClass.EQUITIES,
-    AssetClass.RATES_CREDIT,
-    AssetClass.COMMODITIES,
-)
 _SIGNPOST_SLOTS: dict[str, frozenset[str]] = {
     "event": frozenset({"event"}),
     "level": frozenset({"level", "unit", "window"}),
     "relative": frozenset({"level", "unit", "peer"}),
 }
-_THESIS_SLOTS = frozenset({"name", "entry", "target", "move", "unit", "horizon"})
+_THESIS_SLOTS = frozenset({"name", "entry", "target", "move", "unit", "horizon", "side"})
 _OUTCOME_SLOTS = frozenset({"pnl", "unit", "closer"})
 _UNIT_DISPLAY = {"pct": "%", "bp": "bp"}
+
+# What closed the idea, in the PM's own words; the engine passes the closing
+# rule's param name, "discretionary", or "horizon_end" for a still-open idea.
+CLOSER_PHRASES: dict[str, str] = {
+    "stop": "the stop",
+    "target": "the target",
+    "signpost": "a signpost",
+    "trim_at_target": "the trim",
+    "roll": "the roll",
+    "discretionary": "my call",
+    "horizon_end": "the year end",
+}
 
 
 class _PreferencesFile(BaseModel):
@@ -162,7 +167,7 @@ def render_thesis(template: str, **slots: Any) -> str:
     """Render a thesis or outcome template, filling whichever of its slots are given.
 
     ``move`` and ``pnl`` render signed to one decimal when given as floats;
-    every other slot renders with ``str``.
+    ``closer`` maps through ``CLOSER_PHRASES``; every other slot renders with ``str``.
     """
     rendered: dict[str, str] = {}
     for key, value in slots.items():
@@ -170,6 +175,11 @@ def render_thesis(template: str, **slots: Any) -> str:
             continue
         if key == "unit":
             rendered[key] = _UNIT_DISPLAY.get(value, value)
+        elif key == "closer":
+            try:
+                rendered[key] = CLOSER_PHRASES[value]
+            except KeyError:
+                raise CatalogueError(f"render_thesis: unknown closer '{value}'") from None
         elif key in ("move", "pnl") and isinstance(value, float):
             rendered[key] = format(value, "+.1f")
         else:
@@ -360,7 +370,7 @@ def _check_no_unknown_slots(
 
 
 def _check_engine_templates(catalogue: Catalogue) -> None:
-    for asset_class in _DIRECT_ASSET_CLASSES:
+    for asset_class in ADAPTER_FORMS:
         if asset_class not in catalogue.signposts:
             raise CatalogueError(f"signposts: asset class '{asset_class}' has no templates")
         signpost = catalogue.signposts[asset_class]

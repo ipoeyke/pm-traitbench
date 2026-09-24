@@ -7,7 +7,14 @@ from typing import Any
 import pytest
 import yaml
 
-from pm_traitbench.catalogues.loader import check_catalogue, load_catalogue, render_template
+from pm_traitbench.catalogues.loader import (
+    CLOSER_PHRASES,
+    check_catalogue,
+    load_catalogue,
+    render_signpost,
+    render_template,
+    render_thesis,
+)
 from pm_traitbench.catalogues.models import ADAPTER_FORMS, Catalogue, RuleVariant
 from pm_traitbench.enums import AssetClass
 
@@ -107,6 +114,47 @@ def _assert_every_rule_template_renders_cleanly(catalogue: Catalogue) -> None:
                     assert not _REPEATED_WORD.search(rendered), context
 
 
+def _assert_clean(rendered: str, context: Any) -> None:
+    assert "{" not in rendered and "}" not in rendered, context
+    assert "None" not in rendered, context
+    assert "_" not in rendered, context
+    assert "  " not in rendered, context
+
+
+def _assert_every_engine_template_renders_cleanly(catalogue: Catalogue) -> None:
+    """Render every signpost, thesis and outcome template with sample slots, cleanly."""
+    for asset_class in ADAPTER_FORMS:
+        signpost = catalogue.signposts[asset_class]
+        for template in signpost.event:
+            _assert_clean(
+                render_signpost(template, event="rating_downgrade"), (asset_class, "event")
+            )
+        for template in signpost.level:
+            rendered = render_signpost(template, level=100.0, unit="pct", window=5)
+            _assert_clean(rendered, (asset_class, "level", template))
+        for template in signpost.relative:
+            rendered = render_signpost(template, level=1.5, unit="bp", peer="the sector")
+            _assert_clean(rendered, (asset_class, "relative", template))
+        for expression in ADAPTER_FORMS[asset_class]:
+            for template in catalogue.theses.theses[asset_class][expression]:
+                rendered = render_thesis(
+                    template,
+                    name="AAPL",
+                    entry=100.0,
+                    target=110.0,
+                    move=5.0,
+                    unit="pct",
+                    horizon=20,
+                    side="long",
+                )
+                _assert_clean(rendered, (asset_class, expression, template))
+    for kind, templates in catalogue.theses.outcomes.items():
+        for closer in CLOSER_PHRASES:
+            for template in templates:
+                rendered = render_thesis(template, pnl=3.2, unit="pct", closer=closer)
+                _assert_clean(rendered, (kind, closer, template))
+
+
 def test_packaged_yaml_files_exist() -> None:
     base = resources.files("pm_traitbench.catalogues")
     for name in (
@@ -199,14 +247,28 @@ def test_self_descriptions_never_name_a_bias() -> None:
                 assert word not in lowered, (param, word, fragment)
 
 
+@pytest.mark.parametrize("name", ["signposts.yaml", "theses.yaml"])
+def test_engine_template_banks_never_name_a_bias(name: str) -> None:
+    data = _load_shipped_yaml(name)
+    for text in _iter_strings(data):
+        lowered = text.lower()
+        for word in _BIAS_WORDS:
+            assert word not in lowered, (name, word, text)
+
+
 def test_every_rule_template_renders_cleanly() -> None:
     catalogue = load_catalogue()
     _assert_every_rule_template_renders_cleanly(catalogue)
 
 
+def test_every_engine_template_renders_cleanly() -> None:
+    catalogue = load_catalogue()
+    _assert_every_engine_template_renders_cleanly(catalogue)
+
+
 def test_every_direct_asset_class_has_all_three_signpost_kinds() -> None:
     catalogue = load_catalogue()
-    for asset_class in (AssetClass.EQUITIES, AssetClass.RATES_CREDIT, AssetClass.COMMODITIES):
+    for asset_class in ADAPTER_FORMS:
         signpost = catalogue.signposts[asset_class]
         assert len(signpost.event) >= 2
         assert len(signpost.level) >= 2

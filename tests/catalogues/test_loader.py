@@ -12,6 +12,7 @@ from pm_traitbench.catalogues.loader import (
     load_catalogue,
     render_signpost,
     render_template,
+    render_thesis,
 )
 from pm_traitbench.catalogues.models import (
     Catalogue,
@@ -507,7 +508,7 @@ def test_signpost_cell_with_one_template_raises(tmp_path: Path) -> None:
     data = _load_yaml(path)
     data["signposts"]["equities"]["level"] = data["signposts"]["equities"]["level"][:1]
     _dump_yaml(path, data)
-    with pytest.raises(CatalogueError):
+    with pytest.raises(CatalogueError, match="signposts.equities.level"):
         load_catalogue(tmp_path)
 
 
@@ -528,7 +529,7 @@ def test_outcomes_key_draw_is_rejected(tmp_path: Path) -> None:
     data = _load_yaml(path)
     data["outcomes"]["draw"] = data["outcomes"].pop("open")
     _dump_yaml(path, data)
-    with pytest.raises(CatalogueError):
+    with pytest.raises(CatalogueError, match="outcomes keys must be exactly"):
         load_catalogue(tmp_path)
 
 
@@ -544,3 +545,33 @@ def test_render_signpost_fills_every_slot_and_replaces_event_underscores() -> No
     )
     assert "rating downgrade" in rendered
     assert "{" not in rendered and "}" not in rendered
+
+
+def test_render_thesis_formats_signed_move_as_one_decimal() -> None:
+    assert render_thesis("{move}{unit}", move=3.0, unit="pct") == "+3.0%"
+    assert render_thesis("{move}{unit}", move=-3.0, unit="pct") == "-3.0%"
+
+
+def test_render_thesis_formats_signed_pnl_as_one_decimal() -> None:
+    assert render_thesis("{pnl}{unit}", pnl=12.34, unit="bp") == "+12.3bp"
+
+
+def test_render_thesis_unit_pct_renders_as_percent_sign() -> None:
+    assert render_thesis("{target}{unit}", target=103.5, unit="pct") == "103.5%"
+
+
+def test_render_thesis_fills_side_slot() -> None:
+    assert (
+        render_thesis("{side} {name}", side="steepener", name="2Y versus 10Y")
+        == "steepener 2Y versus 10Y"
+    )
+
+
+def test_render_thesis_maps_closer_to_a_phrase() -> None:
+    assert render_thesis("out on {closer}", closer="stop") == "out on the stop"
+    assert render_thesis("out on {closer}", closer="horizon_end") == "out on the year end"
+
+
+def test_render_thesis_unknown_closer_raises_catalogue_error() -> None:
+    with pytest.raises(CatalogueError, match="bogus"):
+        render_thesis("out on {closer}", closer="bogus")

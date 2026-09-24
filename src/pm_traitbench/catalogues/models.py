@@ -1,4 +1,5 @@
-"""Catalogue content models: preferences, rule templates, mandate sub-styles and phrasings.
+"""Catalogue content models: preferences, rule templates, mandate sub-styles, phrasings,
+and signpost and thesis templates.
 
 All frozen and reject unknown fields; catalogue content is fully specified at
 load time and never mutated afterwards.

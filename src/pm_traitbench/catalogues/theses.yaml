@@ -1,42 +1,42 @@
 theses:
   equities:
     outright:
-      - "{name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
-      - "long {name} from {entry}, target {target} inside {horizon} sessions"
-      - "{name} should move {move}{unit} by {horizon} sessions, entry {entry}"
+      - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
+      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
+      - "{name} at {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
     pair:
-      - "{name} at {entry}, looking for {move}{unit} of spread over {horizon} sessions, target {target}"
-      - "{name} should converge {move}{unit} inside {horizon} sessions, target {target}"
-      - "the spread on {name} is {entry}, target {target} within {horizon} sessions"
+      - "{side} {name} at {entry}{unit}, looking for {move}{unit} of spread over {horizon} sessions, target {target}{unit}"
+      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
+      - "the spread on {name} is {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
   rates_credit:
     outright:
-      - "{name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}"
-      - "long {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
-      - "{name} should move {move}{unit} by {horizon} sessions, entry {entry}{unit}"
+      - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
+      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
+      - "{name} at {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
     curve:
-      - "{name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}"
-      - "{name} should steepen {move}{unit} inside {horizon} sessions, target {target}"
-      - "the spread on {name} is {entry}{unit}, target {target}{unit} within {horizon} sessions"
+      - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
+      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
+      - "the curve on {name} is {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
   commodities:
     outright:
-      - "{name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
-      - "long {name} from {entry}, target {target} inside {horizon} sessions"
-      - "{name} should move {move}{unit} by {horizon} sessions, entry {entry}"
+      - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
+      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
+      - "{name} at {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
     calendar_spread:
-      - "{name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
-      - "the roll on {name} should widen {move}{unit} inside {horizon} sessions, target {target}"
-      - "the spread on {name} is {entry}, target {target} within {horizon} sessions"
+      - "{side} {name} at {entry}{unit}, looking for {move}{unit} over {horizon} sessions, target {target}{unit}"
+      - "{side} {name} from {entry}{unit}, target {target}{unit} inside {horizon} sessions"
+      - "the spread on {name} is {entry}{unit}, {side}, target {target}{unit} within {horizon} sessions"
 
 outcomes:
   win:
-    - "win: closed {pnl}{unit}, target hit"
-    - "closed out {pnl}{unit}, thesis played out"
-    - "took profit at {pnl}{unit}"
+    - "closed {pnl}{unit}, out on {closer}"
+    - "closed out {pnl}{unit}, out on {closer}"
+    - "wrapped it up at {pnl}{unit}, out on {closer}"
   loss:
-    - "loss: closed {pnl}{unit}, stopped by {closer}"
-    - "cut it for {pnl}{unit}, stopped by {closer}"
-    - "closed {pnl}{unit} against me, {closer} triggered"
+    - "closed {pnl}{unit}, out on {closer}"
+    - "cut it at {pnl}{unit}, out on {closer}"
+    - "closed out {pnl}{unit}, out on {closer}"
   open:
-    - "still open, marked {pnl}{unit}, waiting on {closer}"
-    - "position stays on, {pnl}{unit} so far, next test is {closer}"
-    - "open at {pnl}{unit}, closing rule is {closer}"
+    - "still on at {pnl}{unit}, {closer}"
+    - "position stays on at {pnl}{unit}, {closer}"
+    - "open at {pnl}{unit}, {closer}"
