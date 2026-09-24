@@ -165,7 +165,7 @@ def step(
 
         if final_position is not None and isinstance(ctx.adapter, CommoditiesAdapter):
             # A no-op unless today is the expiry day this position rolled toward.
-            final_position = reset_roll_tag(final_position, ctx.adapter, t)
+            final_position = reset_roll_tag(final_position, ctx.adapter, view, t)
 
         if final_position is None:
             running_state = running_state.remove_position(pos.trade_idea_id)

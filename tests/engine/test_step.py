@@ -506,9 +506,8 @@ def test_hold_rule_overridden_by_stop(eq_parts) -> None:
 
 def test_commodity_roll_retags_legs_and_resets_at_expiry(cm_parts) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = cm_parts
-    # M1 jumps to M2's level once the old front-month contract expires (t=10): the curve table
-    # relabels the next contract as M1, which is why the reset needs no entry-level shift.
-    m1 = [100.0] * 10 + [102.0] * 4
+    # A constant-maturity curve: M1 and M2 hold their levels every day, including at expiry.
+    m1 = [100.0] * 14
     m2 = [102.0] * 14
     view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
     pos = _position(
@@ -528,12 +527,11 @@ def test_commodity_roll_retags_legs_and_resets_at_expiry(cm_parts) -> None:
     ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
 
     roll_days: list[int] = []
-    pnl_by_day: dict[int, float] = {}
-    for t in range(4, 12):
+    for t in range(4, 13):
         state, out = step(state, t, view, ctx, idea_rules)
         assert state.n_positions == 1
+        assert out.position_days[0].pnl_unit == pytest.approx(10.0)
         pos_now = state.position("ti_001")
-        pnl_by_day[t] = out.position_days[0].pnl_unit
         if out.ledger_rows:
             roll_days.append(t)
             assert len(out.ledger_rows) == 2
@@ -544,7 +542,7 @@ def test_commodity_roll_retags_legs_and_resets_at_expiry(cm_parts) -> None:
             assert pos_now.series.legs[0].tenor == Tenor.M1
             assert pos_now.legs[0].tenor == Tenor.M1
             assert pos_now.rolled_until_t is None
-        elif t < 10:
+        elif t <= 10:
             assert pos_now.series.legs[0].tenor == Tenor.M2
             assert pos_now.legs[0].tenor == Tenor.M2
             assert pos_now.rolled_until_t == 10
@@ -555,16 +553,15 @@ def test_commodity_roll_retags_legs_and_resets_at_expiry(cm_parts) -> None:
 
     assert roll_days == [5]
     final_pos = state.position("ti_001")
-    assert final_pos.entry_level == pytest.approx(90.0 + 2.0)
-    assert final_pos.rolled_offset == pytest.approx(2.0)
+    assert final_pos.entry_level == pytest.approx(90.0)
+    assert final_pos.rolled_offset == pytest.approx(0.0)
     assert final_pos.roll_breached is False
-    assert pnl_by_day[10] == pytest.approx(pnl_by_day[11])
 
 
 def test_breached_roll_force_rolls_at_expiry_with_late_roll_flag(cm_parts) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = cm_parts
-    m1 = [100.0] * 12
-    m2 = [102.0] * 12
+    m1 = [100.0] * 13
+    m2 = [102.0] * 13
     view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
     pos = _position(
         "ti_001",
@@ -582,27 +579,38 @@ def test_breached_roll_force_rolls_at_expiry_with_late_roll_flag(cm_parts) -> No
         traits, {"exit_deficiency": (1.0, False), "disposition_ratio": (1e-8, True)}
     )
     ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
-
-    new_state, out = step(state, 10, view, ctx, idea_rules)
-
-    assert new_state.n_positions == 1
-    assert len(out.ledger_rows) == 2
-    assert all(row.bias_flag == LATE_ROLL_FLAG for row in out.ledger_rows)
-    new_pos = new_state.position("ti_001")
-    assert new_pos.series.legs[0].tenor == Tenor.M1
-    assert new_pos.rolled_until_t is None
-    # The roll rule's own breach fires an event; the force roll itself adds no event row.
     roll_rule = next(r for r in pm_rules if r.param == "roll_before_expiry")
-    roll_events = [ev for ev in out.rule_events if ev.rule_id == roll_rule.rule_id]
-    assert len(roll_events) == 1
-    assert roll_events[0].response == RuleResponse.ACKED_NO_ACTION
+
+    for t in range(9, 12):
+        state, out = step(state, t, view, ctx, idea_rules)
+        assert state.n_positions == 1
+        assert out.position_days[0].pnl_unit == pytest.approx(10.0)
+        pos_now = state.position("ti_001")
+        if t == 10:
+            assert len(out.ledger_rows) == 2
+            assert all(row.bias_flag == LATE_ROLL_FLAG for row in out.ledger_rows)
+            assert pos_now.series.legs[0].tenor == Tenor.M2
+            assert pos_now.rolled_until_t == 10
+            # The roll rule's own breach fires an event; the force roll adds no event row.
+            roll_events = [ev for ev in out.rule_events if ev.rule_id == roll_rule.rule_id]
+            assert len(roll_events) == 1
+            assert roll_events[0].response == RuleResponse.ACKED_NO_ACTION
+        else:
+            assert out.ledger_rows == ()
+            assert pos_now.series.legs[0].tenor == Tenor.M1
+            assert pos_now.rolled_until_t is None
+
+    final_pos = state.position("ti_001")
+    assert final_pos.entry_level == pytest.approx(90.0)
+    assert final_pos.rolled_offset == pytest.approx(0.0)
+    assert final_pos.roll_breached is False
 
 
 def test_force_roll_without_a_roll_rule_carries_no_flag(cm_parts) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = cm_parts
     pm_rules_no_roll = tuple(r for r in pm_rules if r.param != "roll_before_expiry")
-    m1 = [100.0] * 12
-    m2 = [102.0] * 12
+    m1 = [100.0] * 13
+    m2 = [102.0] * 13
     view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
     pos = _position(
         "ti_001",
@@ -620,11 +628,24 @@ def test_force_roll_without_a_roll_rule_carries_no_flag(cm_parts) -> None:
     )
     ctx = _ctx(persona, traits, pm_rules_no_roll, adapter, ["CM-CRD"], catalogue, config)
 
-    new_state, out = step(state, 10, view, ctx, idea_rules)
+    for t in range(9, 12):
+        state, out = step(state, t, view, ctx, idea_rules)
+        assert state.n_positions == 1
+        assert out.position_days[0].pnl_unit == pytest.approx(10.0)
+        pos_now = state.position("ti_001")
+        if t == 10:
+            assert len(out.ledger_rows) == 2
+            assert all(row.bias_flag is None for row in out.ledger_rows)
+            assert pos_now.series.legs[0].tenor == Tenor.M2
+            assert pos_now.rolled_until_t == 10
+        else:
+            assert out.ledger_rows == ()
+            assert pos_now.series.legs[0].tenor == Tenor.M1
+            assert pos_now.rolled_until_t is None
 
-    assert new_state.n_positions == 1
-    assert len(out.ledger_rows) == 2
-    assert all(row.bias_flag is None for row in out.ledger_rows)
+    final_pos = state.position("ti_001")
+    assert final_pos.entry_level == pytest.approx(90.0)
+    assert final_pos.rolled_offset == pytest.approx(0.0)
 
 
 # --- Discretionary block -------------------------------------------------------

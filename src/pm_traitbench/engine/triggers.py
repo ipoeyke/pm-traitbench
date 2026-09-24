@@ -210,7 +210,7 @@ def apply_roll(
     """Shift `entry_level`/`rolled_offset` by the roll's level gap, retag legs one month out,
     and record the expiry day the retag must be undone on.
 
-    Must be called before any ledger rows are built from `position`, since `roll_rows` and
+    Ledger rows must be built from `position` before calling this, since `roll_rows` and
     `roll_shift` read the current (pre-roll) tenor.
     """
     shift = adapter.roll_shift(position, view, t)
@@ -226,12 +226,29 @@ def apply_roll(
     )
 
 
-def reset_roll_tag(position: Position, adapter: CommoditiesAdapter, t: int) -> Position:
-    """Undo a roll's leg retag on the expiry day it was rolled toward; a no-op any other day."""
-    if position.rolled_until_t != t:
+def reset_roll_tag(
+    position: Position, adapter: CommoditiesAdapter, view: MarketView, t: int
+) -> Position:
+    """Undo a roll's leg retag the day after the expiry day it was rolled toward; a no-op any
+    other day, including the expiry day itself.
+
+    The curves are constant-maturity (`M_k` is a fixed function of spot every day), so nothing
+    here mirrors a trade: `entry_level`/`rolled_offset` absorb today's M2-to-M1 raw-level gap so
+    `pnl_unit` does not move. A roll is P&L-neutral by construction.
+    """
+    if position.rolled_until_t is None or t <= position.rolled_until_t:
         return position
+    level_before = view.level(position.series, t)
     retagged = adapter.retag_legs(position, -1)
-    return replace(retagged, rolled_until_t=None, roll_breached=False)
+    level_after = view.level(retagged.series, t)
+    shift = level_after - level_before
+    return replace(
+        retagged,
+        entry_level=position.entry_level + shift,
+        rolled_offset=position.rolled_offset + shift,
+        rolled_until_t=None,
+        roll_breached=False,
+    )
 
 
 def render_close(
