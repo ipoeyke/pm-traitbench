@@ -82,6 +82,33 @@ def _pnl_state(pnl_z: float) -> PnlState:
     return PnlState.GAIN if pnl_z > 0 else PnlState.LOSS
 
 
+def _merge_same_leg_orders(rows: list[LedgerRow]) -> tuple[LedgerRow, ...]:
+    """Net orders landing on the same idea's leg and side on this day into one row.
+
+    A same-day force roll and a discretionary add can each open the same new leg at
+    the same side (the roll's new-leg entry and the add's buy); the ledger keeps the
+    unique-key contract by recording that as one larger order, not two.
+    """
+    merged: dict[tuple, LedgerRow] = {}
+    order: list[tuple] = []
+    for row in rows:
+        key = (row.trade_idea_id, row.instrument_id, row.tenor, row.side)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = row
+            order.append(key)
+        else:
+            merged[key] = existing.model_copy(
+                update={
+                    "size": existing.size + row.size,
+                    "risk_amount": existing.risk_amount + row.risk_amount,
+                    "bias_flag": join_flags([existing.bias_flag, row.bias_flag]),
+                    "rule_id": existing.rule_id if existing.rule_id is not None else row.rule_id,
+                }
+            )
+    return tuple(merged[key] for key in order)
+
+
 def step(
     state: PmState,
     t: int,
@@ -247,7 +274,7 @@ def step(
         opportunities["sell_day_position_days"] += n_at_start
 
     return running_state, DayOutput(
-        ledger_rows=tuple(ledger_rows),
+        ledger_rows=_merge_same_leg_orders(ledger_rows),
         rule_events=tuple(events),
         position_days=tuple(position_days[pid] for pid in sorted(position_days)),
         new_ideas=idea_rows,

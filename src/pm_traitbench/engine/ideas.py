@@ -358,7 +358,10 @@ def attempt_entry(
         rng=rng_templates,
     )
 
-    idea_legs = tuple(
+    # A position's own legs always carry the literal traded tenor (a commodity outright still
+    # tracks M1 internally, for roll math); the persisted idea's legs describe its structural
+    # form instead, and only carry a tenor for curve and calendar-spread forms.
+    position_legs = tuple(
         Leg(
             instrument_id=leg.instrument_id,
             tenor=leg.tenor,
@@ -366,6 +369,12 @@ def attempt_entry(
             weight=abs(leg.coeff),
         )
         for leg in legs
+    )
+    idea_leg_requires_tenor = form in (Expression.CURVE, Expression.CALENDAR_SPREAD)
+    idea_legs = (
+        position_legs
+        if idea_leg_requires_tenor
+        else tuple(leg.model_copy(update={"tenor": None}) for leg in position_legs)
     )
 
     idea_row = Idea(
@@ -420,7 +429,7 @@ def attempt_entry(
         trade_idea_id=trade_idea_id,
         expression=form,
         instrument_id=candidate,
-        legs=idea_legs,
+        legs=position_legs,
         series=series,
         side=side,
         entry_t=t,

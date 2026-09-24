@@ -7,7 +7,14 @@ import pytest
 from pm_traitbench import pipeline
 from pm_traitbench.cli import build_parser, main
 from pm_traitbench.config import OutputConfig, load_config
-from pm_traitbench.tables.specs import DRIFT_EVENTS, MARKET_TABLES, PERSONAS, RULES, TRAITS
+from pm_traitbench.tables.specs import (
+    DRIFT_EVENTS,
+    ENGINE_TABLES,
+    MARKET_TABLES,
+    PERSONAS,
+    RULES,
+    TRAITS,
+)
 from pm_traitbench.tables.store import DataStore
 from tests.market.real.conftest import fake_cache  # noqa: F401
 
@@ -107,3 +114,27 @@ def test_sample_then_market_run_through_the_cli_against_a_fetched_cache(fake_cac
         assert (data_dir / f"{spec.name}.jsonl").exists()
     assert (data_dir / "run_metadata" / "sample.json").exists()
     assert (data_dir / "run_metadata" / "market.json").exists()
+
+
+def test_sample_then_market_then_engine_run_through_the_cli_against_a_fetched_cache(
+    fake_cache,
+) -> None:
+    """The full pipeline, stage by stage, on the demo config's small commodities-only
+    population: sample, then market against a fetched raw cache, then engine.
+    """
+    config = load_config(_DEMO_CONFIG)
+    result = fake_cache(config)
+    data_dir = result.data_dir
+
+    assert main(["sample", "--config", str(_DEMO_CONFIG), "--data-dir", str(data_dir)]) == 0
+    assert main(["market", "--config", str(_DEMO_CONFIG), "--data-dir", str(data_dir)]) == 0
+    assert main(["engine", "--config", str(_DEMO_CONFIG), "--data-dir", str(data_dir)]) == 0
+
+    for spec in ENGINE_TABLES:
+        assert (data_dir / f"{spec.name}.jsonl").exists()
+    assert (data_dir / "run_metadata" / "engine.json").exists()
+
+
+def test_help_output_lists_the_engine_subcommand() -> None:
+    help_text = build_parser(pipeline.STAGES).format_help()
+    assert "engine" in help_text

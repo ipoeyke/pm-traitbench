@@ -205,8 +205,8 @@ def test_cli_returns_1_and_writes_nothing_when_a_later_seed_fails(
     assert not (result.data_dir / "run_metadata" / "market.json").exists()
 
 
-def test_pipeline_stage_names_are_sample_then_market() -> None:
-    assert tuple(stage.name for stage in pipeline.STAGES) == ("sample", "market")
+def test_pipeline_stage_names_are_sample_then_market_then_engine() -> None:
+    assert tuple(stage.name for stage in pipeline.STAGES) == ("sample", "market", "engine")
 
 
 def test_run_stage_raises_stage_io_error_for_unfetched_real_pilot_seed(tmp_path: Path) -> None:

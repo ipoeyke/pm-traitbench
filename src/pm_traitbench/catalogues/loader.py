@@ -171,11 +171,13 @@ def render_thesis(template: str, **slots: Any) -> str:
     """
     rendered: dict[str, str] = {}
     for key, value in slots.items():
+        if key == "unit":
+            # None means a quoted price: no unit suffix, not an omitted slot.
+            rendered[key] = _UNIT_DISPLAY.get(value, value) if value is not None else ""
+            continue
         if value is None:
             continue
-        if key == "unit":
-            rendered[key] = _UNIT_DISPLAY.get(value, value)
-        elif key == "closer":
+        if key == "closer":
             try:
                 rendered[key] = CLOSER_PHRASES[value]
             except KeyError:
