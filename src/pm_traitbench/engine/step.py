@@ -89,7 +89,12 @@ def step(
     ctx: PmContext,
     idea_rules: Mapping[str, tuple[Rule, ...]],
 ) -> tuple[PmState, DayOutput]:
-    """Advance one PM's book by one day: mark, trigger, discretionary, entries, close-out."""
+    """Advance one PM's book by one day: mark, trigger, discretionary, entries.
+
+    On the horizon's last day, every open position closes out instead, before any trigger or
+    discretionary evaluation - a rule-driven trim or add that same day would otherwise sell (or
+    add to) the same leg the close-out sells again, producing a duplicate ledger row.
+    """
     params = ctx.schedule.for_day(view.dates[t], view.regime(t))
 
     positions_at_start = state.positions
@@ -102,12 +107,46 @@ def step(
     position_days: dict[str, PositionDay] = {}
     opportunities: Counter[str] = Counter({key: 0 for key in _OPPORTUNITY_KEYS})
     any_sold = False
+    is_last_day = t == view.n_days - 1
 
     for pos in positions_at_start:
         level_now = tracked_level(pos, view, t)
         pnl = compute_pnl_unit(pos, level_now)
         pnl_z = pnl / pos.sd_h_at_entry
         pnl_state = _pnl_state(pnl_z)
+
+        if is_last_day:
+            # No trigger or discretionary evaluation on the horizon's last day: every open
+            # position closes out here, before any rule could also sell it that same day.
+            text = render_outcome(
+                ctx.catalogue,
+                kind="open",
+                pnl=pnl,
+                unit=pos.series.unit,
+                closer="horizon_end",
+                rng=ctx.rng_for("templates", t, pos.trade_idea_id),
+            )
+            ledger_rows.extend(exit_rows(pos, ctx, view, t, None, None))
+            closed.append((pos.trade_idea_id, view.dates[t], text))
+            opportunities["exits"] += 1
+            any_sold = True
+            running_state = running_state.remove_position(pos.trade_idea_id)
+            position_days[pos.trade_idea_id] = PositionDay(
+                pm_id=ctx.persona.pm_id,
+                date=view.dates[t],
+                trade_idea_id=pos.trade_idea_id,
+                pnl_unit=pnl,
+                pnl_z=pnl_z,
+                pnl_state=pnl_state,
+                sessions_held=t - pos.entry_t,
+                triggers_fired=0,
+                trigger_pending=False,
+                action=PositionAction.EXIT,
+                bias_flag=None,
+                anchor_level=None,
+                effective_exit_level=None,
+            )
+            continue
 
         trig = handle_triggers(
             pos,
@@ -219,29 +258,6 @@ def step(
     opportunities["entries_after_run"] += sum(
         1 for new_idea in new_ideas if new_idea.entered_after_run
     )
-
-    if t == view.n_days - 1:
-        for pos in running_state.positions:
-            level_now = tracked_level(pos, view, t)
-            realized = compute_pnl_unit(pos, level_now)
-            text = render_outcome(
-                ctx.catalogue,
-                kind="open",
-                pnl=realized,
-                unit=pos.series.unit,
-                closer="horizon_end",
-                rng=ctx.rng_for("templates", t, pos.trade_idea_id),
-            )
-            ledger_rows.extend(exit_rows(pos, ctx, view, t, None, None))
-            closed.append((pos.trade_idea_id, view.dates[t], text))
-            opportunities["exits"] += 1
-            any_sold = True
-            running_state = running_state.remove_position(pos.trade_idea_id)
-            existing = position_days.get(pos.trade_idea_id)
-            if existing is not None:
-                position_days[pos.trade_idea_id] = existing.model_copy(
-                    update={"action": PositionAction.EXIT, "bias_flag": None}
-                )
 
     if any_sold:
         opportunities["sell_day_position_days"] += n_at_start

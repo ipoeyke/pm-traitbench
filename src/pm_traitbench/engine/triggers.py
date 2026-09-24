@@ -302,8 +302,15 @@ def _execute_fired(
     fired: Sequence[Rule],
     fired_non_hold: Sequence[Rule],
     pnl_state: PnlState,
+    skip_add: bool,
 ) -> TriggerOutcome:
-    """Draw the exit-deficiency response and execute the winner (and roll's trim/target)."""
+    """Draw the exit-deficiency response and execute the winner (and roll's trim/target).
+
+    `skip_add` is true on a same-day force roll: an `added` response still keeps its event and
+    flag, but writes no ledger row and leaves size unchanged - the same convention as an add
+    skipped at the mandate cap, since the force roll's own "open the new leg" row already claims
+    that (instrument, tenor, side) key today.
+    """
     resolution = resolve(fired)
     winner = resolution.winner
     if winner is None:
@@ -354,11 +361,12 @@ def _execute_fired(
             result = replace(result, roll_breached=True)
     elif resp.response == RuleResponse.ADDED:
         bias_flag = "exit_deficiency:added"
-        cap = mandate_cap(ctx.pm_rules)
-        result, add_ledger = apply_add(result, cap, ctx, view, t, bias_flag, winner.rule_id)
-        if add_ledger:
-            ledger_rows.extend(add_ledger)
-            action = PositionAction.ADD
+        if not skip_add:
+            cap = mandate_cap(ctx.pm_rules)
+            result, add_ledger = apply_add(result, cap, ctx, view, t, bias_flag, winner.rule_id)
+            if add_ledger:
+                ledger_rows.extend(add_ledger)
+                action = PositionAction.ADD
         if winner.action == Action.ROLL:
             result = replace(result, roll_breached=True)
     elif winner.action in (Action.EXIT, Action.SIGNPOST):
@@ -415,41 +423,6 @@ def _force_roll_position(
     return new_position, rows, flag
 
 
-def _merge_same_leg_rows(
-    base_rows: tuple[LedgerRow, ...], extra_rows: tuple[LedgerRow, ...]
-) -> tuple[LedgerRow, ...]:
-    """Combine `extra_rows` into `base_rows` wherever both land on the same (instrument, tenor,
-    side): the ledger key is unique per position per day per leg per side, and a same-day force
-    roll and a same-day add both open exposure in the position's entry direction, so they can
-    land on the same (already-rolled) leg - one net trade that day.
-    """
-    merged = list(base_rows)
-    remainder: list[LedgerRow] = []
-    for row in extra_rows:
-        match = next(
-            (
-                i
-                for i, existing in enumerate(merged)
-                if (existing.instrument_id, existing.tenor, existing.side)
-                == (row.instrument_id, row.tenor, row.side)
-            ),
-            None,
-        )
-        if match is None:
-            remainder.append(row)
-            continue
-        base = merged[match]
-        merged[match] = base.model_copy(
-            update={
-                "size": base.size + row.size,
-                "risk_amount": base.risk_amount + row.risk_amount,
-                "rule_id": row.rule_id if row.rule_id is not None else base.rule_id,
-                "bias_flag": join_flags([base.bias_flag, row.bias_flag]),
-            }
-        )
-    return tuple(merged) + tuple(remainder)
-
-
 def handle_triggers(
     position: Position,
     state: PmState,
@@ -503,14 +476,16 @@ def handle_triggers(
             rolled_today=force_rolled,
         )
     else:
-        outcome = _execute_fired(position, view, t, ctx, params, fired, fired_non_hold, pnl_state)
+        outcome = _execute_fired(
+            position, view, t, ctx, params, fired, fired_non_hold, pnl_state, force_rolled
+        )
         if force_rolled:
             action = (
                 outcome.action if outcome.action != PositionAction.NONE else PositionAction.ROLL
             )
             outcome = replace(
                 outcome,
-                ledger_rows=_merge_same_leg_rows(roll_rows_today, outcome.ledger_rows),
+                ledger_rows=roll_rows_today + outcome.ledger_rows,
                 action=action,
                 bias_flag=join_flags([roll_flag, outcome.bias_flag]),
                 rolled_today=True,

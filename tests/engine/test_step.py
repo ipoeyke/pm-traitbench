@@ -363,7 +363,7 @@ def test_step_is_deterministic_and_does_not_mutate_state(eq_parts) -> None:
 
 def test_stop_crossed_closes_position_with_one_exit_row(eq_parts) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = eq_parts
-    view = _view([0.0, -15.0], instrument_id="EQ-A")
+    view = _view([0.0, -15.0, -15.0], instrument_id="EQ-A")
     pos = _position("ti_001", "EQ-A", entry_t=0, target_level=100.0, stop_level=-10.0)
     state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
     idea_rules = _idea_rules_for(pos, persona.pm_id)
@@ -389,7 +389,7 @@ def test_stop_crossed_closes_position_with_one_exit_row(eq_parts) -> None:
 
 def test_stop_and_signpost_same_day_two_events_one_exit(eq_parts) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = eq_parts
-    view = _view([0.0, -15.0], instrument_id="EQ-A")
+    view = _view([0.0, -15.0, -15.0], instrument_id="EQ-A")
     pos = _position("ti_001", "EQ-A", entry_t=0, target_level=100.0, stop_level=-10.0)
     state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
     idea_rules = _idea_rules_for(pos, persona.pm_id, signpost_level=-8.0)
@@ -487,7 +487,7 @@ def test_trim_at_target_halves_size_with_one_sell_row(eq_parts) -> None:
 
 def test_hold_rule_overridden_by_stop(eq_parts) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = eq_parts
-    levels = [0.0] * 6 + [-15.0]
+    levels = [0.0] * 6 + [-15.0, -15.0]
     view = _view(levels, instrument_id="EQ-A")
     pos = _position("ti_001", "EQ-A", entry_t=0, target_level=100.0, stop_level=-10.0)
     state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
@@ -839,11 +839,13 @@ def test_expiry_day_trim_after_force_roll_produces_unique_ledger_keys(cm_parts) 
     assert out.closed == ()
 
 
-def test_expiry_day_add_after_force_roll_merges_into_the_rolled_leg(cm_parts) -> None:
+def test_expiry_day_added_response_writes_no_add_row(cm_parts) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = cm_parts
     # Same stop-breach setup, but the breach response is `added` (exit deficiency plus loss
-    # aversion, both active): the add buys more of the same (already-rolled) leg the force roll
-    # just opened, so the two must land in one merged row, not a second row with the same key.
+    # aversion, both active). On a force-roll day the add is skipped entirely - the same
+    # convention as an add skipped at the mandate cap - since the force roll's own "open the new
+    # leg" row already claims that (instrument, tenor, side) key today; only the roll rows are
+    # written, the `added` event and bias flag still record what happened, and size is unchanged.
     m1 = [100.0] * 10 + [80.0] * 3
     m2 = [level * 1.02 for level in m1]
     view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
@@ -871,11 +873,12 @@ def test_expiry_day_add_after_force_roll_merges_into_the_rolled_leg(cm_parts) ->
     assert len(out.ledger_rows) == 2
     keys = {(row.tenor, row.side) for row in out.ledger_rows}
     assert keys == {(Tenor.M1, Side.SELL), (Tenor.M2, Side.BUY)}
-    buy_row = next(row for row in out.ledger_rows if row.side == Side.BUY)
-    assert buy_row.rule_id == stop_rule_id
-    assert buy_row.bias_flag == "exit_deficiency:added"
+    assert all(row.rule_id is None for row in out.ledger_rows)
+    stop_events = [ev for ev in out.rule_events if ev.rule_id == stop_rule_id]
+    assert len(stop_events) == 1
+    assert stop_events[0].response == RuleResponse.ADDED
     new_pos = new_state.position("ti_001")
-    assert new_pos.size_pct_book > pos.size_pct_book
+    assert new_pos.size_pct_book == pytest.approx(pos.size_pct_book)
 
 
 # --- Discretionary block -------------------------------------------------------
@@ -1093,7 +1096,7 @@ def test_discretionary_add_without_a_breach(eq_parts, monkeypatch: pytest.Monkey
 
 def test_position_day_rows_one_per_open_position(eq_parts) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = eq_parts
-    view = _view([0.0, -15.0], instrument_id="EQ-A")
+    view = _view([0.0, -15.0, -15.0], instrument_id="EQ-A")
     pos = _position("ti_001", "EQ-A", entry_t=0, target_level=100.0, stop_level=-10.0)
     state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
     idea_rules = _idea_rules_for(pos, persona.pm_id)
@@ -1131,3 +1134,37 @@ def test_last_day_close_out_exits_every_open_position(eq_parts) -> None:
     assert row.bias_flag is None
     assert out.opportunities["exits"] == 1
     assert out.opportunities["sell_day_position_days"] == 1
+
+
+def test_last_day_close_out_runs_before_any_trigger_is_evaluated(eq_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = eq_parts
+    # Both the idea's own target and the PM's trim_at_target rule would fire if evaluated on
+    # this last day - close-out must run first and skip evaluation entirely, so neither the
+    # trim's sell row nor a rule event ever appears alongside the close-out's own sell row.
+    view = _view([0.0] * 7 + [20.0], instrument_id="EQ-A")
+    last = view.n_days - 1
+    pos = _position(
+        "ti_001",
+        "EQ-A",
+        entry_t=0,
+        entry_level=0.0,
+        target_level=10.0,
+        stop_level=-100.0,
+        size_pct_book=5.0,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["EQ-A"], catalogue, config)
+
+    new_state, out = step(state, last, view, ctx, idea_rules)
+
+    assert new_state.n_positions == 0
+    assert out.rule_events == ()
+    assert len(out.ledger_rows) == 1
+    assert out.ledger_rows[0].side == Side.SELL
+    assert len(out.closed) == 1
+    assert "the year end" in out.closed[0][2]
+    row = out.position_days[0]
+    assert row.action == PositionAction.EXIT
+    assert row.trigger_pending is False
+    assert row.triggers_fired == 0
