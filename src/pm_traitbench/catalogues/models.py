@@ -8,8 +8,16 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pm_traitbench.enums import Action, AssetClass, Op
+from pm_traitbench.enums import Action, AssetClass, Expression, Op
 from pm_traitbench.errors import CatalogueError
+
+# The (asset class, expression) pairs an adapter can build an idea in; used to
+# check every cell has thesis templates without the loader importing the engine.
+ADAPTER_FORMS: dict[AssetClass, tuple[Expression, ...]] = {
+    AssetClass.EQUITIES: (Expression.OUTRIGHT, Expression.PAIR),
+    AssetClass.RATES_CREDIT: (Expression.OUTRIGHT, Expression.CURVE),
+    AssetClass.COMMODITIES: (Expression.OUTRIGHT, Expression.CALENDAR_SPREAD),
+}
 
 
 class PreferenceGroup(StrEnum):
@@ -157,6 +165,31 @@ class Phrasings(BaseModel):
     contradict: tuple[str, ...]
 
 
+class SignpostTemplates(BaseModel):
+    """A signpost's templates for one asset class, by kind."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event: tuple[str, ...] = Field(min_length=2)
+    level: tuple[str, ...] = Field(min_length=2)
+    relative: tuple[str, ...] = Field(min_length=2)
+
+
+class ThesisTemplates(BaseModel):
+    """Thesis templates per (asset class, expression) and outcome templates by result."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    theses: dict[AssetClass, dict[Expression, tuple[str, ...]]]
+    outcomes: dict[str, tuple[str, ...]]
+
+    @model_validator(mode="after")
+    def _check_outcome_keys(self) -> "ThesisTemplates":
+        if set(self.outcomes) != {"win", "loss", "open"}:
+            raise ValueError("outcomes keys must be exactly 'win', 'loss' and 'open'")
+        return self
+
+
 class Catalogue(BaseModel):
     """The full reference catalogue that samplers draw from."""
 
@@ -166,6 +199,8 @@ class Catalogue(BaseModel):
     rules: RuleCatalogue
     sub_styles: dict[AssetClass, tuple[SubStyle, ...]]
     self_descriptions: dict[str, Phrasings]
+    signposts: dict[AssetClass, SignpostTemplates]
+    theses: ThesisTemplates
 
     def preferences_for(self, asset_class: AssetClass) -> tuple[PreferenceEntry, ...]:
         """Return preference entries applicable to an asset class, in catalogue order."""

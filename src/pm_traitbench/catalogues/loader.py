@@ -11,18 +11,44 @@ import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from pm_traitbench.catalogues.models import (
+    ADAPTER_FORMS,
     Catalogue,
     Phrasings,
     PreferenceEntry,
     PreferenceGroup,
     RuleCatalogue,
+    SignpostTemplates,
     SubStyle,
+    ThesisTemplates,
 )
 from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.enums import AssetClass
 from pm_traitbench.errors import CatalogueError
 
-_FILE_NAMES = ("preferences.yaml", "rules.yaml", "mandates.yaml", "self_descriptions.yaml")
+_FILE_NAMES = (
+    "preferences.yaml",
+    "rules.yaml",
+    "mandates.yaml",
+    "self_descriptions.yaml",
+    "signposts.yaml",
+    "theses.yaml",
+)
+
+# The direct asset classes an engine adapter builds ideas for; multi_asset
+# combines these rather than getting its own signpost or thesis templates.
+_DIRECT_ASSET_CLASSES: tuple[AssetClass, ...] = (
+    AssetClass.EQUITIES,
+    AssetClass.RATES_CREDIT,
+    AssetClass.COMMODITIES,
+)
+_SIGNPOST_SLOTS: dict[str, frozenset[str]] = {
+    "event": frozenset({"event"}),
+    "level": frozenset({"level", "unit", "window"}),
+    "relative": frozenset({"level", "unit", "peer"}),
+}
+_THESIS_SLOTS = frozenset({"name", "entry", "target", "move", "unit", "horizon"})
+_OUTCOME_SLOTS = frozenset({"pnl", "unit", "closer"})
+_UNIT_DISPLAY = {"pct": "%", "bp": "bp"}
 
 
 class _PreferencesFile(BaseModel):
@@ -41,6 +67,12 @@ class _SelfDescriptionsFile(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     self_descriptions: dict[str, Phrasings]
+
+
+class _SignpostsFile(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    signposts: dict[AssetClass, SignpostTemplates]
 
 
 def _read_yaml(base: Any, name: str) -> dict[str, Any]:
@@ -66,6 +98,8 @@ def _build_catalogue(base: Any) -> Catalogue:
         self_descriptions = _SelfDescriptionsFile.model_validate(
             raw["self_descriptions.yaml"]
         ).self_descriptions
+        signposts = _SignpostsFile.model_validate(raw["signposts.yaml"]).signposts
+        theses = ThesisTemplates.model_validate(raw["theses.yaml"])
     except ValidationError as e:
         raise CatalogueError(f"invalid catalogue content: {e}") from e
     return Catalogue(
@@ -73,6 +107,8 @@ def _build_catalogue(base: Any) -> Catalogue:
         rules=rules,
         sub_styles=sub_styles,
         self_descriptions=self_descriptions,
+        signposts=signposts,
+        theses=theses,
     )
 
 
@@ -96,6 +132,49 @@ def render_template(template: str, level: float | str, unit: str | None) -> str:
     """
     rendered_level = level.replace("_", " ") if isinstance(level, str) else format(level, "g")
     return template.format(level=rendered_level, unit=unit if unit is not None else "")
+
+
+def render_signpost(
+    template: str,
+    *,
+    level: float | None = None,
+    unit: str | None = None,
+    window: int | None = None,
+    event: str | None = None,
+    peer: str | None = None,
+) -> str:
+    """Render a signpost template, filling whichever of its slots are given."""
+    slots: dict[str, str] = {}
+    if level is not None:
+        slots["level"] = format(level, "g")
+    if unit is not None:
+        slots["unit"] = _UNIT_DISPLAY.get(unit, unit)
+    if window is not None:
+        slots["window"] = str(window)
+    if event is not None:
+        slots["event"] = event.replace("_", " ")
+    if peer is not None:
+        slots["peer"] = peer
+    return template.format(**slots)
+
+
+def render_thesis(template: str, **slots: Any) -> str:
+    """Render a thesis or outcome template, filling whichever of its slots are given.
+
+    ``move`` and ``pnl`` render signed to one decimal when given as floats;
+    every other slot renders with ``str``.
+    """
+    rendered: dict[str, str] = {}
+    for key, value in slots.items():
+        if value is None:
+            continue
+        if key == "unit":
+            rendered[key] = _UNIT_DISPLAY.get(value, value)
+        elif key in ("move", "pnl") and isinstance(value, float):
+            rendered[key] = format(value, "+.1f")
+        else:
+            rendered[key] = str(value)
+    return template.format(**rendered)
 
 
 def _check_preference_group_coverage(
@@ -256,6 +335,54 @@ def _check_self_descriptions(catalogue: Catalogue) -> None:
             )
 
 
+def _template_fields(template: str, context: str) -> set[str]:
+    try:
+        return {
+            field_name
+            for _, field_name, _, _ in string.Formatter().parse(template)
+            if field_name is not None
+        }
+    except ValueError as e:
+        raise CatalogueError(f"{context}: template '{template}' is malformed: {e}") from e
+
+
+def _check_no_unknown_slots(
+    templates: Sequence[str], allowed: frozenset[str], context: str
+) -> None:
+    for template in templates:
+        if not template.strip():
+            raise CatalogueError(f"{context}: has a blank template")
+        unknown = _template_fields(template, context) - allowed
+        if unknown:
+            raise CatalogueError(
+                f"{context}: template '{template}' uses unknown slot(s) {sorted(unknown)}"
+            )
+
+
+def _check_engine_templates(catalogue: Catalogue) -> None:
+    for asset_class in _DIRECT_ASSET_CLASSES:
+        if asset_class not in catalogue.signposts:
+            raise CatalogueError(f"signposts: asset class '{asset_class}' has no templates")
+        signpost = catalogue.signposts[asset_class]
+        for kind, allowed in _SIGNPOST_SLOTS.items():
+            context = f"signposts: asset class '{asset_class}' kind '{kind}'"
+            _check_no_unknown_slots(getattr(signpost, kind), allowed, context)
+        for expression in ADAPTER_FORMS[asset_class]:
+            templates = catalogue.theses.theses.get(asset_class, {}).get(expression, ())
+            if not templates:
+                raise CatalogueError(
+                    f"theses: asset class '{asset_class}' expression '{expression}' "
+                    "has no templates"
+                )
+            _check_no_unknown_slots(
+                templates,
+                _THESIS_SLOTS,
+                f"theses: asset class '{asset_class}' expression '{expression}'",
+            )
+    for kind, templates in catalogue.theses.outcomes.items():
+        _check_no_unknown_slots(templates, _OUTCOME_SLOTS, f"outcomes: kind '{kind}'")
+
+
 def check_catalogue(
     catalogue: Catalogue, asset_classes: Sequence[AssetClass], n_preferences_max: int
 ) -> None:
@@ -269,3 +396,4 @@ def check_catalogue(
     _check_rule_levels(catalogue)
     _check_sub_styles(catalogue, asset_classes)
     _check_self_descriptions(catalogue)
+    _check_engine_templates(catalogue)

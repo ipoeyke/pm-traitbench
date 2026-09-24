@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from pm_traitbench.catalogues.loader import check_catalogue, load_catalogue, render_template
-from pm_traitbench.catalogues.models import Catalogue, RuleVariant
+from pm_traitbench.catalogues.models import ADAPTER_FORMS, Catalogue, RuleVariant
 from pm_traitbench.enums import AssetClass
 
 _REPEATED_WORD = re.compile(r"\b(\w+)\s+\1\b", re.IGNORECASE)
@@ -109,7 +109,14 @@ def _assert_every_rule_template_renders_cleanly(catalogue: Catalogue) -> None:
 
 def test_packaged_yaml_files_exist() -> None:
     base = resources.files("pm_traitbench.catalogues")
-    for name in ("preferences.yaml", "rules.yaml", "mandates.yaml", "self_descriptions.yaml"):
+    for name in (
+        "preferences.yaml",
+        "rules.yaml",
+        "mandates.yaml",
+        "self_descriptions.yaml",
+        "signposts.yaml",
+        "theses.yaml",
+    ):
         assert base.joinpath(name).is_file()
 
 
@@ -165,7 +172,14 @@ def test_self_description_phrasings_are_lowercase_no_period_3_to_8_words() -> No
 
 @pytest.mark.parametrize(
     "name",
-    ["preferences.yaml", "rules.yaml", "mandates.yaml", "self_descriptions.yaml"],
+    [
+        "preferences.yaml",
+        "rules.yaml",
+        "mandates.yaml",
+        "self_descriptions.yaml",
+        "signposts.yaml",
+        "theses.yaml",
+    ],
 )
 def test_no_em_dash_or_banned_words_in_any_shipped_file(name: str) -> None:
     data = _load_shipped_yaml(name)
@@ -188,3 +202,20 @@ def test_self_descriptions_never_name_a_bias() -> None:
 def test_every_rule_template_renders_cleanly() -> None:
     catalogue = load_catalogue()
     _assert_every_rule_template_renders_cleanly(catalogue)
+
+
+def test_every_direct_asset_class_has_all_three_signpost_kinds() -> None:
+    catalogue = load_catalogue()
+    for asset_class in (AssetClass.EQUITIES, AssetClass.RATES_CREDIT, AssetClass.COMMODITIES):
+        signpost = catalogue.signposts[asset_class]
+        assert len(signpost.event) >= 2
+        assert len(signpost.level) >= 2
+        assert len(signpost.relative) >= 2
+
+
+def test_every_adapter_forms_cell_has_a_thesis_template() -> None:
+    catalogue = load_catalogue()
+    for asset_class, expressions in ADAPTER_FORMS.items():
+        for expression in expressions:
+            templates = catalogue.theses.theses[asset_class][expression]
+            assert len(templates) >= 2

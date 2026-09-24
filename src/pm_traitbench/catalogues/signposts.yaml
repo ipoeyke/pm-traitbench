@@ -1,0 +1,40 @@
+signposts:
+  equities:
+    event:
+      - "watching how the stock trades through {event}"
+      - "{event} is the next signpost, that's when i mark it"
+      - "next test comes at {event}, not before"
+    level:
+      - "if it holds under {level} for {window} sessions the setup is broken"
+      - "a close through {level} for {window} sessions kills the thesis"
+      - "give it {window} sessions under {level} before i call it wrong"
+    relative:
+      - "if it starts lagging {peer} by more than {level}{unit} i'm out"
+      - "underperformance versus {peer} past {level}{unit} breaks the case"
+      - "relative to {peer}, {level}{unit} of slippage is my line"
+  rates_credit:
+    event:
+      - "{event} is the next test for this position"
+      - "watching how it reacts into {event}"
+      - "next signpost is {event}, not before"
+    level:
+      - "a move through {level}{unit} for {window} sessions breaks the thesis"
+      - "if it holds past {level}{unit} for {window} sessions the trade is wrong"
+      - "give it {window} sessions past {level}{unit} before i cut it"
+    relative:
+      - "if this cheapens versus {peer} by more than {level}{unit} i'm out"
+      - "underperformance against {peer} past {level}{unit} breaks the case"
+      - "relative to {peer}, {level}{unit} of slippage ends the trade"
+  commodities:
+    event:
+      - "{event} is the next signpost for this position"
+      - "watching how it reacts into {event}"
+      - "next test comes at {event}, not before"
+    level:
+      - "a close through {level} for {window} sessions kills the setup"
+      - "if it holds above {level} for {window} sessions the thesis is wrong"
+      - "give it {window} sessions through {level} before i call it broken"
+    relative:
+      - "if it lags {peer} by more than {level}{unit} i'm out"
+      - "underperformance versus {peer} past {level}{unit} breaks the case"
+      - "relative to {peer}, {level}{unit} of slippage is my line"

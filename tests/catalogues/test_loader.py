@@ -7,7 +7,12 @@ from typing import Any
 import pytest
 import yaml
 
-from pm_traitbench.catalogues.loader import check_catalogue, load_catalogue, render_template
+from pm_traitbench.catalogues.loader import (
+    check_catalogue,
+    load_catalogue,
+    render_signpost,
+    render_template,
+)
 from pm_traitbench.catalogues.models import (
     Catalogue,
     PreferenceGroup,
@@ -17,7 +22,14 @@ from pm_traitbench.catalogues.models import (
 from pm_traitbench.enums import Action, AssetClass, Op
 from pm_traitbench.errors import CatalogueError
 
-_CATALOGUE_FILES = ("preferences.yaml", "rules.yaml", "mandates.yaml", "self_descriptions.yaml")
+_CATALOGUE_FILES = (
+    "preferences.yaml",
+    "rules.yaml",
+    "mandates.yaml",
+    "self_descriptions.yaml",
+    "signposts.yaml",
+    "theses.yaml",
+)
 _ASSET_CLASSES = list(AssetClass)
 _N_PREFERENCES_MAX = 8
 
@@ -484,3 +496,51 @@ def test_check_self_descriptions_too_few_agree_raises(tmp_path: Path) -> None:
     catalogue = load_catalogue(tmp_path)
     with pytest.raises(CatalogueError, match="exit_deficiency"):
         _check(catalogue)
+
+
+# --- signposts and theses ---
+
+
+def test_signpost_cell_with_one_template_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "signposts.yaml"
+    data = _load_yaml(path)
+    data["signposts"]["equities"]["level"] = data["signposts"]["equities"]["level"][:1]
+    _dump_yaml(path, data)
+    with pytest.raises(CatalogueError):
+        load_catalogue(tmp_path)
+
+
+def test_thesis_template_with_unknown_slot_raises_naming_the_cell(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "theses.yaml"
+    data = _load_yaml(path)
+    data["theses"]["equities"]["outright"][0] += " {foo}"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="equities.*outright.*foo"):
+        _check(catalogue)
+
+
+def test_outcomes_key_draw_is_rejected(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "theses.yaml"
+    data = _load_yaml(path)
+    data["outcomes"]["draw"] = data["outcomes"].pop("open")
+    _dump_yaml(path, data)
+    with pytest.raises(CatalogueError):
+        load_catalogue(tmp_path)
+
+
+def test_render_signpost_fills_every_slot_and_replaces_event_underscores() -> None:
+    rendered = render_signpost(
+        "if {event} passes and it holds under {level} for {window} sessions, "
+        "versus {peer}, i'm out",
+        level=100.0,
+        unit="pct",
+        window=5,
+        event="rating_downgrade",
+        peer="the sector",
+    )
+    assert "rating downgrade" in rendered
+    assert "{" not in rendered and "}" not in rendered
