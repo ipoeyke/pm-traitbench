@@ -5,6 +5,7 @@ import pytest
 from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.catalogues.models import PreferenceGroup
 from pm_traitbench.engine.adapters import FORM_FOR_PREFERENCE, adapter_for, preferred_form
+from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
 from pm_traitbench.engine.adapters.rates_credit import RatesCreditAdapter
 from pm_traitbench.enums import AssetClass, Expression, Kind
@@ -31,9 +32,11 @@ def test_adapter_for_multi_asset_raises() -> None:
         adapter_for(AssetClass.MULTI_ASSET, "global_macro", 20)
 
 
-def test_adapter_for_unregistered_class_raises() -> None:
-    with pytest.raises(EngineError):
-        adapter_for(AssetClass.COMMODITIES, "trend", 20)
+def test_adapter_for_commodities_builds_the_registered_adapter() -> None:
+    adapter = adapter_for(AssetClass.COMMODITIES, "commodity_futures_directional", 20)
+    assert isinstance(adapter, CommoditiesAdapter)
+    assert adapter.sub_style == "commodity_futures_directional"
+    assert adapter.horizon_days == 20
 
 
 def test_adapter_for_equities_accepts_any_sub_style() -> None:

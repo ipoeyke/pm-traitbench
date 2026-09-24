@@ -6,6 +6,8 @@ import numpy as np
 YIELD_STEP_PCT = 0.25
 # Credit spread grid spacing the credit process rounds toward, in basis points.
 SPREAD_STEP_BP = 10.0
+# Curve slope grid spacing a curve position rounds toward, in basis points.
+CURVE_STEP_BP = 25.0
 
 
 def log_grid_step(price: np.ndarray | float) -> np.ndarray | float:

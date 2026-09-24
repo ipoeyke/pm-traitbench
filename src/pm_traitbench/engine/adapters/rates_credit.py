@@ -6,28 +6,20 @@ from typing import ClassVar
 
 import numpy as np
 
-from pm_traitbench.engine.adapters.base import common_fields, relative_move, target_reached
-from pm_traitbench.engine.constants import (
-    CURVE_PAIRS,
-    DV01_PER_MILLION,
-    OUTRIGHT_TENOR,
-    TRAILING_HIGH_DAYS,
+from pm_traitbench.engine.adapters.base import (
+    common_fields,
+    excluded_values,
+    relative_move,
+    standard_anchors,
+    target_reached,
 )
+from pm_traitbench.engine.constants import CURVE_PAIRS, DV01_PER_MILLION, OUTRIGHT_TENOR
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import PmState, Position
-from pm_traitbench.enums import (
-    Action,
-    AssetClass,
-    Expression,
-    InstrumentKind,
-    Op,
-    Regime,
-    RuleScope,
-    Tenor,
-)
+from pm_traitbench.enums import AssetClass, Expression, InstrumentKind, Tenor
 from pm_traitbench.errors import EngineError
-from pm_traitbench.market.levels import SPREAD_STEP_BP, YIELD_STEP_PCT, nearest_level
+from pm_traitbench.market.levels import CURVE_STEP_BP, SPREAD_STEP_BP, YIELD_STEP_PCT, nearest_level
 from pm_traitbench.tables.schema import Instrument, Rule
 
 _SOVEREIGN_RATES = "sovereign_rates"
@@ -85,15 +77,7 @@ class RatesCreditAdapter:
                 if instrument.kind == InstrumentKind.SOVEREIGN_CURVE
             )
             return tuple(sorted(candidates))
-        excluded_bands = {
-            rule.level
-            for rule in rules
-            if rule.scope == RuleScope.PM
-            and rule.param == "exclusion"
-            and rule.action == Action.EXCLUDE
-            and rule.op == Op.NE
-            and rule.field == "rating_band"
-        }
+        excluded_bands = excluded_values(rules, "rating_band")
         candidates = (
             instrument_id
             for instrument_id, instrument in instruments.items()
@@ -208,22 +192,14 @@ class RatesCreditAdapter:
 
     def round_step(self, series: Series, level: float) -> float:
         if len(series.legs) == 2:
-            return float(nearest_level(level, 25.0))
+            return float(nearest_level(level, CURVE_STEP_BP))
         leg = series.legs[0]
         if leg.tenor is not None:
             return float(nearest_level(level / 100.0, YIELD_STEP_PCT) * 100.0)
         return float(nearest_level(level, SPREAD_STEP_BP))
 
     def anchors(self, pos: Position, view: MarketView, t: int) -> tuple[float, ...]:
-        values = [pos.entry_level]
-        if view.regime(t) == Regime.RANGE:
-            level_now = view.level(pos.series, t)
-            values.append(self.round_step(pos.series, level_now))
-        if pos.adverse_dir < 0:
-            values.append(view.trailing_high(pos.series, t, TRAILING_HIGH_DAYS))
-        else:
-            values.append(view.trailing_low(pos.series, t, TRAILING_HIGH_DAYS))
-        return tuple(values)
+        return standard_anchors(self, pos, view, t)
 
     def peer_ids(
         self, instrument_id: str, instruments: Mapping[str, Instrument]

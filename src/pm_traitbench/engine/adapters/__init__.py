@@ -7,6 +7,7 @@ it selects, so a PM's preference traits can steer how an idea is expressed.
 from collections.abc import Callable, Sequence
 
 from pm_traitbench.engine.adapters.base import Adapter
+from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
 from pm_traitbench.engine.adapters.rates_credit import RatesCreditAdapter
 from pm_traitbench.enums import AssetClass, Expression, Kind
@@ -16,6 +17,7 @@ from pm_traitbench.tables.schema import Trait
 ADAPTERS: dict[AssetClass, Callable[[str, int], Adapter]] = {
     AssetClass.EQUITIES: EquitiesAdapter,
     AssetClass.RATES_CREDIT: RatesCreditAdapter,
+    AssetClass.COMMODITIES: CommoditiesAdapter,
 }
 
 

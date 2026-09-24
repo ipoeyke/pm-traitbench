@@ -10,10 +10,20 @@ from typing import ClassVar, Protocol
 
 import numpy as np
 
+from pm_traitbench.engine.constants import TRAILING_HIGH_DAYS
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import PmState, Position
-from pm_traitbench.enums import AssetClass, Expression, InstrumentKind, Side
+from pm_traitbench.enums import (
+    Action,
+    AssetClass,
+    Expression,
+    InstrumentKind,
+    Op,
+    Regime,
+    RuleScope,
+    Side,
+)
 from pm_traitbench.tables.schema import Instrument, Rule
 
 
@@ -119,3 +129,31 @@ def relative_move(view: MarketView, adapter: Adapter, pos: Position, t: int, h: 
     peer_move = view.peer_move(peers, adapter.outright_series, t, h)
     own_move = view.trailing_move(pos.series, t, h)
     return pos.series.bullish_sign * pos.side_sign * (own_move - peer_move)
+
+
+def excluded_values(rules: Sequence[Rule], field: str) -> frozenset[str]:
+    """Values a PM's exclusion rules bar for `field`, read by an adapter's universe filter."""
+    return frozenset(
+        rule.level
+        for rule in rules
+        if rule.scope == RuleScope.PM
+        and rule.param == "exclusion"
+        and rule.action == Action.EXCLUDE
+        and rule.op == Op.NE
+        and rule.field == field
+    )
+
+
+def standard_anchors(
+    adapter: Adapter, pos: Position, view: MarketView, t: int
+) -> tuple[float, ...]:
+    """Entry level; the round level in range regime; the trailing extreme against the position."""
+    values = [pos.entry_level]
+    if view.regime(t) == Regime.RANGE:
+        level_now = view.level(pos.series, t)
+        values.append(adapter.round_step(pos.series, level_now))
+    if pos.adverse_dir < 0:
+        values.append(view.trailing_high(pos.series, t, TRAILING_HIGH_DAYS))
+    else:
+        values.append(view.trailing_low(pos.series, t, TRAILING_HIGH_DAYS))
+    return tuple(values)

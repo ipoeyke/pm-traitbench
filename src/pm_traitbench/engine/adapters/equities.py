@@ -7,20 +7,17 @@ from typing import ClassVar
 
 import numpy as np
 
-from pm_traitbench.engine.adapters.base import common_fields, relative_move, target_reached
-from pm_traitbench.engine.constants import TRAILING_HIGH_DAYS
+from pm_traitbench.engine.adapters.base import (
+    common_fields,
+    excluded_values,
+    relative_move,
+    standard_anchors,
+    target_reached,
+)
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import PmState, Position
-from pm_traitbench.enums import (
-    Action,
-    AssetClass,
-    Expression,
-    InstrumentKind,
-    Op,
-    Regime,
-    RuleScope,
-)
+from pm_traitbench.enums import AssetClass, Expression, InstrumentKind
 from pm_traitbench.errors import EngineError
 from pm_traitbench.market.levels import log_grid_step, nearest_level
 from pm_traitbench.tables.schema import Instrument, Rule
@@ -54,15 +51,7 @@ class EquitiesAdapter:
     def universe(
         self, instruments: Mapping[str, Instrument], rules: Sequence[Rule]
     ) -> tuple[str, ...]:
-        excluded_sectors = {
-            rule.level
-            for rule in rules
-            if rule.scope == RuleScope.PM
-            and rule.param == "exclusion"
-            and rule.action == Action.EXCLUDE
-            and rule.op == Op.NE
-            and rule.field == "sector"
-        }
+        excluded_sectors = excluded_values(rules, "sector")
         candidates = (
             instrument_id
             for instrument_id, instrument in instruments.items()
@@ -165,15 +154,7 @@ class EquitiesAdapter:
         return 100.0 * math.log(nearest_level(price, step))
 
     def anchors(self, pos: Position, view: MarketView, t: int) -> tuple[float, ...]:
-        values = [pos.entry_level]
-        if view.regime(t) == Regime.RANGE:
-            level_now = view.level(pos.series, t)
-            values.append(self.round_step(pos.series, level_now))
-        if pos.adverse_dir < 0:
-            values.append(view.trailing_high(pos.series, t, TRAILING_HIGH_DAYS))
-        else:
-            values.append(view.trailing_low(pos.series, t, TRAILING_HIGH_DAYS))
-        return tuple(values)
+        return standard_anchors(self, pos, view, t)
 
     def peer_ids(
         self, instrument_id: str, instruments: Mapping[str, Instrument]
