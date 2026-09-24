@@ -330,8 +330,11 @@ are then pooled into a neutral baseline and an active mean per asset class,
 over every synthetic seed together (the `synthetic_pool` seed group, which
 blocks the pipeline) and again per seed on its own; a drifted PM's
 `all`-split estimate is dropped from every pooled comparison, since it mixes
-two different trait values. On the default population, a pooled synthetic
-cell's neutral baseline draws on 12 PMs per asset class.
+two different trait values. On the default population, each synthetic seed's
+own cell holds 12 PMs per asset class, of which only 1-11 are neutral for any
+given parameter; pooling the three synthetic seeds together is what gives the
+`synthetic_pool` cell enough neutral PMs for a usable baseline, about 36 PMs
+per asset class in all.
 
 A cell passes when the active mean sits on the stronger side of the neutral
 mean (per the parameter's own direction) with the neutral standard deviation
@@ -368,28 +371,22 @@ fails on equities, and the other five parameters fail on all three:
 - `overconfidence_coverage` passes: overconfidence rescales the stated
   interval by the same z-score ratio the inside-share estimator reads, again
   a direct readout of the trait.
-- `herding_weight` passes outside equities: rates and commodities trade a
-  handful of curves and commodities whose consensus view repeats across
-  ideas, a concentrated signal that equities' much larger, sector-spread
-  universe dilutes.
-- `loss_aversion_lambda` fails: the cut/hold/add softmax nets against the
-  PM's own stop-loss and no-add rules firing on the same loss-side days, so
-  lambda's pull on the add-share is shallow against the rule engine's own
-  risk controls.
-- `disposition_ratio` fails: sell timing is dominated by the same stop, trim
-  and target rules regardless of the disposition hazard, so the realised
-  ratio moves too little between a neutral and an active trait.
-- `anchoring_rho` fails: those same rules already claim most exits, leaving
-  too few purely discretionary exits to separate a neutral PM's anchor-band
-  rate from an active one's.
-- `extrapolation_theta` fails: the own signal is itself a genuine,
-  skill-scaled peek at the forward move, so a neutral PM already chases
-  trailing moves at a rate that leaves little room for theta to widen the
-  gap.
-- `conviction_size_miscalibration` fails: both entry size and stated
-  conviction blend toward the same uniform draw, so even a fully
-  miscalibrated PM keeps enough real correlation between them to sit under
-  the floor.
+- `herding_weight` on equities: the neutral spread is about half the gap,
+  just past the 0.5 limit - a marginal fail, with no mechanism claimed.
+- `loss_aversion_lambda` fails: the add value subtracts lambda times the
+  added loss, so a higher lambda makes adding less attractive, the add rate
+  stays flat, and cut is rarely chosen at softmax temperature 1.
+- `disposition_ratio` fails: the planted multiplier sqrt(D), about 1.1 at
+  the professional centre, acts on a 0.03 base sell hazard and is swamped by
+  rule-triggered sales.
+- `anchoring_rho` fails: exits at the anchored level are rare beside
+  hazard-driven discretionary exits.
+- `extrapolation_theta` fails: the forecast never reaches entry direction or
+  target (the side follows the own signal, and the target follows the stop
+  and the reward-to-risk draw), so theta leaves no public trace.
+- `conviction_size_miscalibration` fails the gap test: the neutral spread
+  across PMs is wider than half the active-neutral gap, although its rank
+  correlation clears 0.5.
 
 Limitations from the model:
 
@@ -397,8 +394,9 @@ Limitations from the model:
   shows up on one market seed is averaged away in the `synthetic_pool` cell
   that blocks the pipeline.
 - Herding is measured as agreement with the street's non-neutral view, not
-  as a PM crossing its own conflicting signal, since the conflict itself is
-  a hidden column.
+  as a PM crossing its own conflicting signal: a PM who follows the street
+  in a conflict ends on the street's side, so the conflict itself cannot be
+  seen in public data.
 - Disposition's realised share counts any sell-day cut, trim or exit,
   rule-triggered or discretionary alike, not only a PM's own voluntary
   realisation.
