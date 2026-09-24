@@ -12,6 +12,7 @@ from pm_traitbench.enums import AssetClass
 from pm_traitbench.tables.specs import (
     DRIFT_EVENTS,
     ENGINE_TABLES,
+    GATE1_TABLES,
     IDEAS,
     MARKET_TABLES,
     PERSONAS,
@@ -136,6 +137,32 @@ def test_sample_then_market_then_engine_run_through_the_cli_against_a_fetched_ca
     for spec in ENGINE_TABLES:
         assert (data_dir / f"{spec.name}.jsonl").exists()
     assert (data_dir / "run_metadata" / "engine.json").exists()
+
+
+def test_sample_market_engine_then_gate1_run_through_the_cli_against_a_fetched_cache(
+    fake_cache,
+) -> None:
+    """Gate 1 pools the demo config's small commodities-only population and blocks:
+    too few PMs per cell to clear the per-cell minimum, so `gate1` exits 1.
+    """
+    config = load_config(_DEMO_CONFIG)
+    result = fake_cache(config)
+    data_dir = result.data_dir
+    args = ["--config", str(_DEMO_CONFIG), "--data-dir", str(data_dir)]
+
+    assert main(["sample", *args]) == 0
+    assert main(["market", *args]) == 0
+    assert main(["engine", *args]) == 0
+    assert main(["gate1", *args]) == 1
+
+    for spec in GATE1_TABLES:
+        assert (data_dir / f"{spec.name}.jsonl").exists()
+    assert (data_dir / "run_metadata" / "gate1.json").exists()
+
+
+def test_help_output_lists_the_gate1_subcommand() -> None:
+    help_text = build_parser(pipeline.STAGES).format_help()
+    assert "gate1" in help_text
 
 
 def test_engine_force_twice_leaves_one_set_of_idea_rules(fake_cache) -> None:

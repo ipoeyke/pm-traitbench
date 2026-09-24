@@ -25,7 +25,7 @@ from pm_traitbench.enums import (
 )
 from pm_traitbench.gates.gate1.inputs import PmInputs
 from pm_traitbench.tables.schema import Idea, LedgerRow, Leg, PositionDay, RuleEvent, Trait
-from tests.engine.conftest import fixture_market, fixture_view  # noqa: F401
+from tests.engine.conftest import fixture_market, fixture_view, neutral_pm  # noqa: F401
 
 PM_ID = "pm_001"
 DEFAULT_DATE = date(2026, 1, 5)
