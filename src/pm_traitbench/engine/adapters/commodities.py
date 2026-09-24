@@ -2,7 +2,7 @@
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import ClassVar
 
 import numpy as np
@@ -22,7 +22,7 @@ from pm_traitbench.enums import FUTURES_TENORS, AssetClass, Expression, Instrume
 from pm_traitbench.errors import EngineError
 from pm_traitbench.market.constants import CONTRACT_MULTIPLIER
 from pm_traitbench.market.levels import log_grid_step, nearest_level
-from pm_traitbench.tables.schema import Instrument, Rule
+from pm_traitbench.tables.schema import Instrument, Leg, Rule
 
 _FUTURES_DIRECTIONAL = "commodity_futures_directional"
 _CURVE_AND_SPREAD = "curve_and_spread"
@@ -34,12 +34,17 @@ _M1 = Tenor.M1
 _NO_EXPIRY_DAYS = 10_000
 
 
+def _shift_tenor(tenor: Tenor, months: int) -> Tenor:
+    """`tenor` shifted `months` steps along `FUTURES_TENORS` (negative shifts back)."""
+    idx = FUTURES_TENORS.index(tenor) + months
+    if not 0 <= idx < len(FUTURES_TENORS):
+        raise EngineError(f"tenor {tenor.value} has no month {months:+d} from it to roll into")
+    return FUTURES_TENORS[idx]
+
+
 def _next_tenor(tenor: Tenor) -> Tenor:
     """The next futures month out from `tenor`."""
-    idx = FUTURES_TENORS.index(tenor)
-    if idx + 1 >= len(FUTURES_TENORS):
-        raise EngineError(f"tenor {tenor.value} has no month past M12 to roll into")
-    return FUTURES_TENORS[idx + 1]
+    return _shift_tenor(tenor, 1)
 
 
 @dataclass(frozen=True)
@@ -219,3 +224,20 @@ class CommoditiesAdapter:
             level_rolled = view.raw_level(leg.instrument_id, next_tenor, t)
             total += leg.coeff * (level_rolled - level_current)
         return total
+
+    def retag_legs(self, pos: Position, months: int) -> Position:
+        """Shift every leg `months` tenor steps (+1 rolling out, -1 undoing that at expiry)."""
+        new_series_legs = tuple(
+            LegRef(leg.instrument_id, _shift_tenor(leg.tenor, months), leg.coeff)
+            for leg in pos.series.legs
+        )
+        new_legs = tuple(
+            Leg(
+                instrument_id=leg.instrument_id,
+                tenor=_shift_tenor(leg.tenor, months),
+                side=leg.side,
+                weight=leg.weight,
+            )
+            for leg in pos.legs
+        )
+        return replace(pos, legs=new_legs, series=replace(pos.series, legs=new_series_legs))

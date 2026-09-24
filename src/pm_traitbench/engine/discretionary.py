@@ -47,7 +47,6 @@ def handle_discretionary(
     ctx: "PmContext",
     params: EffectiveParams,
     level_now: float,
-    pnl: float,
     pnl_z: float,
     pnl_state: PnlState,
     progress: float,
@@ -127,9 +126,9 @@ def handle_discretionary(
                 rule_id_add = None
             cap = mandate_cap(ctx.pm_rules)
             result, rows = apply_add(result, cap, ctx, view, t, bias_flag_add, rule_id_add)
-            flags.append(bias_flag_add)
             if rows:
                 ledger_rows.extend(rows)
+                flags.append(bias_flag_add)
                 action = PositionAction.ADD
         else:
             action = PositionAction.HOLD

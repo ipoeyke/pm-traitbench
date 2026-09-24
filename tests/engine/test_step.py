@@ -8,10 +8,12 @@ import numpy as np
 import pytest
 
 from pm_traitbench.config import Config
-from pm_traitbench.engine.adapters.base import pnl_unit as compute_pnl_unit
 from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
 from pm_traitbench.engine.biases import disposition as disposition_module
+from pm_traitbench.engine.biases import loss_aversion as loss_aversion_module
+from pm_traitbench.engine.biases.exit_deficiency import LATE_ROLL_FLAG
+from pm_traitbench.engine.biases.loss_aversion import LossSideChoice
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.params import ParamSchedule
 from pm_traitbench.engine.series import LegRef, Series
@@ -340,6 +342,7 @@ def test_step_is_deterministic_and_does_not_mutate_state(eq_parts) -> None:
     view = _view([0.0] * 10, instrument_id="EQ-A")
     pos = _position("ti_001", "EQ-A", entry_t=0)
     state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    state_before = state
     idea_rules = _idea_rules_for(pos, persona.pm_id)
     ctx = _ctx(persona, traits, pm_rules, adapter, ["EQ-A"], catalogue, config)
 
@@ -349,6 +352,7 @@ def test_step_is_deterministic_and_does_not_mutate_state(eq_parts) -> None:
     assert new_state1 == new_state2
     assert out1 == out2
     assert state.positions == (pos,)
+    assert state == state_before
 
 
 # --- Stop / signpost / trim / hold triggers -----------------------------------
@@ -500,16 +504,16 @@ def test_hold_rule_overridden_by_stop(eq_parts) -> None:
 # --- Commodity roll ------------------------------------------------------------
 
 
-def test_commodity_roll_shifts_entry_level_and_keeps_pnl_accounted_for(cm_parts) -> None:
+def test_commodity_roll_retags_legs_and_resets_at_expiry(cm_parts) -> None:
     persona, traits, pm_rules, adapter, catalogue, config = cm_parts
-    m1 = [100.0] * 12
-    m2 = [102.0] * 12
+    # M1 jumps to M2's level once the old front-month contract expires (t=10): the curve table
+    # relabels the next contract as M1, which is why the reset needs no entry-level shift.
+    m1 = [100.0] * 10 + [102.0] * 4
+    m2 = [102.0] * 14
     view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
     pos = _position(
         "ti_001",
         "CM-CRD",
-        # sessions_held stays under the mandate's min_holding_period(5) at t=5, so only the roll
-        # rule fires today.
         entry_t=1,
         entry_level=90.0,
         target_level=1000.0,
@@ -518,27 +522,109 @@ def test_commodity_roll_shifts_entry_level_and_keeps_pnl_accounted_for(cm_parts)
     )
     state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
     idea_rules = _idea_rules_for(pos, persona.pm_id)
-    traits = _traits_with(traits, {"exit_deficiency": (0.0, False)})
+    traits = _traits_with(
+        traits, {"exit_deficiency": (0.0, False), "disposition_ratio": (1e-8, True)}
+    )
     ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
 
-    level_now = view.level(pos.series, 5)
-    pnl_before = compute_pnl_unit(pos, level_now)
+    roll_days: list[int] = []
+    pnl_by_day: dict[int, float] = {}
+    for t in range(4, 12):
+        state, out = step(state, t, view, ctx, idea_rules)
+        assert state.n_positions == 1
+        pos_now = state.position("ti_001")
+        pnl_by_day[t] = out.position_days[0].pnl_unit
+        if out.ledger_rows:
+            roll_days.append(t)
+            assert len(out.ledger_rows) == 2
+            sides = {row.tenor: row.side for row in out.ledger_rows}
+            assert sides[Tenor.M1] == Side.SELL
+            assert sides[Tenor.M2] == Side.BUY
+        if t < 5:
+            assert pos_now.series.legs[0].tenor == Tenor.M1
+            assert pos_now.legs[0].tenor == Tenor.M1
+            assert pos_now.rolled_until_t is None
+        elif t < 10:
+            assert pos_now.series.legs[0].tenor == Tenor.M2
+            assert pos_now.legs[0].tenor == Tenor.M2
+            assert pos_now.rolled_until_t == 10
+        else:
+            assert pos_now.series.legs[0].tenor == Tenor.M1
+            assert pos_now.legs[0].tenor == Tenor.M1
+            assert pos_now.rolled_until_t is None
 
-    new_state, out = step(state, 5, view, ctx, idea_rules)
+    assert roll_days == [5]
+    final_pos = state.position("ti_001")
+    assert final_pos.entry_level == pytest.approx(90.0 + 2.0)
+    assert final_pos.rolled_offset == pytest.approx(2.0)
+    assert final_pos.roll_breached is False
+    assert pnl_by_day[10] == pytest.approx(pnl_by_day[11])
+
+
+def test_breached_roll_force_rolls_at_expiry_with_late_roll_flag(cm_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    m1 = [100.0] * 12
+    m2 = [102.0] * 12
+    view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=0,
+        entry_level=90.0,
+        target_level=1000.0,
+        stop_level=-1000.0,
+        tenor=Tenor.M1,
+        roll_breached=True,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    traits = _traits_with(
+        traits, {"exit_deficiency": (1.0, False), "disposition_ratio": (1e-8, True)}
+    )
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
+
+    new_state, out = step(state, 10, view, ctx, idea_rules)
 
     assert new_state.n_positions == 1
-    new_pos = new_state.position("ti_001")
-    assert new_pos.entry_level == pytest.approx(pos.entry_level + 2.0)
-    assert new_pos.rolled_offset == pytest.approx(2.0)
-    pnl_after = compute_pnl_unit(new_pos, level_now)
-    assert pnl_after == pytest.approx(pnl_before - 2.0)
-
     assert len(out.ledger_rows) == 2
-    sides = {row.tenor: row.side for row in out.ledger_rows}
-    assert sides[Tenor.M1] == Side.SELL
-    assert sides[Tenor.M2] == Side.BUY
-    assert len(out.rule_events) == 1
-    assert out.rule_events[0].response == RuleResponse.ACTED
+    assert all(row.bias_flag == LATE_ROLL_FLAG for row in out.ledger_rows)
+    new_pos = new_state.position("ti_001")
+    assert new_pos.series.legs[0].tenor == Tenor.M1
+    assert new_pos.rolled_until_t is None
+    # The roll rule's own breach fires an event; the force roll itself adds no event row.
+    roll_rule = next(r for r in pm_rules if r.param == "roll_before_expiry")
+    roll_events = [ev for ev in out.rule_events if ev.rule_id == roll_rule.rule_id]
+    assert len(roll_events) == 1
+    assert roll_events[0].response == RuleResponse.ACKED_NO_ACTION
+
+
+def test_force_roll_without_a_roll_rule_carries_no_flag(cm_parts) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = cm_parts
+    pm_rules_no_roll = tuple(r for r in pm_rules if r.param != "roll_before_expiry")
+    m1 = [100.0] * 12
+    m2 = [102.0] * 12
+    view = _commodity_view(m1, m2, expiry_t=10, instrument_id="CM-CRD")
+    pos = _position(
+        "ti_001",
+        "CM-CRD",
+        entry_t=0,
+        entry_level=90.0,
+        target_level=1000.0,
+        stop_level=-1000.0,
+        tenor=Tenor.M1,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    traits = _traits_with(
+        traits, {"exit_deficiency": (0.0, False), "disposition_ratio": (1e-8, True)}
+    )
+    ctx = _ctx(persona, traits, pm_rules_no_roll, adapter, ["CM-CRD"], catalogue, config)
+
+    new_state, out = step(state, 10, view, ctx, idea_rules)
+
+    assert new_state.n_positions == 1
+    assert len(out.ledger_rows) == 2
+    assert all(row.bias_flag is None for row in out.ledger_rows)
 
 
 # --- Discretionary block -------------------------------------------------------
@@ -618,6 +704,77 @@ def test_min_holding_period_blocks_a_discretionary_cut(eq_parts) -> None:
     assert out.closed == ()
     position_day = out.position_days[0]
     assert position_day.action == PositionAction.NONE
+
+
+def test_discretionary_add_through_a_no_add_breach(
+    eq_parts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = eq_parts
+    view = _view([0.0, -15.0, -15.0, -15.0, -15.0], instrument_id="EQ-A")
+    pos = _position(
+        "ti_001",
+        "EQ-A",
+        entry_t=0,
+        entry_level=0.0,
+        target_level=100.0,
+        stop_level=-100.0,
+        size_pct_book=5.0,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    no_add_rule = next(r for r in pm_rules if r.param == "no_add_before_trigger")
+    traits = _traits_with(traits, {"exit_deficiency": (1.0, False)})
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["EQ-A"], catalogue, config)
+    monkeypatch.setattr(
+        loss_aversion_module,
+        "choose",
+        lambda *a, **kw: LossSideChoice(PositionAction.ADD, "loss_aversion:add"),
+    )
+
+    new_state, out = step(state, 1, view, ctx, idea_rules)
+
+    assert new_state.n_positions == 1
+    assert len(out.ledger_rows) == 1
+    row = out.ledger_rows[0]
+    assert row.rule_id == no_add_rule.rule_id
+    assert row.bias_flag == "loss_aversion:add_before_trigger"
+    new_pos = new_state.position("ti_001")
+    assert new_pos.size_pct_book == pytest.approx(7.5)
+
+
+def test_discretionary_add_without_a_breach(eq_parts, monkeypatch: pytest.MonkeyPatch) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = eq_parts
+    view = _view([0.0, -15.0, -15.0, -15.0, -15.0], instrument_id="EQ-A")
+    pos = _position(
+        "ti_001",
+        "EQ-A",
+        entry_t=0,
+        entry_level=0.0,
+        target_level=100.0,
+        stop_level=-100.0,
+        size_pct_book=5.0,
+        # Already past a trigger, so the no-add rule's guard never applies regardless of e.
+        triggers_fired=1,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    traits = _traits_with(traits, {"exit_deficiency": (0.0, False)})
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["EQ-A"], catalogue, config)
+    monkeypatch.setattr(
+        loss_aversion_module,
+        "choose",
+        lambda *a, **kw: LossSideChoice(PositionAction.ADD, "loss_aversion:add"),
+    )
+
+    new_state, out = step(state, 1, view, ctx, idea_rules)
+
+    assert new_state.n_positions == 1
+    assert len(out.ledger_rows) == 1
+    row = out.ledger_rows[0]
+    assert row.rule_id is None
+    assert row.bias_flag == "loss_aversion:add"
+    new_pos = new_state.position("ti_001")
+    assert new_pos.size_pct_book == pytest.approx(7.5)
 
 
 # --- Position-day rows and close-out -------------------------------------------

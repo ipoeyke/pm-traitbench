@@ -50,6 +50,7 @@ class Position:
     size_changed_t: int
     rolled_offset: float = 0.0
     roll_breached: bool = False
+    rolled_until_t: int | None = None
 
     @property
     def side_sign(self) -> int:

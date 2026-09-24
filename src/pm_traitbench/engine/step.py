@@ -17,6 +17,7 @@ from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config
 from pm_traitbench.engine.adapters.base import Adapter
 from pm_traitbench.engine.adapters.base import pnl_unit as compute_pnl_unit
+from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
 from pm_traitbench.engine.biases import join_flags
 from pm_traitbench.engine.discretionary import handle_discretionary
 from pm_traitbench.engine.ideas import entries_for_day
@@ -24,7 +25,7 @@ from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.params import ParamSchedule
 from pm_traitbench.engine.state import PmState
 from pm_traitbench.engine.templates import render_outcome
-from pm_traitbench.engine.triggers import exit_rows, handle_triggers
+from pm_traitbench.engine.triggers import exit_rows, handle_triggers, reset_roll_tag
 from pm_traitbench.enums import PnlState, PositionAction
 from pm_traitbench.tables.schema import (
     Idea,
@@ -128,47 +129,48 @@ def step(
         anchor_level: float | None = None
         effective_exit_level: float | None = None
         sold_today = trig.sold
+        final_position = trig.position
 
         if trig.closed is not None:
             closed.append(trig.closed)
             opportunities["exits"] += 1
 
-        if trig.position is None:
+        if final_position is not None and trig.fired_non_hold == 0:
+            cur_pnl = compute_pnl_unit(final_position, level_now)
+            cur_pnl_z = cur_pnl / final_position.sd_h_at_entry
+            cur_pnl_state = _pnl_state(cur_pnl_z)
+            cur_progress = cur_pnl / abs(final_position.target_level - final_position.entry_level)
+            disc = handle_discretionary(
+                final_position,
+                view,
+                t,
+                ctx,
+                params,
+                level_now,
+                cur_pnl_z,
+                cur_pnl_state,
+                cur_progress,
+            )
+            ledger_rows.extend(disc.ledger_rows)
+            anchor_level = disc.anchor_level
+            effective_exit_level = disc.effective_exit_level
+            if disc.action != PositionAction.NONE:
+                action = disc.action
+            bias_flag = join_flags([bias_flag, disc.bias_flag])
+            sold_today = sold_today or disc.sold
+            if disc.closed is not None:
+                closed.append(disc.closed)
+                opportunities["exits"] += 1
+            final_position = disc.position
+
+        if final_position is not None and isinstance(ctx.adapter, CommoditiesAdapter):
+            # A no-op unless today is the expiry day this position rolled toward.
+            final_position = reset_roll_tag(final_position, ctx.adapter, t)
+
+        if final_position is None:
             running_state = running_state.remove_position(pos.trade_idea_id)
         else:
-            cur = trig.position
-            running_state = running_state.replace_position(cur)
-            if trig.fired_non_hold == 0:
-                cur_pnl = compute_pnl_unit(cur, level_now)
-                cur_pnl_z = cur_pnl / cur.sd_h_at_entry
-                cur_pnl_state = _pnl_state(cur_pnl_z)
-                cur_progress = cur_pnl / abs(cur.target_level - cur.entry_level)
-                disc = handle_discretionary(
-                    cur,
-                    view,
-                    t,
-                    ctx,
-                    params,
-                    level_now,
-                    cur_pnl,
-                    cur_pnl_z,
-                    cur_pnl_state,
-                    cur_progress,
-                )
-                ledger_rows.extend(disc.ledger_rows)
-                anchor_level = disc.anchor_level
-                effective_exit_level = disc.effective_exit_level
-                if disc.action != PositionAction.NONE:
-                    action = disc.action
-                bias_flag = join_flags([bias_flag, disc.bias_flag])
-                sold_today = sold_today or disc.sold
-                if disc.closed is not None:
-                    closed.append(disc.closed)
-                    opportunities["exits"] += 1
-                if disc.position is None:
-                    running_state = running_state.remove_position(cur.trade_idea_id)
-                else:
-                    running_state = running_state.replace_position(disc.position)
+            running_state = running_state.replace_position(final_position)
 
         if pnl_state == PnlState.LOSS and trig.fired_non_hold == 0:
             opportunities["loss_side_untriggered_days"] += 1

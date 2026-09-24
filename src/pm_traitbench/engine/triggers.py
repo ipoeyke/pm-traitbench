@@ -207,13 +207,31 @@ def roll_rows(
 def apply_roll(
     position: Position, adapter: CommoditiesAdapter, view: MarketView, t: int
 ) -> Position:
-    """Shift `entry_level` and `rolled_offset` by the roll's level gap; legs are unchanged."""
+    """Shift `entry_level`/`rolled_offset` by the roll's level gap, retag legs one month out,
+    and record the expiry day the retag must be undone on.
+
+    Must be called before any ledger rows are built from `position`, since `roll_rows` and
+    `roll_shift` read the current (pre-roll) tenor.
+    """
     shift = adapter.roll_shift(position, view, t)
+    days_to_expiry = view.days_to_expiry(position.instrument_id, t)
+    if days_to_expiry is None:
+        raise EngineError(f"no expiry on record for '{position.instrument_id}' to roll against")
+    retagged = adapter.retag_legs(position, 1)
     return replace(
-        position,
+        retagged,
         entry_level=position.entry_level + shift,
         rolled_offset=position.rolled_offset + shift,
+        rolled_until_t=t + days_to_expiry,
     )
+
+
+def reset_roll_tag(position: Position, adapter: CommoditiesAdapter, t: int) -> Position:
+    """Undo a roll's leg retag on the expiry day it was rolled toward; a no-op any other day."""
+    if position.rolled_until_t != t:
+        return position
+    retagged = adapter.retag_legs(position, -1)
+    return replace(retagged, rolled_until_t=None, roll_breached=False)
 
 
 def render_close(
@@ -268,7 +286,8 @@ def _execute_fired(
     """Draw the exit-deficiency response and execute the winner (and roll's trim/target)."""
     resolution = resolve(fired)
     winner = resolution.winner
-    assert winner is not None  # fired is non-empty by construction
+    if winner is None:
+        raise EngineError("resolve returned no winner for a non-empty fired list")
     date_t = view.dates[t]
 
     consumed_new = {
@@ -331,8 +350,8 @@ def _execute_fired(
     elif winner.action == Action.ROLL:
         rolled_today = True
         result = replace(result, roll_breached=False)
-        result = apply_roll(result, ctx.adapter, view, t)
         ledger_rows.extend(roll_rows(result, ctx.adapter, view, t, ctx, None))
+        result = apply_roll(result, ctx.adapter, view, t)
         action = PositionAction.ROLL
         result, rank3_rows, rank3_closed, rank3_action, rank3_sold = _execute_rank3(
             result, resolution.also_acted, ctx, view, t
@@ -369,10 +388,11 @@ def _apply_force_roll(
 ) -> TriggerOutcome:
     """Force-roll a position still on its old leg at expiry; no rule fired, no event row."""
     position = outcome.position
-    assert position is not None
+    if position is None:
+        raise EngineError("cannot force-roll a position that closed earlier today")
     flag = LATE_ROLL_FLAG if position.roll_breached else None
+    rows = roll_rows(position, ctx.adapter, view, t, ctx, flag)
     new_position = apply_roll(position, ctx.adapter, view, t)
-    rows = roll_rows(new_position, ctx.adapter, view, t, ctx, flag)
     action = outcome.action if outcome.action != PositionAction.NONE else PositionAction.ROLL
     bias_flag = join_flags([outcome.bias_flag, flag])
     return replace(
@@ -398,6 +418,9 @@ def handle_triggers(
     """Evaluate today's rules for `position` and execute the winning response."""
     fields = ctx.adapter.position_fields(position, view, t, state, pnl)
     rules = (*ctx.pm_rules, *idea_rules_for_id)
+    if position.rolled_until_t is not None:
+        # Already mid-roll: the roll rule stays silent until the retag unwinds at expiry.
+        rules = tuple(r for r in rules if r.param != "roll_before_expiry")
     position, fired = evaluate_day(position, rules, fields)
     fired_non_hold = tuple(r for r in fired if r.action != Action.HOLD)
 
@@ -422,6 +445,7 @@ def handle_triggers(
     if (
         outcome.position is not None
         and not rolled_today
+        and outcome.position.rolled_until_t is None
         and isinstance(ctx.adapter, CommoditiesAdapter)
         and view.is_expiry_day(outcome.position.instrument_id, t)
     ):
