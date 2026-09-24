@@ -1,5 +1,7 @@
 """Tests for engine position and PM state: sign helpers, counters and ordering."""
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from pm_traitbench.engine.series import LegRef, Series
@@ -74,6 +76,34 @@ def test_with_counter_overwrites_existing_entry() -> None:
     assert len(updated.run_counters) == 1
 
 
+def test_with_counter_replaces_in_place_keeping_tuple_order() -> None:
+    pos = _make_position().with_counter("r_01", 1).with_counter("r_02", 2)
+    updated = pos.with_counter("r_01", 9)
+
+    assert updated.run_counters == (("r_01", 9), ("r_02", 2))
+
+
+def test_with_counter_equal_regardless_of_update_order() -> None:
+    # Updating r_01 in place must match a position where r_01 was inserted
+    # with its final value from the start - the update must not reorder it.
+    a = _make_position().with_counter("r_01", 1).with_counter("r_02", 2).with_counter("r_01", 9)
+    b = _make_position().with_counter("r_01", 9).with_counter("r_02", 2)
+
+    assert a.run_counters == b.run_counters
+
+
+def test_position_is_frozen() -> None:
+    pos = _make_position()
+    with pytest.raises(FrozenInstanceError):
+        pos.entry_level = 200.0  # type: ignore[misc]
+
+
+def test_pm_state_is_frozen() -> None:
+    state = PmState(pm_id="pm_001", positions=(), next_idea=1, next_rule=1)
+    with pytest.raises(FrozenInstanceError):
+        state.next_idea = 2  # type: ignore[misc]
+
+
 def test_pm_state_add_position_keeps_order_by_id() -> None:
     state = PmState(pm_id="pm_001", positions=(), next_idea=1, next_rule=1)
     state = state.add_position(_make_position(trade_idea_id="ti_003"))
@@ -90,6 +120,15 @@ def test_pm_state_add_position_rejects_duplicate_id() -> None:
 
     with pytest.raises(EngineError):
         state.add_position(_make_position(trade_idea_id="ti_001"))
+
+
+def test_pm_state_add_position_leaves_original_unchanged() -> None:
+    state = PmState(pm_id="pm_001", positions=(), next_idea=1, next_rule=1)
+    updated = state.add_position(_make_position(trade_idea_id="ti_001"))
+
+    assert state.positions == ()
+    assert updated is not state
+    assert [p.trade_idea_id for p in updated.positions] == ["ti_001"]
 
 
 def test_pm_state_remove_position_unknown_id_raises() -> None:
@@ -114,6 +153,28 @@ def test_pm_state_replace_and_remove_position() -> None:
     assert replaced.position("ti_001").side == Side.SELL
 
     removed = replaced.remove_position("ti_001")
+    assert removed.n_positions == 0
+
+
+def test_pm_state_replace_position_leaves_original_unchanged() -> None:
+    state = PmState(pm_id="pm_001", positions=(), next_idea=1, next_rule=1)
+    state = state.add_position(_make_position(trade_idea_id="ti_001", side=Side.BUY))
+
+    replaced = state.replace_position(_make_position(trade_idea_id="ti_001", side=Side.SELL))
+
+    assert state.position("ti_001").side == Side.BUY
+    assert replaced is not state
+    assert replaced.position("ti_001").side == Side.SELL
+
+
+def test_pm_state_remove_position_leaves_original_unchanged() -> None:
+    state = PmState(pm_id="pm_001", positions=(), next_idea=1, next_rule=1)
+    state = state.add_position(_make_position(trade_idea_id="ti_001"))
+
+    removed = state.remove_position("ti_001")
+
+    assert state.n_positions == 1
+    assert removed is not state
     assert removed.n_positions == 0
 
 

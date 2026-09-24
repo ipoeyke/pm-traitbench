@@ -69,9 +69,14 @@ class Position:
         return 0
 
     def with_counter(self, rule_id: str, n: int) -> "Position":
-        """Return a copy with `rule_id`'s run counter set to `n`."""
-        remaining = tuple((rid, value) for rid, value in self.run_counters if rid != rule_id)
-        return replace(self, run_counters=(*remaining, (rule_id, n)))
+        """Return a copy with `rule_id`'s run counter set to `n`, keeping tuple order."""
+        if any(rid == rule_id for rid, _ in self.run_counters):
+            updated = tuple(
+                (rid, n) if rid == rule_id else (rid, value) for rid, value in self.run_counters
+            )
+        else:
+            updated = (*self.run_counters, (rule_id, n))
+        return replace(self, run_counters=updated)
 
 
 @dataclass(frozen=True)

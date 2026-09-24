@@ -38,10 +38,9 @@ def _trait(
     )
 
 
-def _all_bias_traits(config: Config, **overrides: float) -> list[Trait]:
+def _all_bias_traits() -> list[Trait]:
     return [
-        _trait(param, overrides.get(param, 0.3), trait_id=f"t_{i:02d}")
-        for i, param in enumerate(BIAS_PARAMS, start=1)
+        _trait(param, 0.3, trait_id=f"t_{i:02d}") for i, param in enumerate(BIAS_PARAMS, start=1)
     ]
 
 
@@ -107,7 +106,7 @@ def test_dormant_sets_neutral_median_and_revive_restores(engine_config: Config) 
 
 
 def test_multiplier_of_one_is_identity_on_every_param(engine_config: Config) -> None:
-    traits = _all_bias_traits(engine_config)
+    traits = _all_bias_traits()
     schedule = ParamSchedule.build(traits, [], engine_config)
 
     for regime in Regime:
@@ -148,6 +147,71 @@ def test_multiplier_on_loss_aversion_lambda_multiplies_plainly(engine_config: Co
     result = schedule.for_day(_DAY, Regime.RISK_ON)
 
     assert result.value("loss_aversion_lambda") == pytest.approx(2.6)
+
+
+def test_multiplier_on_disposition_ratio_multiplies_plainly(engine_config: Config) -> None:
+    trait = _trait("disposition_ratio", 1.2, trait_id="t_01", active=True, mult_risk_on=1.3)
+    schedule = ParamSchedule.build([trait], [], engine_config)
+    result = schedule.for_day(_DAY, Regime.RISK_ON)
+
+    assert result.value("disposition_ratio") == pytest.approx(1.56)
+
+
+def test_build_rejects_drift_event_for_a_different_pm(engine_config: Config) -> None:
+    trait = _trait("loss_aversion_lambda", 1.1, trait_id="t_01", active=True)
+    other_pm_event = DriftEvent(
+        pm_id="pm_002",
+        date=date(2026, 2, 5),
+        event=DriftEventType.UPDATE,
+        trait_id="t_01",
+        **{"from": 1.1, "to": 2.0},
+    )
+
+    with pytest.raises(EngineError):
+        ParamSchedule.build([trait], [other_pm_event], engine_config)
+
+
+def test_build_rejects_traits_for_more_than_one_pm(engine_config: Config) -> None:
+    trait_a = _trait("loss_aversion_lambda", 1.1, trait_id="t_01", active=True)
+    trait_b = Trait(
+        pm_id="pm_002",
+        trait_id="t_02",
+        kind=Kind.BIAS,
+        param="herding_weight",
+        value=0.3,
+        active=True,
+        mult_range=1.0,
+        mult_risk_off=1.0,
+        mult_risk_on=1.0,
+    )
+
+    with pytest.raises(EngineError):
+        ParamSchedule.build([trait_a, trait_b], [], engine_config)
+
+
+def test_revive_without_matching_dormant_raises(engine_config: Config) -> None:
+    trait = _trait("herding_weight", 0.5, trait_id="t_01", active=True)
+    revive_event = _drift("t_01", date(2026, 2, 5), DriftEventType.REVIVE)
+    schedule = ParamSchedule.build([trait], [revive_event], engine_config)
+
+    with pytest.raises(EngineError, match="t_01"):
+        schedule.for_day(date(2026, 2, 10), Regime.RANGE)
+
+
+def test_second_dormant_does_not_overwrite_stashed_value(engine_config: Config) -> None:
+    # If a second dormant re-stashed the (already dormant) current value, revive
+    # would restore the neutral median instead of the true pre-dormant value.
+    trait = _trait("herding_weight", 0.5, trait_id="t_01", active=True)
+    first_dormant = _drift("t_01", date(2026, 2, 3), DriftEventType.DORMANT)
+    second_dormant = _drift("t_01", date(2026, 2, 4), DriftEventType.DORMANT)
+    revive_event = _drift("t_01", date(2026, 2, 20), DriftEventType.REVIVE)
+    schedule = ParamSchedule.build(
+        [trait], [first_dormant, second_dormant, revive_event], engine_config
+    )
+
+    revived = schedule.for_day(date(2026, 2, 25), Regime.RANGE)
+
+    assert revived.value("herding_weight") == pytest.approx(0.5)
 
 
 def test_event_on_inactive_param_still_applies_value_activity_unchanged(

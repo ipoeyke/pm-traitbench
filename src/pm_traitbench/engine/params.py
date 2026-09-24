@@ -85,6 +85,14 @@ class ParamSchedule:
     def build(
         traits: Sequence[Trait], drift_events: Sequence[DriftEvent], config: Config
     ) -> "ParamSchedule":
+        # Trait ids repeat across PMs, so a table mixing PMs would silently
+        # match an event to the wrong PM's trait.
+        pm_ids = {t.pm_id for t in traits} | {e.pm_id for e in drift_events}
+        if len(pm_ids) > 1:
+            raise EngineError(
+                f"ParamSchedule.build received rows for more than one PM: {sorted(pm_ids)}"
+            )
+
         bias_traits = [t for t in traits if t.kind == Kind.BIAS]
         param_by_trait_id = {t.trait_id: t.param for t in bias_traits}
 
@@ -129,9 +137,16 @@ class ParamSchedule:
             if event.event == DriftEventType.UPDATE:
                 values[param] = float(event.to_value)
             elif event.event == DriftEventType.DORMANT:
-                pre_dormant[param] = values[param]
+                # A second dormant while already dormant must not clobber the
+                # value that was live before the first one.
+                if param not in pre_dormant:
+                    pre_dormant[param] = values[param]
                 values[param] = self.neutral_medians[param]
-            elif event.event == DriftEventType.REVIVE and param in pre_dormant:
+            elif event.event == DriftEventType.REVIVE:
+                if param not in pre_dormant:
+                    raise EngineError(
+                        f"revive event for trait '{event.trait_id}' has no matching dormant event"
+                    )
                 values[param] = pre_dormant.pop(param)
 
         effective = {
