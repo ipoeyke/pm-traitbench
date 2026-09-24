@@ -834,23 +834,38 @@ def test_gate1_config_defaults() -> None:
 
 
 def test_gate1_min_rank_corr_at_one_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="min_rank_corr"):
         Config.model_validate({"gate1": {"min_rank_corr": 1.0}})
 
 
 def test_gate1_gap_fraction_at_zero_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="gap_fraction"):
         Config.model_validate({"gate1": {"gap_fraction": 0}})
 
 
 def test_gate1_min_pms_below_three_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="min_pms"):
         Config.model_validate({"gate1": {"min_pms": 2}})
 
 
 def test_gate1_anchor_band_k_at_zero_raises() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="anchor_band_k"):
         Config.model_validate({"gate1": {"anchor_band_k": 0}})
+
+
+def test_gate1_gap_fraction_at_one_is_accepted() -> None:
+    config = Config.model_validate({"gate1": {"gap_fraction": 1}})
+    assert config.gate1.gap_fraction == 1
+
+
+def test_gate1_min_rank_corr_at_zero_is_accepted() -> None:
+    config = Config.model_validate({"gate1": {"min_rank_corr": 0}})
+    assert config.gate1.min_rank_corr == 0
+
+
+def test_gate1_min_pms_at_three_is_accepted() -> None:
+    config = Config.model_validate({"gate1": {"min_pms": 3}})
+    assert config.gate1.min_pms == 3
 
 
 def test_dump_with_basis_covers_every_gate1_leaf() -> None:
