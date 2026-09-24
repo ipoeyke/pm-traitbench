@@ -6,12 +6,37 @@ from pathlib import Path
 import pytest
 
 from pm_traitbench.config import Config, OutputConfig
-from pm_traitbench.enums import Kind
+from pm_traitbench.enums import Action, Kind, Op, RuleScope, RuleSource
 from pm_traitbench.errors import StageIOError
 from pm_traitbench.stages import Stage, run_stage
-from pm_traitbench.tables.schema import Trait
-from pm_traitbench.tables.specs import PERSONAS, TRAITS
+from pm_traitbench.tables.schema import Rule, Trait
+from pm_traitbench.tables.specs import PERSONAS, RULES, TRAITS
 from pm_traitbench.tables.store import DataStore
+
+
+def _rule(
+    pm_id: str,
+    rule_id: str,
+    *,
+    scope: RuleScope = RuleScope.PM,
+    trade_idea_id: str | None = None,
+    text: str = "Trim position when it exceeds 10% of book.",
+) -> Rule:
+    return Rule(
+        pm_id=pm_id,
+        rule_id=rule_id,
+        source=RuleSource.MANDATE,
+        scope=scope,
+        trade_idea_id=trade_idea_id,
+        param="max_position_pct",
+        field="position_pct",
+        op=Op.GT,
+        level=10.0,
+        unit="pct",
+        window=1,
+        action=Action.TRIM_HALF,
+        text=text,
+    )
 
 
 def _trait(pm_id: str, trait_id: str) -> Trait:
@@ -174,3 +199,86 @@ def test_run_stage_with_force_rejects_a_stage_that_skips_a_table_and_keeps_the_o
 
     assert store.path(TRAITS).read_bytes() == before
     assert metadata.read_bytes() == metadata_before
+
+
+def _append_idea_rule(config: Config, store: DataStore) -> None:
+    rows = store.read(RULES)
+    idea_rule = _rule("pm_001", "r_02", scope=RuleScope.IDEA, trade_idea_id="ti_001")
+    store.write(RULES, [*rows, idea_rule])
+
+
+def test_run_stage_appends_existing_table_without_force_and_keeps_original_rows(
+    tmp_path: Path,
+) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    store.write(RULES, [_rule("pm_001", "r_01")])
+    stage = Stage(number=1, name="fake", help="h", run=_append_idea_rule, appends=(RULES,))
+
+    # no force: an appends table pre-existing is expected, not an overwrite to guard against
+    run_stage(stage, config, store)
+
+    rows = store.read(RULES)
+    assert {row.rule_id for row in rows} == {"r_01", "r_02"}
+
+
+def test_run_stage_missing_append_raises_and_never_calls_run(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    called = False
+
+    def _run(config: Config, store: DataStore) -> None:
+        nonlocal called
+        called = True
+
+    stage = Stage(number=1, name="fake", help="h", run=_run, appends=(RULES,))
+
+    with pytest.raises(StageIOError, match="rules"):
+        run_stage(stage, config, store)
+    assert called is False
+
+
+def _drop_original_rule(config: Config, store: DataStore) -> None:
+    store.read(RULES)
+    store.write(RULES, [_rule("pm_001", "r_02", scope=RuleScope.IDEA, trade_idea_id="ti_001")])
+
+
+def test_run_stage_append_dropping_original_row_raises(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    store.write(RULES, [_rule("pm_001", "r_01")])
+    stage = Stage(number=1, name="fake", help="h", run=_drop_original_rule, appends=(RULES,))
+
+    with pytest.raises(StageIOError, match="altered"):
+        run_stage(stage, config, store)
+
+
+def _change_original_rule_text(config: Config, store: DataStore) -> None:
+    store.read(RULES)
+    changed = _rule("pm_001", "r_01", text="Changed rule text.")
+    store.write(
+        RULES, [changed, _rule("pm_001", "r_02", scope=RuleScope.IDEA, trade_idea_id="ti_001")]
+    )
+
+
+def test_run_stage_append_changing_original_row_text_raises(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    store.write(RULES, [_rule("pm_001", "r_01")])
+    stage = Stage(number=1, name="fake", help="h", run=_change_original_rule_text, appends=(RULES,))
+
+    with pytest.raises(StageIOError, match="altered"):
+        run_stage(stage, config, store)
+
+
+def test_run_stage_append_not_written_raises_did_not_write(tmp_path: Path) -> None:
+    config = Config()
+    DataStore(tmp_path, config.output).write(RULES, [_rule("pm_001", "r_01")])
+
+    def _run(config: Config, store: DataStore) -> None:
+        store.read(RULES)
+
+    stage = Stage(number=1, name="fake", help="h", run=_run, appends=(RULES,))
+
+    with pytest.raises(StageIOError, match="did not write"):
+        run_stage(stage, config, DataStore(tmp_path, config.output))
