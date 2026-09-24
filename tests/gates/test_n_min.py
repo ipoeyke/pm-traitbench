@@ -4,7 +4,7 @@ import math
 
 from pm_traitbench.gates.gate1.n_min import N_MIN
 
-# (param, p0, p1) from Decision 6: the neutral and active centres each n_min was set from.
+# (param, p0, p1): the neutral and active opportunity-share centres each n_min's margin is set from.
 _PAIRS = (
     ("exit_deficiency", 0.06, 0.44),
     ("loss_aversion_lambda", 0.10, 0.40),

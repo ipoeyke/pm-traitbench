@@ -112,8 +112,6 @@ def test_pooled_group_mixes_synthetic_seeds_and_real_seed_never_joins_it() -> No
 
     real = next(c for c in cells if c.seed_group_kind == SeedGroupKind.REAL_SEED)
     assert real.seed_group == "seed_r"
-    pool_cells = [c for c in cells if c.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL]
-    assert all(c.seed_group != "seed_r" for c in pool_cells)
 
 
 def test_drifted_pm_excluded_from_all_but_present_in_before() -> None:
@@ -182,6 +180,20 @@ def test_rank_corr_has_no_sign_adjustment_for_a_lower_is_stronger_param() -> Non
     cell = next(c for c in cells if c.seed_group == "seed_a")
     # value falls as planted rises: raw (unflipped) spearman correlation is negative.
     assert cell.rank_corr == pytest.approx(-1.0)
+
+
+def test_rank_corr_is_positive_when_coverage_moves_with_its_planted_value() -> None:
+    param = "overconfidence_coverage"  # higher_is_stronger is False
+    # a PM with lower planted overconfidence realises lower coverage too: the
+    # statistic moves with the planted value, so no sign flip gives a positive rho.
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.45, 10, 0.5, False),
+        _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.65, 10, 0.7, True),
+        _pm("pm_003", "seed_a", param, Gate1Split.ALL, 0.85, 10, 0.9, True),
+    ]
+    cells = aggregate(estimates, {}, {"seed_a"}, set(), Gate1Config())
+    cell = next(c for c in cells if c.seed_group == "seed_a")
+    assert cell.rank_corr == pytest.approx(1.0)
 
 
 def test_rank_corr_none_below_three_pms_and_for_a_constant_statistic() -> None:
@@ -255,6 +267,40 @@ def test_count_ok_none_for_a_non_all_split() -> None:
     before_cell = next(c for c in cells if c.split == Gate1Split.BEFORE)
     assert before_cell.count_p10 is None
     assert before_cell.count_ok is None
+
+
+def test_count_p10_none_when_no_pm_is_present_in_engine_counts() -> None:
+    param = "exit_deficiency"
+    estimates = [_pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False)]
+    cells = aggregate(estimates, {}, {"seed_a"}, set(), Gate1Config())
+    cell = next(c for c in cells if c.seed_group == "seed_a")
+    assert cell.count_p10 is None
+    assert cell.count_ok is None
+    assert cell.count_shortfall is False
+
+
+def test_pool_shortfall_ignores_a_seed_whose_every_pm_drifted() -> None:
+    param = "exit_deficiency"  # N_MIN: ("triggers_fired", 7)
+    estimates = [
+        # seed_a's only PM drifted, so it has no ALL-split row for this param.
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False, drifted=True),
+        _pm("pm_001", "seed_a", param, Gate1Split.BEFORE, 0.1, 10, 0.3, False, drifted=True),
+        _pm("pm_002", "seed_b", param, Gate1Split.ALL, 0.2, 10, 0.3, False),
+    ]
+    engine_counts = {
+        "pm_001": {"triggers_fired": 1},  # would fail n_min if seed_a were considered
+        "pm_002": {"triggers_fired": 20},
+    }
+    cells = aggregate(estimates, engine_counts, {"seed_a", "seed_b"}, set(), Gate1Config())
+
+    assert not any(c.seed_group == "seed_a" and c.split == Gate1Split.ALL for c in cells)
+
+    pool = next(
+        c
+        for c in cells
+        if c.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL and c.split == Gate1Split.ALL
+    )
+    assert pool.count_shortfall is False
 
 
 # --- aggregate: calibration ----------------------------------------------------

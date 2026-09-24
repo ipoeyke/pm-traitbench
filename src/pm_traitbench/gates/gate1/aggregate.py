@@ -10,66 +10,33 @@ correlation and calibration a verdict check later turns into a pass or fail.
 
 from collections import defaultdict
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
 
 from pm_traitbench.config import BIAS_PARAMS, Gate1Config
 from pm_traitbench.enums import AssetClass, Gate1Split, SeedGroupKind
 from pm_traitbench.gates.gate1._cell_stats import (
     CellStats,
+    PmEstimate,
     build_cell,
     pm_ids_by_seed_asset,
     pool_shortfall,
     seed_counts,
 )
-from pm_traitbench.gates.gate1.estimate import Estimate
 from pm_traitbench.gates.gate1.estimators import ESTIMATORS
 from pm_traitbench.gates.gate1.inputs import PmInputs
 from pm_traitbench.gates.gate1.splits import days_for, splits_for
-from pm_traitbench.tables.schema import Gate1PmRow
 
 __all__ = ["SYNTHETIC_POOL", "PmEstimate", "estimate_all", "CellStats", "aggregate"]
 
 SYNTHETIC_POOL = "synthetic"
 
 
-@dataclass(frozen=True)
-class PmEstimate:
-    """One PM's recovered statistic for one bias parameter and split."""
-
-    pm_id: str
-    seed: str
-    asset_class: AssetClass
-    is_real_seed: bool
-    param: str
-    split: Gate1Split
-    estimate: Estimate
-    planted: float
-    active: bool
-    drifted: bool
-
-    def to_row(self) -> Gate1PmRow:
-        """This estimate as the row model gate 1 writes to the store."""
-        return Gate1PmRow(
-            pm_id=self.pm_id,
-            param=self.param,
-            split=self.split,
-            seed=self.seed,
-            asset_class=self.asset_class,
-            statistic=self.estimate.value,
-            n=self.estimate.n,
-            planted=self.planted,
-            active=self.active,
-            drifted=self.drifted,
-        )
-
-
 def estimate_all(inputs: Sequence[PmInputs], knobs: Gate1Config) -> list[PmEstimate]:
     """Run every estimator over every PM, for each param's splits.
 
     `drifted` is whether the param's trait had a drift event; `planted` is the
-    trait's sampled value, used as-is for every split (including a split
-    after a drift event, per the design decision that split rows never enter
-    a verdict).
+    trait's sampled value, used as-is for every split. Split rows are
+    report-only, so a split after a drift event still compares against the
+    trait's sampled value rather than any drifted value.
     """
     results = []
     for pm in inputs:
@@ -112,19 +79,20 @@ def aggregate(
     synthetic_seeds = set(synthetic_seeds)
     real_seeds = set(real_seeds)
     pm_ids = pm_ids_by_seed_asset(estimates)
+
+    by_key: dict[tuple[AssetClass, str, Gate1Split], list[PmEstimate]] = defaultdict(list)
+    for e in estimates:
+        by_key[(e.asset_class, e.param, e.split)].append(e)
+
     shortfall_cache: dict[tuple[AssetClass, str], bool] = {}
 
     def shortfall_for(asset_class: AssetClass, param: str) -> bool:
         key = (asset_class, param)
         if key not in shortfall_cache:
-            shortfall_cache[key] = pool_shortfall(
-                asset_class, param, synthetic_seeds, pm_ids, engine_counts
-            )
+            all_split_members = by_key.get((asset_class, param, Gate1Split.ALL), [])
+            seeds = synthetic_seeds & {e.seed for e in all_split_members if not e.drifted}
+            shortfall_cache[key] = pool_shortfall(asset_class, param, seeds, pm_ids, engine_counts)
         return shortfall_cache[key]
-
-    by_key: dict[tuple[AssetClass, str, Gate1Split], list[PmEstimate]] = defaultdict(list)
-    for e in estimates:
-        by_key[(e.asset_class, e.param, e.split)].append(e)
 
     cells: list[CellStats] = []
     for (asset_class, param, split), key_estimates in by_key.items():
