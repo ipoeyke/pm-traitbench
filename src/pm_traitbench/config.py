@@ -432,6 +432,86 @@ class CalendarConfig(BaseModel):
         return self
 
 
+class EngineConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    horizon_days: int = Field(
+        20,
+        ge=5,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "forward window of the own signal, trailing window for vol and extrapolation",
+        },
+    )
+    skill: float = Field(
+        0.15,
+        ge=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "correlation of the own signal with the realised move; a small positive edge",
+        },
+    )
+    arrival_rate: float = Field(
+        0.6,
+        gt=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "candidate attempts per day; sets ideas per PM-year (about 48 at default)",
+        },
+    )
+    rr_range: tuple[float, float] = Field(
+        (1.5, 3.0),
+        json_schema_extra={
+            "basis": "guess",
+            "note": "target distance as a multiple of stop distance",
+        },
+    )
+    signpost_k: float = Field(
+        1.0,
+        gt=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "level and relative signposts sit at k times the horizon vol from entry",
+        },
+    )
+    preferred_form_weight: float = Field(
+        0.7,
+        gt=0,
+        le=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "share of ideas in the preferred expression when a mapped preference is held",
+        },
+    )
+    softmax_tau: float = Field(
+        1.0,
+        gt=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "temperature of the loss-side action draw in vol units",
+        },
+    )
+    base_hazard: float = Field(
+        0.03,
+        gt=0,
+        le=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "daily discretionary sell hazard at zero progress, about one in 33 days",
+        },
+    )
+
+    @model_validator(mode="after")
+    def _check_rr_range(self) -> "EngineConfig":
+        lo, hi = self.rr_range
+        if lo > hi:
+            raise ValueError("rr_range must be ascending")
+        if lo < 1:
+            raise ValueError("rr_range[0] must be at least 1")
+        return self
+
+
 class OutputConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -1524,6 +1604,7 @@ class Config(BaseModel):
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     market: MarketConfig = Field(default_factory=MarketConfig)
+    engine: EngineConfig = Field(default_factory=EngineConfig)
 
     @model_validator(mode="after")
     def _check_week_ranges_within_calendar(self) -> "Config":
@@ -1578,6 +1659,14 @@ class Config(BaseModel):
         first, last = self.market.boundary_weeks
         if not (1 <= first < last <= n_weeks - 1):
             raise ValueError(f"market.boundary_weeks must fall within 1..{n_weeks - 1}")
+        return self
+
+    @model_validator(mode="after")
+    def _check_engine_horizon_within_calendar(self) -> "Config":
+        if self.engine.horizon_days * 4 > self.calendar.n_weeks * 5:
+            raise ValueError(
+                "engine.horizon_days must be at most a quarter of the horizon in trading days"
+            )
         return self
 
     def timeline(self) -> Timeline:
