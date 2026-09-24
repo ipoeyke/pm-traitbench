@@ -21,7 +21,7 @@ def evaluate(
 ) -> AnchoredExit:
     """Blend the position's target toward the nearest anchor strictly between entry and target.
 
-    An anchor pulls the exit short of the target, so only one that actually sits
+    An anchor pulls the exit short of the target, so only one that sits
     between entry and target can do that; one beyond the target or behind entry
     would not shorten the trade and is ignored.
     """

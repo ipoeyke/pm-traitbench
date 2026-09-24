@@ -157,7 +157,7 @@ def test_bearish_series_reads_a_rising_level_as_a_negative_signal() -> None:
     # skill=0.99 makes the skill * z term dominate the noise, so own_signal's sign is
     # (effectively) deterministic across draws; a rising level (forward_move > 0) is bad
     # for a bearish series, so own_signal should read negative, but thesis_move (the raw
-    # series-unit prediction) should stay positive: the level really does keep rising.
+    # series-unit prediction) should stay positive: the level keeps rising.
     config = _config(skill=0.99)
     series = _series(bullish_sign=-1)
     params = _params(theta=0.0, coverage=0.8)
