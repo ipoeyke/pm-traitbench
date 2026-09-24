@@ -8,11 +8,11 @@ ENTRY_THRESHOLD = 1.0
 CONVICTION_CUTS = (1.0, 1.4, 1.8, 2.3)
 # Each idea carries two or three signposts to track toward its target.
 SIGNPOSTS_PER_IDEA = (2, 3)
-# An add tops the position up by half its current size.
+# An add buys half the position's original size.
 ADD_FRACTION = 0.5
-# Position sizing scales in fifths of the mandate's max-risk budget.
+# Size at conviction rank 1-5 as a fraction of the mandate cap, linear.
 RISK_STEPS = (0.2, 0.4, 0.6, 0.8, 1.0)
-# A candidate that never enters expires after five sessions without a fill.
+# No new entries in the final five sessions, so every idea gets at least a week of life.
 NO_ENTRY_LAST_SESSIONS = 5
 # Realised volatility for sizing and signposts is measured over a trailing 60 days.
 TRAILING_SD_DAYS = 60
@@ -20,9 +20,9 @@ TRAILING_SD_DAYS = 60
 MIN_SD_DAYS = 5
 # Keeps a division by realised vol finite when a market has gone dead flat.
 SD_FLOOR = 1e-6
-# A level signpost anchors to a recent high or low over a 3-, 4- or 5-day window.
+# Consecutive sessions a level signpost must hold before it fires.
 LEVEL_WINDOW_CHOICES = (3, 4, 5)
-# A breakout signpost anchors to the trailing 60-day high or low.
+# Lookback for the prior-high anchor used by the anchoring bias.
 TRAILING_HIGH_DAYS = 60
 
 # DV01 per $1mm notional by sovereign tenor, in local currency.
@@ -40,5 +40,5 @@ CURVE_PAIRS = ((Tenor.Y2, Tenor.Y10), (Tenor.Y5, Tenor.Y30))
 # Back-month legs used for calendar spread ideas.
 CALENDAR_BACK_TENORS = (Tenor.M4, Tenor.M5, Tenor.M6)
 
-# Order entry flags are joined and reported in.
+# Fixed order in which bias flags on an entry are joined.
 BIAS_FLAG_ORDER = ("herding", "overconfidence", "conviction")
