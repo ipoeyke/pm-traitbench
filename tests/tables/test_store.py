@@ -10,11 +10,14 @@ from pm_traitbench.enums import (
     AssetClass,
     DriftEventType,
     EventType,
+    Expression,
     Kind,
     Op,
     RuleScope,
     RuleSource,
+    Side,
     Split,
+    StreetView,
     Typicality,
 )
 from pm_traitbench.errors import StageIOError, TableValidationError
@@ -22,6 +25,8 @@ from pm_traitbench.tables.formats import FORMATS
 from pm_traitbench.tables.schema import (
     CalendarEvent,
     DriftEvent,
+    Idea,
+    Leg,
     Mandate,
     Persona,
     Rule,
@@ -31,6 +36,7 @@ from pm_traitbench.tables.schema import (
 )
 from pm_traitbench.tables.specs import (
     DRIFT_EVENTS,
+    IDEAS,
     MARKET_CALENDAR,
     PERSONAS,
     RULES,
@@ -123,6 +129,36 @@ def _calendar_events(date: datetime.date) -> list[CalendarEvent]:
             affected="all",
         ),
     ]
+
+
+def _idea_with_legs(pm_id: str, trade_idea_id: str) -> Idea:
+    return Idea(
+        pm_id=pm_id,
+        trade_idea_id=trade_idea_id,
+        instrument_id="EQ-AAPL",
+        expression=Expression.PAIR,
+        side=Side.BUY,
+        legs=(
+            Leg(instrument_id="EQ-AAPL", tenor=None, side=Side.BUY, weight=1.0),
+            Leg(instrument_id="EQ-MSFT", tenor=None, side=Side.SELL, weight=1.0),
+        ),
+        entry_date=datetime.date(2026, 1, 5),
+        exit_date=None,
+        entry_level=100.0,
+        target_level=110.0,
+        stop_level=95.0,
+        thesis="Long AAPL versus short MSFT on relative earnings momentum.",
+        outcome=None,
+        own_signal=0.6,
+        forecast=108.0,
+        interval_lo=100.0,
+        interval_hi=115.0,
+        street_view_at_entry=StreetView.NEUTRAL,
+        conflict=False,
+        followed_street=None,
+        conviction=3,
+        size_rank=2,
+    )
 
 
 def test_default_format_is_jsonl_for_every_table(tmp_path: Path) -> None:
@@ -371,6 +407,14 @@ def test_write_subdirectory_table_with_parquet_override(tmp_path: Path) -> None:
     assert path == tmp_path / "market" / "calendar.parquet"
     read_back = store.read(MARKET_CALENDAR)
     assert [row.instrument_id for row in read_back] == [None, "AAPL"]
+
+
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
+def test_round_trip_idea_with_legs(tmp_path: Path, format_name: str) -> None:
+    store = DataStore(tmp_path, OutputConfig(tables={"ideas": format_name}))
+    rows = [_idea_with_legs("pm_001", "ti_001")]
+    store.write(IDEAS, rows)
+    assert store.read(IDEAS) == rows
 
 
 def test_write_run_metadata_merges_extra_keys(tmp_path: Path) -> None:

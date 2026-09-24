@@ -1,0 +1,40 @@
+signposts:
+  equities:
+    event:
+      - "watching how the stock trades through {event}"
+      - "{event} is the next signpost, that's when i mark it"
+      - "next test comes at {event}, not before"
+    level:
+      - "a close through {level} held {window} sessions and the setup is broken"
+      - "{window} sessions on the wrong side of {level} and the thesis breaks"
+      - "give it {window} sessions past {level} before i call it wrong"
+    relative:
+      - "if it moves {level} the wrong way against {peer} the thesis is wrong"
+      - "{level} of slippage the wrong way versus {peer} breaks the case"
+      - "relative to {peer}, {level} of drift the wrong way is my line"
+  rates_credit:
+    event:
+      - "{event} is the next test for this position"
+      - "watching how it reacts into {event}"
+      - "next signpost is {event}, not before"
+    level:
+      - "a move through {level} held {window} sessions and the thesis is broken"
+      - "{window} sessions on the wrong side of {level} and the trade is wrong"
+      - "give it {window} sessions past {level} before i cut it"
+    relative:
+      - "if it moves {level} the wrong way against {peer} the thesis is wrong"
+      - "{level} of slippage the wrong way versus {peer} breaks the case"
+      - "relative to {peer}, {level} of drift the wrong way ends the trade"
+  commodities:
+    event:
+      - "{event} is the next signpost for this position"
+      - "watching how it reacts into {event}"
+      - "next test comes at {event}, not before"
+    level:
+      - "a close through {level} held {window} sessions and the setup is broken"
+      - "{window} sessions on the wrong side of {level} and the thesis is wrong"
+      - "give it {window} sessions past {level} before i call it broken"
+    relative:
+      - "if it moves {level} the wrong way against {peer} the thesis is wrong"
+      - "{level} of slippage the wrong way versus {peer} breaks the case"
+      - "relative to {peer}, {level} of drift the wrong way is my line"

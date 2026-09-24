@@ -13,6 +13,7 @@ from pm_traitbench.config import MarketConfig
 from pm_traitbench.enums import CommodityGroup
 from pm_traitbench.market.axis import SimAxis
 from pm_traitbench.market.calendar import RngFor
+from pm_traitbench.market.levels import log_grid_step, nearest_level, round_log_gap
 from pm_traitbench.market.output import ProcessOutput
 from pm_traitbench.market.regimes import RegimePath
 from pm_traitbench.market.synthetic.events import EventJumps
@@ -45,18 +46,3 @@ class ProcessInputs:
 def unit_student_t(rng: np.random.Generator, df: int, size: int | tuple[int, ...]) -> np.ndarray:
     """Draw Student-t(df) innovations rescaled to unit variance."""
     return rng.standard_t(df, size=size) / np.sqrt(df / (df - 2))
-
-
-def log_grid_step(price: np.ndarray | float) -> np.ndarray | float:
-    """Round-level grid spacing: half the decade below `price`."""
-    return 10.0 ** np.floor(np.log10(price)) / 2
-
-
-def nearest_level(value: np.ndarray | float, step: np.ndarray | float) -> np.ndarray | float:
-    """Round `value` to the nearest multiple of `step`."""
-    return np.round(value / step) * step
-
-
-def round_log_gap(price: np.ndarray | float, step: np.ndarray | float) -> np.ndarray | float:
-    """Log distance from `price` to its nearest round grid level."""
-    return np.log(price) - np.log(nearest_level(price, step))

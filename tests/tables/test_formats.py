@@ -9,17 +9,22 @@ from pm_traitbench.enums import (
     Action,
     AssetClass,
     DriftEventType,
+    Expression,
     Kind,
     Op,
     RuleScope,
     RuleSource,
+    Side,
     Split,
+    StreetView,
     Typicality,
 )
 from pm_traitbench.errors import TableValidationError
 from pm_traitbench.tables.formats import FORMATS
 from pm_traitbench.tables.schema import (
     DriftEvent,
+    Idea,
+    Leg,
     Mandate,
     Persona,
     Rule,
@@ -132,6 +137,36 @@ def _persona() -> Persona:
     )
 
 
+def _idea_with_two_legs() -> Idea:
+    return Idea(
+        pm_id="pm_001",
+        trade_idea_id="ti_001",
+        instrument_id="EQ-AAPL",
+        expression=Expression.PAIR,
+        side=Side.BUY,
+        legs=(
+            Leg(instrument_id="EQ-AAPL", tenor=None, side=Side.BUY, weight=1.0),
+            Leg(instrument_id="EQ-MSFT", tenor=None, side=Side.SELL, weight=1.0),
+        ),
+        entry_date=datetime.date(2026, 1, 5),
+        exit_date=None,
+        entry_level=100.0,
+        target_level=110.0,
+        stop_level=95.0,
+        thesis="Long AAPL versus short MSFT on relative earnings momentum.",
+        outcome=None,
+        own_signal=0.6,
+        forecast=108.0,
+        interval_lo=100.0,
+        interval_hi=115.0,
+        street_view_at_entry=StreetView.NEUTRAL,
+        conflict=False,
+        followed_street=None,
+        conviction=3,
+        size_rank=2,
+    )
+
+
 NON_STRUCT_ROWS = [
     _bias_trait(),
     _preference_trait_with_special_chars(),
@@ -178,6 +213,16 @@ def test_round_trip_persona(tmp_path: Path, format_name: str) -> None:
     fmt.write([to_record(row)], Persona, path)
     records = fmt.read(path, Persona)
     assert [Persona.model_validate(record) for record in records] == [row]
+
+
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
+def test_round_trip_idea_with_list_struct_legs(tmp_path: Path, format_name: str) -> None:
+    fmt = FORMATS[format_name]
+    row = _idea_with_two_legs()
+    path = tmp_path / f"table.{fmt.extension}"
+    fmt.write([to_record(row)], Idea, path)
+    records = fmt.read(path, Idea)
+    assert [Idea.model_validate(record) for record in records] == [row]
 
 
 def test_jsonl_write_missing_record_column_raises_table_validation_error(tmp_path: Path) -> None:
@@ -246,6 +291,13 @@ def test_parquet_schema_kinds(tmp_path: Path) -> None:
     fmt.write([to_record(_persona())], Persona, persona_path)
     persona_schema = pq.read_schema(persona_path)
     assert pa.types.is_struct(persona_schema.field("mandate").type)
+
+    idea_path = tmp_path / "idea.parquet"
+    fmt.write([to_record(_idea_with_two_legs())], Idea, idea_path)
+    idea_schema = pq.read_schema(idea_path)
+    legs_type = idea_schema.field("legs").type
+    assert pa.types.is_list(legs_type)
+    assert pa.types.is_struct(legs_type.value_type)
 
 
 def test_parquet_fills_exactly_one_side_of_a_number_or_text_column(tmp_path: Path) -> None:

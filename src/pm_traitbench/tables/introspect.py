@@ -10,7 +10,7 @@ from typing import Any, Literal, get_args, get_origin
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-ColumnKind = Literal["str", "int", "float", "bool", "date", "mixed", "struct"]
+ColumnKind = Literal["str", "int", "float", "bool", "date", "mixed", "struct", "list_struct"]
 
 _UNION_ORIGINS = (typing.Union, types.UnionType)
 
@@ -57,6 +57,12 @@ def _kind_of(
     model: type[BaseModel], field_name: str, annotation: Any
 ) -> tuple[ColumnKind, type[BaseModel] | None]:
     annotation = _unwrap_annotated(annotation)
+    origin = get_origin(annotation)
+    if origin in (tuple, list):
+        element = _list_struct_element(origin, get_args(annotation))
+        if element is not None:
+            return "list_struct", element
+        raise TypeError(f"unsupported annotation for {model.__name__}.{field_name}")
     if isinstance(annotation, type):
         if annotation is bool:
             return "bool", None
@@ -73,6 +79,22 @@ def _kind_of(
         if annotation is datetime.date:
             return "date", None
     raise TypeError(f"unsupported annotation for {model.__name__}.{field_name}")
+
+
+def _list_struct_element(origin: Any, args: tuple[Any, ...]) -> type[BaseModel] | None:
+    # A homogeneous tuple[Model, ...] or list[Model] is a nested row list; any
+    # other tuple or list shape (fixed-length, non-model element) is unsupported.
+    if origin is tuple:
+        if len(args) != 2 or args[1] is not Ellipsis:
+            return None
+        element = args[0]
+    else:
+        if len(args) != 1:
+            return None
+        element = args[0]
+    if isinstance(element, type) and issubclass(element, BaseModel):
+        return element
+    return None
 
 
 def _unwrap_annotated(annotation: Any) -> Any:

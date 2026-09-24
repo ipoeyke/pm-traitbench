@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pm_traitbench.enums import (
     MARKET_WIDE_EVENTS,
+    MULTI_LEG_FORMS,
     NULL_SURPRISE_EVENTS,
     Action,
     AssetClass,
@@ -17,15 +18,20 @@ from pm_traitbench.enums import (
     DriftEventType,
     EventType,
     ExpiryRule,
+    Expression,
     Family,
     InstrumentKind,
     Kind,
     Op,
+    PnlState,
+    PositionAction,
     Positioning,
     RatingBand,
     Regime,
+    RuleResponse,
     RuleScope,
     RuleSource,
+    Side,
     Split,
     StreetView,
     Tenor,
@@ -52,6 +58,11 @@ __all__ = [
     "CommodityGroup",
     "RatingBand",
     "ExpiryRule",
+    "Side",
+    "Expression",
+    "RuleResponse",
+    "PositionAction",
+    "PnlState",
     "Mandate",
     "StatedProfile",
     "Persona",
@@ -64,6 +75,11 @@ __all__ = [
     "ConsensusRow",
     "CalendarEvent",
     "RegimeSpan",
+    "Leg",
+    "Idea",
+    "LedgerRow",
+    "RuleEvent",
+    "PositionDay",
     "to_record",
     "multiplier_field",
 ]
@@ -71,6 +87,8 @@ __all__ = [
 _PM_ID_PATTERN = r"^pm_\d{3,}$"
 _TRAIT_ID_PATTERN = r"^t_\d{2,}$"
 _RULE_ID_PATTERN = r"^r_\d{2,}$"
+_IDEA_ID_PATTERN = r"^ti_\d{3,}$"
+_BIAS_FLAG_PATTERN = r"^[a-z_]+:[a-z_]+(;[a-z_]+:[a-z_]+)*$"
 
 
 class Mandate(BaseModel):
@@ -395,6 +413,190 @@ class RegimeSpan(BaseModel):
     def _check_span(self) -> "RegimeSpan":
         if self.date_start > self.date_end:
             raise ValueError("date_start must not be after date_end")
+        return self
+
+
+class Leg(BaseModel):
+    """A single leg of a trade idea."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    instrument_id: str = Field(description="Instrument traded by this leg.")
+    tenor: Tenor | None = Field(
+        description="Tenor traded by this leg; set for curve and calendar-spread legs only."
+    )
+    side: Side = Field(description="Direction of this leg.")
+    weight: float = Field(gt=0, description="Relative weight of this leg within the idea.")
+
+
+class Idea(BaseModel):
+    """A PM's trade idea: its thesis, sizing context and eventual outcome."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM who owns the idea."
+    )
+    trade_idea_id: str = Field(
+        pattern=_IDEA_ID_PATTERN, description="Unique identifier for the trade idea."
+    )
+    instrument_id: str = Field(description="Primary instrument the idea trades.")
+    expression: Expression = Field(description="Structural form of the idea.")
+    side: Side = Field(description="Overall direction of the idea.")
+    legs: tuple[Leg, ...] = Field(min_length=1, description="Legs making up the idea.")
+    entry_date: datetime.date = Field(description="Date the idea was entered.")
+    exit_date: datetime.date | None = Field(
+        description="Date the idea was exited; null while the idea is open."
+    )
+    entry_level: float = Field(description="Level of the primary instrument at entry.")
+    target_level: float = Field(description="Target level for the idea.")
+    stop_level: float = Field(description="Stop level for the idea.")
+    thesis: str = Field(description="Free-text statement of the idea's thesis.")
+    outcome: str | None = Field(
+        description="Free-text outcome of the idea; null while the idea is open."
+    )
+    own_signal: float = Field(description="PM's own signal strength for the idea.")
+    forecast: float = Field(description="PM's point forecast for the primary instrument.")
+    interval_lo: float = Field(description="Lower bound of the PM's forecast interval.")
+    interval_hi: float = Field(description="Upper bound of the PM's forecast interval.")
+    street_view_at_entry: StreetView = Field(
+        description="Street's consensus view when the idea was entered."
+    )
+    conflict: bool = Field(description="Whether the idea conflicts with the street's view.")
+    followed_street: bool | None = Field(
+        description="Whether the PM followed the street; set only when conflict is true."
+    )
+    conviction: int = Field(ge=1, le=5, description="PM's stated conviction level.")
+    size_rank: int = Field(
+        ge=1, le=5, description="Idea's size rank relative to the PM's other ideas."
+    )
+
+    @model_validator(mode="after")
+    def _check_invariants(self) -> "Idea":
+        if not self.interval_lo < self.interval_hi:
+            raise ValueError("interval_lo must be less than interval_hi")
+        if self.conflict != (self.followed_street is not None):
+            raise ValueError("followed_street must be set exactly when conflict is true")
+        if (self.exit_date is None) != (self.outcome is None):
+            raise ValueError("outcome must be null exactly when exit_date is null")
+        if self.exit_date is not None and self.exit_date < self.entry_date:
+            raise ValueError("exit_date must not be before entry_date")
+
+        is_multi_leg = self.expression in MULTI_LEG_FORMS
+        expected_legs = 2 if is_multi_leg else 1
+        if len(self.legs) != expected_legs:
+            raise ValueError(
+                f"expression '{self.expression.value}' requires {expected_legs} leg(s), "
+                f"got {len(self.legs)}"
+            )
+        requires_tenor = self.expression in (Expression.CURVE, Expression.CALENDAR_SPREAD)
+        for leg in self.legs:
+            if requires_tenor and leg.tenor is None:
+                raise ValueError(
+                    f"expression '{self.expression.value}' requires every leg to have a tenor"
+                )
+            if not requires_tenor and leg.tenor is not None:
+                raise ValueError(
+                    f"expression '{self.expression.value}' requires every leg to have no tenor"
+                )
+        return self
+
+
+class LedgerRow(BaseModel):
+    """A single order placed against a trade idea."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM who placed the order."
+    )
+    date: datetime.date = Field(description="Date the order was placed.")
+    trade_idea_id: str = Field(
+        pattern=_IDEA_ID_PATTERN, description="Trade idea the order belongs to."
+    )
+    instrument_id: str = Field(description="Instrument traded by the order.")
+    tenor: Tenor | None = Field(
+        description="Tenor traded by the order; set for curve and calendar-spread instruments only."
+    )
+    instrument_type: InstrumentKind = Field(description="Kind of instrument traded.")
+    side: Side = Field(description="Direction of the order.")
+    size: float = Field(gt=0, description="Size of the order.")
+    risk_amount: float = Field(gt=0, description="Risk amount consumed by the order.")
+    price_or_yield: float = Field(description="Execution price or yield.")
+    stated_conviction: int = Field(
+        ge=1, le=5, description="Conviction stated at the time of the order."
+    )
+    bias_flag: str | None = Field(
+        pattern=_BIAS_FLAG_PATTERN,
+        description="Semicolon-separated bias:pattern tags detected on this order.",
+    )
+    rule_id: str | None = Field(
+        pattern=_RULE_ID_PATTERN, description="Rule that drove this order, if any."
+    )
+
+
+class RuleEvent(BaseModel):
+    """A rule firing and how the PM responded to it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM the rule fired for."
+    )
+    rule_id: str = Field(pattern=_RULE_ID_PATTERN, description="Rule that fired.")
+    trade_idea_id: str = Field(
+        pattern=_IDEA_ID_PATTERN, description="Trade idea the rule fired against."
+    )
+    date_fired: datetime.date = Field(description="Date the rule's condition was met.")
+    response: RuleResponse = Field(description="How the PM responded to the rule firing.")
+    response_date: datetime.date = Field(description="Date the PM's response was recorded.")
+
+    @model_validator(mode="after")
+    def _check_response_date(self) -> "RuleEvent":
+        if self.response_date < self.date_fired:
+            raise ValueError("response_date must not be before date_fired")
+        return self
+
+
+class PositionDay(BaseModel):
+    """A trade idea's daily mark-to-market and position state."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM holding the position."
+    )
+    date: datetime.date = Field(description="Date of this position snapshot.")
+    trade_idea_id: str = Field(
+        pattern=_IDEA_ID_PATTERN, description="Trade idea this snapshot belongs to."
+    )
+    pnl_unit: float = Field(description="Mark-to-market P&L in the mandate's risk unit.")
+    pnl_z: float = Field(description="Mark-to-market P&L expressed as a z-score.")
+    pnl_state: PnlState = Field(description="Categorical P&L state derived from pnl_z.")
+    sessions_held: int = Field(ge=0, description="Number of sessions the idea has been held.")
+    triggers_fired: int = Field(
+        ge=0, description="Rule triggers fired on this idea so far, this day included."
+    )
+    trigger_pending: bool = Field(description="Whether a triggered rule is awaiting a response.")
+    action: PositionAction = Field(description="Position action taken on this day.")
+    bias_flag: str | None = Field(
+        pattern=_BIAS_FLAG_PATTERN,
+        description="Semicolon-separated bias:pattern tags detected on this day.",
+    )
+    anchor_level: float | None = Field(
+        description="Reference level anchoring the PM's view; null unless exit level is set."
+    )
+    effective_exit_level: float | None = Field(
+        description="Effective exit level; set together with anchor_level."
+    )
+
+    @model_validator(mode="after")
+    def _check_invariants(self) -> "PositionDay":
+        if (self.anchor_level is None) != (self.effective_exit_level is None):
+            raise ValueError("anchor_level and effective_exit_level must be both null or both set")
+        is_flat = abs(self.pnl_z) < 1e-9
+        if is_flat != (self.pnl_state == PnlState.FLAT):
+            raise ValueError("pnl_state must be 'flat' exactly when abs(pnl_z) < 1e-9")
         return self
 
 

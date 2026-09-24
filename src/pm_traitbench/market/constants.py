@@ -43,37 +43,43 @@ class CommoditySpec:
     name: str
     code: str
     start: float
+    multiplier: float
 
 
 COMMODITIES: dict[CommodityGroup, tuple[CommoditySpec, ...]] = {
     CommodityGroup.ENERGY: (
-        CommoditySpec("crude", "CRD", 72),
-        CommoditySpec("brent", "BRN", 76),
-        CommoditySpec("gasoil", "GSO", 700),
-        CommoditySpec("gasoline", "GSL", 2.2),
-        CommoditySpec("heating_oil", "HOL", 2.4),
-        CommoditySpec("coal", "COL", 130),
+        CommoditySpec("crude", "CRD", 72, 1000),
+        CommoditySpec("brent", "BRN", 76, 1000),
+        CommoditySpec("gasoil", "GSO", 700, 100),
+        CommoditySpec("gasoline", "GSL", 2.2, 42000),
+        CommoditySpec("heating_oil", "HOL", 2.4, 42000),
+        CommoditySpec("coal", "COL", 130, 1000),
     ),
     CommodityGroup.INDUSTRIAL_METALS: (
-        CommoditySpec("copper", "CPR", 9000),
-        CommoditySpec("aluminium", "ALU", 2400),
-        CommoditySpec("nickel", "NKL", 16000),
-        CommoditySpec("zinc", "ZNC", 2700),
+        CommoditySpec("copper", "CPR", 9000, 25),
+        CommoditySpec("aluminium", "ALU", 2400, 25),
+        CommoditySpec("nickel", "NKL", 16000, 6),
+        CommoditySpec("zinc", "ZNC", 2700, 25),
     ),
     CommodityGroup.PRECIOUS: (
-        CommoditySpec("gold", "GLD", 2400),
-        CommoditySpec("silver", "SLV", 28),
-        CommoditySpec("platinum", "PLT", 950),
+        CommoditySpec("gold", "GLD", 2400, 100),
+        CommoditySpec("silver", "SLV", 28, 5000),
+        CommoditySpec("platinum", "PLT", 950, 50),
     ),
     CommodityGroup.AGRICULTURE: (
-        CommoditySpec("wheat", "WHT", 600),
-        CommoditySpec("corn", "CRN", 450),
-        CommoditySpec("soybeans", "SOY", 1100),
-        CommoditySpec("sugar", "SGR", 20),
-        CommoditySpec("coffee", "COF", 250),
-        CommoditySpec("cotton", "CTN", 75),
-        CommoditySpec("cocoa", "CCO", 8000),
+        CommoditySpec("wheat", "WHT", 600, 50),
+        CommoditySpec("corn", "CRN", 450, 50),
+        CommoditySpec("soybeans", "SOY", 1100, 50),
+        CommoditySpec("sugar", "SGR", 20, 1120),
+        CommoditySpec("coffee", "COF", 250, 375),
+        CommoditySpec("cotton", "CTN", 75, 500),
+        CommoditySpec("cocoa", "CCO", 8000, 10),
     ),
+}
+
+# Currency per one contract per one unit of quoted price, from exchange contract specs.
+CONTRACT_MULTIPLIER: dict[str, float] = {
+    spec.code: spec.multiplier for specs in COMMODITIES.values() for spec in specs
 }
 
 FX_PAIRS: dict[str, tuple[str, str]] = {

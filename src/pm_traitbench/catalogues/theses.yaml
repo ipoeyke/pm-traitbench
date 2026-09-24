@@ -1,0 +1,42 @@
+theses:
+  equities:
+    outright:
+      - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "{name} at {entry}, {side}, target {target} within {horizon} sessions"
+    pair:
+      - "{side} {name} at {entry}, looking for {move}{unit} of spread over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "the spread on {name} is {entry}, {side}, target {target} within {horizon} sessions"
+  rates_credit:
+    outright:
+      - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "{name} at {entry}, {side}, target {target} within {horizon} sessions"
+    curve:
+      - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "the curve on {name} is {entry}, {side}, target {target} within {horizon} sessions"
+  commodities:
+    outright:
+      - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "{name} at {entry}, {side}, target {target} within {horizon} sessions"
+    calendar_spread:
+      - "{side} {name} at {entry}, looking for {move}{unit} over {horizon} sessions, target {target}"
+      - "{side} {name} from {entry}, target {target} inside {horizon} sessions"
+      - "the spread on {name} is {entry}, {side}, target {target} within {horizon} sessions"
+
+outcomes:
+  win:
+    - "closed {pnl}{unit}, out on {closer}"
+    - "closed out {pnl}{unit}, out on {closer}"
+    - "wrapped it up at {pnl}{unit}, out on {closer}"
+  loss:
+    - "closed {pnl}{unit}, out on {closer}"
+    - "cut it at {pnl}{unit}, out on {closer}"
+    - "closed out {pnl}{unit}, out on {closer}"
+  open:
+    - "still on at {pnl}{unit}, marked at {closer}"
+    - "position stays on at {pnl}{unit}, marked at {closer}"
+    - "open at {pnl}{unit}, marked at {closer}"

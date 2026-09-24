@@ -17,14 +17,25 @@ uv sync
 uv run pm-traitbench fetch-market --config configs/demo.yaml --data-dir data
 uv run pm-traitbench sample --config configs/demo.yaml --data-dir data
 uv run pm-traitbench market --config configs/demo.yaml --data-dir data
+uv run pm-traitbench engine --config configs/demo.yaml --data-dir data
 ```
 
 The `sample` stage writes four tables to `data`: `personas`, `traits`,
 `rules` and `drift_events`. The `market` stage writes six tables under
 `data/market`: `instruments`, `prices`, `curves`, `consensus`, `calendar`
-and `regimes`, simulating one market per configured market seed. Pass
-`--force` to overwrite a table that already exists. Run `uv run
-pm-traitbench --help` for the full command list.
+and `regimes`, simulating one market per configured market seed. The
+`engine` stage runs the behaviour loop for every non-multi-asset PM and
+writes five tables: `ideas`, `ledger`, `rule_events` and `position_days`,
+plus `rules` rewritten with every idea-scope rule the run created alongside
+the mandate- and self-imposed rules `sample` already wrote; a rerun replaces
+the previous run's idea-scope rules rather than adding to them.
+`position_days` is a hidden table in full. `ideas` and `ledger` also carry
+hidden columns: the PM's own signal, forecast and interval, its street-view
+context, conviction and size rank on `ideas`, and each order's bias flag and
+driving rule on `ledger`. Hidden data is generator provenance for checking
+the engine itself and is never shown to a system under test. Pass `--force`
+to overwrite a table that already exists. Run `uv run pm-traitbench --help`
+for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
 market seed, as the default and demo configs both do for their pilot seed;
@@ -216,6 +227,79 @@ config leaf requires. A seed's window (`window_start` through the horizon
 it implies) must fall inside the FOMC/WASDE/NFP date coverage, 2018-06-04
 to 2019-05-31; replaying a later or longer window needs those date lists
 extended first.
+
+## Engine model
+
+The behaviour engine walks each PM through its horizon day by day, turning
+its persona, traits and rules into ideas, orders and rule responses. It
+trades off realism for a model whose biases are each one legible formula:
+
+- A deterministic daily loop: `step` marks every open position, resolves
+  today's rule triggers and the discretionary block, enters new ideas, and
+  closes out the whole book on the horizon's last day. Prices, rules and
+  biases read only data up to the day the loop is on; the own signal below
+  is the one deliberate exception, since it peeks at the forward move by
+  design.
+- The own signal is a noisy peek at the forward move: `skill * z + sqrt(1 -
+  skill^2) * n`, where `z` is the realised forward move (in bullish units,
+  scaled by its own forward-window sd) and `n` is standard noise. `skill`
+  is one fixed constant for every PM, not a trait.
+- The thesis move is the unscaled signal times the series' realised vol
+  (`bullish_sign * own_signal * sd`), extrapolation-blended into the
+  stated forecast; the stated interval, though, is centred on the honest
+  conditional mean of the forward move given the signal, so a neutral PM's
+  realised coverage matches its stated coverage regardless of what its
+  forecast says.
+- One rule per bias parameter, each collapsing to a formula: loss aversion
+  is a cut/hold/add softmax over `{-lambda|z|, r, r(1+f) - lambda|z|f}`,
+  where `r` is the forecast still to come in z units,
+  `side * bullish_sign * (forecast - (level - entry)) / sd` with `sd` taken
+  at entry; disposition is a daily sell hazard scaled by `sqrt(D)` at
+  a gain and `1/sqrt(D)` at a loss; anchoring blends the exit level
+  `(1-rho)*target + rho*anchor`; extrapolation blends the forecast
+  `(1-theta)*thesis_move + theta*trailing_move`; herding follows the
+  street with probability `herding_weight` when it conflicts with the
+  PM's own side; overconfidence narrows the stated interval and inflates
+  entry size by the same z-score ratio, `z(0.8) / z(coverage)`; conviction
+  blends the size rank `round((1-m)*conviction + m*u)` toward a
+  uniform(1,5) draw; exit deficiency makes a fired rule's response miss
+  with probability `e` (adding instead of missing, at a loss, when loss
+  aversion is also active).
+- A day's fired rules resolve in one precedence order: exclusions and the
+  mandate cap first (pre-trade constraints that never reach this table),
+  then exits and signposts, then rolls, then trims and targets, then
+  holds, with a no-add breach ranked last.
+- Expression forms are per asset class, steered by a matching preference
+  trait when one is stated: equities trade outright or pair
+  (`pair_vs_outright`); sovereign rates trade outright or curve
+  (`duration_expression`); long/short credit trades outright only;
+  commodities directional trades outright only, and curve-and-spread
+  trades outright or calendar spread (`curve_trade_expression`).
+- A commodity roll is P&L-neutral on the constant-maturity curves: it
+  retags legs one contract month out and re-bases `rolled_offset`, never
+  shifting `entry_level`, `stop_level` or `target_level`.
+- No transaction costs: every ledger row prices at the raw market level,
+  with no spread, slippage or commission anywhere in the loop.
+- Multi-asset PMs are skipped for now: no adapter routes a multi-asset
+  idea's legs across asset classes, so the engine stage lists them under
+  `skipped` rather than running them.
+
+Limitations from the model:
+
+- The real-seed universe is small: two credit issuers and one sovereign
+  curve, not a representative cross-section. On a real seed, long/short
+  credit PMs revisit the same two issuers, so `max_positions` never binds,
+  and sovereign-rates PMs trade one curve's tenors only.
+- Signposts are grammar-only: each is one of three condition kinds (one
+  event type, one level held for a window, one relative move against
+  peers), with no qualitative signposts. An idea with no peer besides
+  itself (a sovereign curve, or a credit issuer alone in its rating band)
+  carries no relative signpost.
+- Skill is one fixed constant, not a per-PM trait: every PM's own signal
+  carries the same edge over the forward move.
+- Multi-asset PMs are absent from every output table, not merely
+  under-weighted: the engine stage skips them rather than simulating a
+  cross-asset book.
 
 ## Development
 

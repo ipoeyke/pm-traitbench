@@ -9,11 +9,15 @@ from pm_traitbench.tables.schema import (
     ConsensusRow,
     CurvePoint,
     DriftEvent,
+    Idea,
     Instrument,
+    LedgerRow,
     Persona,
+    PositionDay,
     Price,
     RegimeSpan,
     Rule,
+    RuleEvent,
     Trait,
 )
 
@@ -49,3 +53,45 @@ MARKET_TABLES: tuple[TableSpec, ...] = (
     MARKET_CALENDAR,
     MARKET_REGIMES,
 )
+
+IDEAS = TableSpec("ideas", Idea, ("pm_id", "trade_idea_id"))
+LEDGER = TableSpec(
+    "ledger", LedgerRow, ("pm_id", "date", "trade_idea_id", "instrument_id", "tenor", "side")
+)
+RULE_EVENTS = TableSpec(
+    "rule_events", RuleEvent, ("pm_id", "rule_id", "trade_idea_id", "date_fired")
+)
+POSITION_DAYS = TableSpec("position_days", PositionDay, ("pm_id", "date", "trade_idea_id"))
+
+ENGINE_TABLES: tuple[TableSpec, ...] = (IDEAS, LEDGER, RULE_EVENTS, POSITION_DAYS)
+
+HIDDEN_COLUMNS: dict[str, tuple[str, ...]] = {
+    "ledger": ("bias_flag", "rule_id"),
+    "ideas": (
+        "own_signal",
+        "forecast",
+        "interval_lo",
+        "interval_hi",
+        "street_view_at_entry",
+        "conflict",
+        "followed_street",
+        "conviction",
+        "size_rank",
+    ),
+    "position_days": tuple(
+        name for name in PositionDay.model_fields if name not in set(POSITION_DAYS.key)
+    ),
+}
+
+
+def _check_hidden_columns() -> None:
+    """Fail at import time if a hidden column no longer exists on its model."""
+    models_by_table = {spec.name: spec.model for spec in ENGINE_TABLES}
+    for table_name, hidden in HIDDEN_COLUMNS.items():
+        model = models_by_table[table_name]
+        for column in hidden:
+            if column not in model.model_fields:
+                raise ValueError(f"hidden column '{column}' is not a field of {model.__name__}")
+
+
+_check_hidden_columns()

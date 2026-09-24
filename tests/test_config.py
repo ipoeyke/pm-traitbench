@@ -784,3 +784,41 @@ def test_market_yaml_override_keeps_sibling_defaults(tmp_path: Path) -> None:
     assert config.market.universe.n_sectors == default.n_sectors
     assert config.market.universe.n_credit_issuers == default.n_credit_issuers
     assert config.market.families == Config().market.families
+
+
+def test_engine_config_defaults() -> None:
+    assert Config().engine.arrival_rate == 0.6
+
+
+def test_engine_rr_range_descending_raises() -> None:
+    with pytest.raises(ValidationError, match="rr_range must be ascending"):
+        Config.model_validate({"engine": {"rr_range": (3, 1.5)}})
+
+
+def test_engine_rr_range_below_one_raises() -> None:
+    with pytest.raises(ValidationError, match=r"rr_range\[0\] must be at least 1"):
+        Config.model_validate({"engine": {"rr_range": (0.5, 2)}})
+
+
+def test_engine_horizon_days_at_quarter_of_calendar_horizon_is_accepted() -> None:
+    config = Config.model_validate({"engine": {"horizon_days": 65}, "calendar": {"n_weeks": 52}})
+    assert config.engine.horizon_days == 65
+
+
+def test_engine_horizon_days_over_quarter_of_calendar_horizon_raises() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="engine.horizon_days must be at most a quarter of the horizon in trading days",
+    ):
+        Config.model_validate({"engine": {"horizon_days": 66}, "calendar": {"n_weeks": 52}})
+
+
+def test_dump_with_basis_covers_every_engine_leaf() -> None:
+    config = Config()
+    rows = {row.path: row for row in config.dump_with_basis()}
+    engine_paths = [path for path in rows if path.startswith("engine.")]
+    assert set(engine_paths) == {f"engine.{name}" for name in type(config.engine).model_fields}
+    for path in engine_paths:
+        row = rows[path]
+        assert row.basis in ("sourced", "design", "guess")
+        assert row.note.strip()

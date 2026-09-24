@@ -7,9 +7,16 @@ from typing import Any
 import pytest
 import yaml
 
-from pm_traitbench.catalogues.loader import check_catalogue, load_catalogue, render_template
-from pm_traitbench.catalogues.models import Catalogue, RuleVariant
-from pm_traitbench.enums import AssetClass
+from pm_traitbench.catalogues.loader import (
+    CLOSER_PHRASES,
+    check_catalogue,
+    load_catalogue,
+    render_signpost,
+    render_template,
+    render_thesis,
+)
+from pm_traitbench.catalogues.models import ADAPTER_FORMS, Catalogue, RuleVariant
+from pm_traitbench.enums import AssetClass, Expression
 
 _REPEATED_WORD = re.compile(r"\b(\w+)\s+\1\b", re.IGNORECASE)
 
@@ -107,9 +114,94 @@ def _assert_every_rule_template_renders_cleanly(catalogue: Catalogue) -> None:
                     assert not _REPEATED_WORD.search(rendered), context
 
 
+def _assert_clean(rendered: str, context: Any) -> None:
+    assert "{" not in rendered and "}" not in rendered, context
+    assert "None" not in rendered, context
+    assert "_" not in rendered, context
+    assert "  " not in rendered, context
+
+
+# Slot values as the engine passes them: levels arrive rendered (a bare price for a
+# price-quoted outright, else the series level with its unit), relative moves as magnitudes.
+_ENGINE_LEVELS: dict[AssetClass, tuple[str, ...]] = {
+    AssetClass.EQUITIES: ("55.00", "-4.55%"),
+    AssetClass.RATES_CREDIT: ("420.1bp", "35.0bp"),
+    AssetClass.COMMODITIES: ("15823.82", "1.33%"),
+}
+_ENGINE_RELATIVE: dict[AssetClass, tuple[str, str]] = {
+    AssetClass.EQUITIES: ("7.15%", "information technology"),
+    AssetClass.RATES_CREDIT: ("30.2bp", "the BBB band"),
+    AssetClass.COMMODITIES: ("4.55%", "industrial metals"),
+}
+_ENGINE_THESIS: dict[AssetClass, dict[Expression, dict[str, str]]] = {
+    AssetClass.EQUITIES: {
+        Expression.OUTRIGHT: {"name": "Equity 0001", "entry": "21.84", "target": "34.09"},
+        Expression.PAIR: {"name": "Equity 0001 versus Equity 0002", "entry": "3.10%"},
+    },
+    AssetClass.RATES_CREDIT: {
+        Expression.OUTRIGHT: {"name": "USD 10Y", "entry": "420.1bp", "target": "380.0bp"},
+        Expression.CURVE: {"name": "USD 2Y versus 10Y", "entry": "35.0bp"},
+    },
+    AssetClass.COMMODITIES: {
+        Expression.OUTRIGHT: {"name": "silver", "entry": "31.20", "target": "37.26"},
+        Expression.CALENDAR_SPREAD: {"name": "crude M1 versus M5", "entry": "1.33%"},
+    },
+}
+
+
+def _assert_engine_text(rendered: str, context: Any) -> None:
+    _assert_clean(rendered, context)
+    assert not re.search(r"\d\.\d{3}", rendered), context
+
+
+def _assert_every_engine_template_renders_cleanly(catalogue: Catalogue) -> None:
+    """Render every signpost, thesis and outcome template with engine-realistic slots."""
+    for asset_class in ADAPTER_FORMS:
+        signpost = catalogue.signposts[asset_class]
+        for template in signpost.event:
+            _assert_clean(
+                render_signpost(template, event="rating_downgrade"), (asset_class, "event")
+            )
+        for level in _ENGINE_LEVELS[asset_class]:
+            for template in signpost.level:
+                rendered = render_signpost(template, level=level, window=5)
+                _assert_engine_text(rendered, (asset_class, "level", template))
+        magnitude, peer = _ENGINE_RELATIVE[asset_class]
+        for template in signpost.relative:
+            rendered = render_signpost(template, level=magnitude, peer=peer)
+            _assert_engine_text(rendered, (asset_class, "relative", template))
+            assert "-" not in rendered, (asset_class, template)
+        for expression in ADAPTER_FORMS[asset_class]:
+            slots = _ENGINE_THESIS[asset_class][expression]
+            for template in catalogue.theses.theses[asset_class][expression]:
+                rendered = render_thesis(
+                    template,
+                    name=slots["name"],
+                    entry=slots["entry"],
+                    target=slots.get("target", slots["entry"]),
+                    move="+5.00",
+                    unit="bp" if asset_class == AssetClass.RATES_CREDIT else "pct",
+                    horizon=20,
+                    side="long",
+                )
+                _assert_engine_text(rendered, (asset_class, expression, template))
+    for kind, templates in catalogue.theses.outcomes.items():
+        for closer in CLOSER_PHRASES:
+            for template in templates:
+                rendered = render_thesis(template, pnl=3.2, unit="pct", closer=closer)
+                _assert_clean(rendered, (kind, closer, template))
+
+
 def test_packaged_yaml_files_exist() -> None:
     base = resources.files("pm_traitbench.catalogues")
-    for name in ("preferences.yaml", "rules.yaml", "mandates.yaml", "self_descriptions.yaml"):
+    for name in (
+        "preferences.yaml",
+        "rules.yaml",
+        "mandates.yaml",
+        "self_descriptions.yaml",
+        "signposts.yaml",
+        "theses.yaml",
+    ):
         assert base.joinpath(name).is_file()
 
 
@@ -165,7 +257,14 @@ def test_self_description_phrasings_are_lowercase_no_period_3_to_8_words() -> No
 
 @pytest.mark.parametrize(
     "name",
-    ["preferences.yaml", "rules.yaml", "mandates.yaml", "self_descriptions.yaml"],
+    [
+        "preferences.yaml",
+        "rules.yaml",
+        "mandates.yaml",
+        "self_descriptions.yaml",
+        "signposts.yaml",
+        "theses.yaml",
+    ],
 )
 def test_no_em_dash_or_banned_words_in_any_shipped_file(name: str) -> None:
     data = _load_shipped_yaml(name)
@@ -185,6 +284,46 @@ def test_self_descriptions_never_name_a_bias() -> None:
                 assert word not in lowered, (param, word, fragment)
 
 
+@pytest.mark.parametrize("name", ["signposts.yaml", "theses.yaml"])
+def test_engine_template_banks_never_name_a_bias(name: str) -> None:
+    data = _load_shipped_yaml(name)
+    for text in _iter_strings(data):
+        lowered = text.lower()
+        for word in _BIAS_WORDS:
+            assert word not in lowered, (name, word, text)
+
+
 def test_every_rule_template_renders_cleanly() -> None:
     catalogue = load_catalogue()
     _assert_every_rule_template_renders_cleanly(catalogue)
+
+
+def test_every_engine_template_renders_cleanly() -> None:
+    catalogue = load_catalogue()
+    _assert_every_engine_template_renders_cleanly(catalogue)
+
+
+def test_every_direct_asset_class_has_all_three_signpost_kinds() -> None:
+    catalogue = load_catalogue()
+    for asset_class in ADAPTER_FORMS:
+        signpost = catalogue.signposts[asset_class]
+        assert len(signpost.event) >= 2
+        assert len(signpost.level) >= 2
+        assert len(signpost.relative) >= 2
+
+
+def test_every_adapter_forms_cell_has_a_thesis_template() -> None:
+    catalogue = load_catalogue()
+    for asset_class, expressions in ADAPTER_FORMS.items():
+        for expression in expressions:
+            templates = catalogue.theses.theses[asset_class][expression]
+            assert len(templates) >= 2
+
+
+def test_equities_and_commodities_outright_theses_have_no_unit_on_entry_or_target() -> None:
+    # Entry and target for these cells are a quoted price, not a percentage.
+    catalogue = load_catalogue()
+    for asset_class in (AssetClass.EQUITIES, AssetClass.COMMODITIES):
+        for template in catalogue.theses.theses[asset_class][Expression.OUTRIGHT]:
+            assert "{entry}{unit}" not in template, (asset_class, template)
+            assert "{target}{unit}" not in template, (asset_class, template)
