@@ -17,6 +17,7 @@ from pm_traitbench.tables.specs import (
     MARKET_TABLES,
     PERSONAS,
     RULES,
+    SKELETONS,
     TRAITS,
 )
 from pm_traitbench.tables.store import DataStore
@@ -227,3 +228,31 @@ def test_sample_market_engine_on_synthetic_seeds_runs_every_direct_asset_class(
 def test_help_output_lists_the_engine_subcommand() -> None:
     help_text = build_parser(pipeline.STAGES).format_help()
     assert "engine" in help_text
+
+
+def test_sample_market_engine_then_plan_on_synthetic_seeds(tmp_path: Path) -> None:
+    config_path = tmp_path / "synthetic.yaml"
+    config_path.write_text(_SYNTHETIC_CONFIG, encoding="utf-8")
+    data_dir = tmp_path / "data"
+    args = ["--config", str(config_path), "--data-dir", str(data_dir)]
+
+    for stage in ("sample", "market", "engine", "plan"):
+        assert main([stage, *args]) == 0
+
+    assert (data_dir / "run_metadata" / "plan.json").exists()
+
+    store = DataStore(data_dir, load_config(config_path).output)
+    personas = store.read(PERSONAS)
+    asset_class_by_pm = {p.pm_id: p.mandate.asset_class for p in personas}
+    direct_asset_pms = {
+        pm_id for pm_id, ac in asset_class_by_pm.items() if ac != AssetClass.MULTI_ASSET
+    }
+
+    skeletons = store.read(SKELETONS)
+    pms_with_skeletons = {s.pm_id for s in skeletons}
+    assert direct_asset_pms <= pms_with_skeletons
+
+
+def test_help_output_lists_the_plan_subcommand() -> None:
+    help_text = build_parser(pipeline.STAGES).format_help()
+    assert "plan" in help_text

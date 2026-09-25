@@ -19,6 +19,7 @@ uv run pm-traitbench sample --config configs/demo.yaml --data-dir data
 uv run pm-traitbench market --config configs/demo.yaml --data-dir data
 uv run pm-traitbench engine --config configs/demo.yaml --data-dir data
 uv run pm-traitbench gate1 --config configs/demo.yaml --data-dir data
+uv run pm-traitbench plan --config configs/demo.yaml --data-dir data
 ```
 
 The `sample` stage writes four tables to `data`: `personas`, `traits`,
@@ -30,18 +31,20 @@ writes five tables: `ideas`, `ledger`, `rule_events` and `position_days`,
 plus `rules` rewritten with every idea-scope rule the run created alongside
 the mandate- and self-imposed rules `sample` already wrote; a rerun replaces
 the previous run's idea-scope rules rather than adding to them.
-`position_days` is a hidden table in full. `ideas` and `ledger` also carry
-hidden columns: the PM's own signal, forecast and interval, its street-view
-context, conviction and size rank on `ideas`, whether the entry chased a
-trend that had already run, and each order's bias flag and driving rule on
-`ledger`. Hidden data is generator provenance for checking the engine itself
-and is never shown to a system under test. The `gate1`
-stage recovers each direct-asset PM's eight planted biases from the engine's
-ledger and pools them per asset class, writing `gate1_pm` and `gate1_cells`;
-it exits 1 when a blocking row fails - one row per non-report-only parameter,
-pooled over every direct asset class of the synthetic seeds. Per-class and
-report-only rows are judged but never block. Both tables and its run
-metadata land on disk either way. Pass `--force` to overwrite a table that
+`position_days` and `skeletons` are hidden tables in full. `ideas` and
+`ledger` also carry hidden columns: the PM's own signal, forecast and
+interval, its street-view context, conviction and size rank on `ideas`,
+whether the entry chased a trend that had already run, and each order's bias
+flag and driving rule on `ledger`. Hidden data is generator provenance for
+checking the engine itself and is never shown to a system under test. The
+`gate1` stage recovers each direct-asset PM's eight planted biases from the
+engine's ledger and pools them per asset class, writing `gate1_pm` and
+`gate1_cells`; it exits 1 when a blocking row fails - one row per
+non-report-only parameter, pooled over every direct asset class of the
+synthetic seeds. Per-class and report-only rows are judged but never block.
+Both tables and its run metadata land on disk either way. The `plan` stage
+plants trait signals on dated sessions and writes `signals` and `skeletons`,
+never blocking on a shortfall. Pass `--force` to overwrite a table that
 already exists. Run `uv run pm-traitbench --help` for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
@@ -479,6 +482,61 @@ Limitations from the model:
   without blocking the pipeline, so a planted bias in `herding_weight`,
   `disposition_ratio` or `anchoring_rho` can ship unverified at the default
   population.
+
+## Signal plan
+
+The `plan` stage reads `personas`, `traits`, `drift_events` and the engine's
+four tables (`ideas`, `ledger`, `rule_events`, `position_days`), plus the
+engine's run metadata for the multi-asset PMs it must skip. It writes two
+tables: `signals`, one row per planted trait signal keyed on
+`(pm_id, signal_id)`, and `skeletons`, one row per dated session keyed on
+`(pm_id, session_id)`.
+
+A `signals` row names the trait, the session and date it lands on, how it
+expresses the trait (`mode`: revealed, stated or contradiction) and its
+valence (confirm or retracted). `third_party_value` is set only when
+`ownership` is a colleague or client instead of the PM, and holds the value
+that third party is attributed with; it is null for the PM's own signals.
+`claim_session_id` is set only on a contradiction, naming the earlier session
+where the PM stated a view the later session's carrier then contradicts; it
+is null for every other mode.
+
+`skeletons` is a hidden table in full: it is the narrator's whole input for
+turning a session into the PM's own words, so a system under test is never
+shown which trait a stance plants or which traits and preference params the
+session must stay silent on.
+
+A revealed signal only exists because the engine itself recorded, on some
+dated row, that the planted bias drove the decision; the plan never invents
+a decision the engine did not take. Each planted bias's carrier evidence:
+
+| Bias parameter | Carrier source | Engine action(s) behind it |
+| --- | --- | --- |
+| `loss_aversion_lambda` | `ledger`, `position_days` | `add`, `add_before_trigger`, `hold` |
+| `disposition_ratio` | `position_days` | `realise_gain_early`, `hold_loser` |
+| `anchoring_rho` | `position_days` | `exit_at_anchor` |
+| `extrapolation_theta` | `ideas` | `chased_trend` |
+| `herding_weight` | `ledger` | `followed_street` |
+| `overconfidence_coverage` | `ledger` | `oversized` |
+| `conviction_size_miscalibration` | `ledger` | `mis_sized` |
+| `exit_deficiency` | `rule_events` | `acked_no_action`, `added`, `late_roll` |
+
+Every revealed stance line is keyed by the specific engine action behind its
+carrier, not just the bias it plants, so the line drawn always matches what
+the engine actually logged that day. A signal with no carrier to point at
+(too few qualifying rows, or the window already used up) is dropped rather
+than backfilled with another mode. Signals that need no carrier - stated and
+third-party rows, drift notes, retractions - pack into existing sessions up
+to `plan.max_signals_per_session` (default 2), never two stances of the same
+trait or more than one advisor-violation stance in a session.
+
+A shortfall never fails the run: too few revealed signals placed against
+their planted quota, a drift window with fewer confirming signals than
+`plan.drift_min_per_side` on one side, or the session cap that could not be
+met for lack of free trading days are all warnings in
+`run_metadata/plan.json`, in PM order. Multi-asset PMs are skipped, the same
+PMs the engine stage already skipped, and are listed under `skipped` in the
+plan's own run metadata.
 
 ## Development
 
