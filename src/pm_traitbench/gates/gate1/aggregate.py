@@ -72,15 +72,12 @@ def aggregate(
 ) -> list[CellStats]:
     """Pool `estimates` into a synthetic-pool, per-synthetic-seed and per-real-seed cell.
 
-    One cell per `(asset_class, param, split)` that has at least one member,
-    plus one cross-class cell per `(param, split)` for the synthetic pool,
-    `asset_class` null, over the members of every asset class together. For
-    `ALL`, a drifted PM's estimate is excluded from every group. For
-    `BEFORE`/`AFTER`, only drifted PMs have rows (they are the active set), so
-    the neutral baseline is pulled in from the same param's non-drifted `ALL`
-    rows instead: drift windows differ per PM, so there is no shared date set
-    to compare against. Other splits already hold only the PMs that split
-    applies to. A cell with no member is not emitted.
+    One cell per `(asset_class, param, split)` with a member, plus a
+    cross-class cell per `(param, split)` pooling every asset class for the
+    synthetic pool. `BEFORE`/`AFTER` splits hold only drifted PMs as the
+    active set, so their neutral baseline is pulled from the same param's
+    non-drifted `ALL` rows instead, since drift windows differ per PM. A cell
+    with no member is not emitted.
     """
     synthetic_seeds = set(synthetic_seeds)
     real_seeds = set(real_seeds)

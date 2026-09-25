@@ -230,6 +230,31 @@ def test_cross_class_count_shortfall_propagates_from_any_asset_class() -> None:
     assert cross_class.count_shortfall is True  # equities seed_a fell short of n_min=7
 
 
+def test_cross_class_count_shortfall_false_when_no_class_is_short() -> None:
+    param = "exit_deficiency"  # N_MIN: 7
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 20, 0.3, False, asset_class=EQ),
+        _pm(
+            "pm_002",
+            "seed_a",
+            param,
+            Gate1Split.ALL,
+            0.2,
+            50,
+            0.3,
+            False,
+            asset_class=AssetClass.COMMODITIES,
+        ),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+    cross_class = next(
+        c
+        for c in cells
+        if c.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL and c.asset_class is None
+    )
+    assert cross_class.count_shortfall is False
+
+
 # --- aggregate: neutral/active stats -----------------------------------------
 
 

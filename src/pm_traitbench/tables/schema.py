@@ -631,7 +631,9 @@ class Gate1PmRow(BaseModel):
 
 
 class Gate1CellRow(BaseModel):
-    """A neutral-versus-active comparison for one bias parameter, asset class and split."""
+    """A neutral-versus-active comparison for one bias parameter, asset class (or every
+    direct asset class pooled) and split.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
