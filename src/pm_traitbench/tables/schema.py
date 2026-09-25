@@ -595,7 +595,7 @@ class PositionDay(BaseModel):
         description="The idea's fixed round-level anchor; null if none qualified at entry."
     )
     effective_exit_level: float | None = Field(
-        description="Effective exit level from this day's discretionary evaluation; null if none."
+        description="The idea's anchor when anchored, else its target level."
     )
 
     @model_validator(mode="after")

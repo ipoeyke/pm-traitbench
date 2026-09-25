@@ -18,7 +18,7 @@ from pm_traitbench.config import Config
 from pm_traitbench.engine.adapters.base import Adapter, tracked_level
 from pm_traitbench.engine.adapters.base import pnl_unit as compute_pnl_unit
 from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
-from pm_traitbench.engine.biases import join_flags
+from pm_traitbench.engine.biases import anchoring, join_flags
 from pm_traitbench.engine.discretionary import handle_discretionary
 from pm_traitbench.engine.ideas import entries_for_day
 from pm_traitbench.engine.market_view import MarketView
@@ -117,6 +117,11 @@ def step(
         pnl = compute_pnl_unit(pos, level_now)
         pnl_z = pnl / pos.sd_h_at_entry
         pnl_state = _pnl_state(pnl_z)
+        # The idea's anchor and effective exit level never change intraday (fixed at entry),
+        # so every row for an open position carries them, whatever else happens that day.
+        anchored_exit = anchoring.evaluate(pos, level_now)
+        anchor_level = anchored_exit.anchor_level
+        effective_exit_level = anchored_exit.effective_exit_level
 
         if is_last_day:
             # No trigger or discretionary evaluation on the horizon's last day: every open
@@ -146,8 +151,8 @@ def step(
                 trigger_pending=False,
                 action=PositionAction.EXIT,
                 bias_flag=None,
-                anchor_level=None,
-                effective_exit_level=None,
+                anchor_level=anchor_level,
+                effective_exit_level=effective_exit_level,
             )
             continue
 
@@ -168,8 +173,6 @@ def step(
 
         action = trig.action
         bias_flag = trig.bias_flag
-        anchor_level: float | None = None
-        effective_exit_level: float | None = None
         sold_today = trig.sold
         final_position = trig.position
 
@@ -196,8 +199,6 @@ def step(
                 cur_progress,
             )
             ledger_rows.extend(disc.ledger_rows)
-            anchor_level = disc.anchor_level
-            effective_exit_level = disc.effective_exit_level
             if disc.action != PositionAction.NONE:
                 action = disc.action
             bias_flag = join_flags([bias_flag, disc.bias_flag])

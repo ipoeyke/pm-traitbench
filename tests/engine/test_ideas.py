@@ -1036,3 +1036,34 @@ def test_no_anchor_never_anchors_regardless_of_rho(
     assert new_idea is not None
     assert new_idea.position.anchor_level is None
     assert new_idea.position.anchored is False
+
+
+def test_stored_anchor_level_matches_a_direct_entry_anchor_recomputation(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+    _, new_idea = attempt_entry(
+        setup["state"],
+        _T,
+        setup["view"],
+        setup["adapter"],
+        _params(rho=1.0),
+        setup["persona"],
+        setup["rules"],
+        setup["traits"],
+        setup["universe"],
+        setup["config"],
+        setup["catalogue"],
+        _rng_for(setup["config"], _PM_ID),
+        attempt=0,
+    )
+    assert new_idea is not None
+    expected = ideas_module.anchoring.entry_anchor(
+        setup["adapter"],
+        new_idea.position.series,
+        new_idea.idea.entry_level,
+        new_idea.idea.target_level,
+    )
+    assert new_idea.position.anchor_level == expected

@@ -1,9 +1,9 @@
 """Anchoring: an idea's exit is pulled toward a nearby round level instead of its target.
 
-At entry, a candidate anchor sits at the round level 40% of the way from
-entry to target - a salient prior level, after Northcraft and Neale (1987).
-With probability rho, drawn once at entry, the idea exits there instead of
-at target.
+At entry, a candidate anchor sits at the round level `ANCHOR_FRACTION` of the
+way from entry to target - a salient prior level, after Northcraft and Neale
+(1987). With probability rho, drawn once at entry, the idea exits there
+instead of at target.
 """
 
 from dataclasses import dataclass
@@ -30,7 +30,8 @@ class AnchoredExit:
 def entry_anchor(
     adapter: "Adapter", series: Series, entry_level: float, target_level: float
 ) -> float | None:
-    """The round level 40% of the way from entry to target, or None if it does not qualify.
+    """The round level `ANCHOR_FRACTION` of the way from entry to target, or None if it does
+    not qualify.
 
     Only a round level strictly between entry and target, in the direction from one to
     the other, shortens the trade; one that rounds onto or past the target, or back onto
@@ -50,6 +51,7 @@ def evaluate(pos: Position, level_now: float) -> AnchoredExit:
         return AnchoredExit(
             anchor_level=pos.anchor_level, effective_exit_level=pos.target_level, reached=False
         )
+    assert pos.anchor_level is not None, "an anchored idea always has an anchor, set at entry"
     fav = -pos.adverse_dir
     reached = (level_now - pos.anchor_level) * fav >= 0
     return AnchoredExit(

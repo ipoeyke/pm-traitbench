@@ -35,7 +35,13 @@ def _params(*, active: bool) -> EffectiveParams:
 
 
 def _position(
-    *, series: Series, side: Side, entry_level: float, target_level: float, anchor_level, anchored
+    *,
+    series: Series,
+    side: Side,
+    entry_level: float,
+    target_level: float,
+    anchor_level: float | None,
+    anchored: bool,
 ) -> Position:
     leg = Leg(instrument_id="X", tenor=None, side=side, weight=1.0)
     return Position(

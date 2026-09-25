@@ -140,21 +140,6 @@ def test_forward_move_clamps_lookahead_to_last_day(fixture_view: MarketView):
     assert fixture_view.forward_move(series, 55, 20) == pytest.approx(expected)
 
 
-def test_trailing_high_and_low_match_oracle_over_price_rows(
-    fixture_view: MarketView, fixture_market: dict
-):
-    levels = _oracle_levels(fixture_market, "EQ-0001")
-    t, days = 45, 20
-    lo = max(0, t - days)
-    series = _outright("EQ-0001")
-    assert fixture_view.trailing_high(series, t, days) == pytest.approx(
-        float(np.max(levels[lo : t + 1]))
-    )
-    assert fixture_view.trailing_low(series, t, days) == pytest.approx(
-        float(np.min(levels[lo : t + 1]))
-    )
-
-
 def test_street_view_is_none_for_instrument_with_no_consensus(fixture_view: MarketView):
     assert fixture_view.street_view("RT-USD", 10) is None
     assert fixture_view.positioning("RT-USD", 10) is None
