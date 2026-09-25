@@ -35,13 +35,13 @@ _CURVE_LEGS = (
 DEFAULT_DATE = date(2026, 1, 5)
 
 
-def test_flag_prefix_param_covers_bias_params_except_extrapolation():
+def test_flag_prefix_param_covers_bias_params_except_extrapolation() -> None:
     assert set(FLAG_PREFIX_PARAM.values()) <= set(BIAS_PARAMS)
     assert set(BIAS_PARAMS) - set(FLAG_PREFIX_PARAM.values()) == {"extrapolation_theta"}
 
 
 @pytest.mark.parametrize("prefix,param", sorted(FLAG_PREFIX_PARAM.items()))
-def test_each_flag_prefix_maps_to_its_bias(prefix, param):
+def test_each_flag_prefix_maps_to_its_bias(prefix, param) -> None:
     pattern = REVEALED_PATTERNS[param][0]
     inputs = plan_inputs(
         traits=(bias_trait(param, trait_id="t_01"),),
@@ -54,7 +54,7 @@ def test_each_flag_prefix_maps_to_its_bias(prefix, param):
     )
 
 
-def test_semicolon_joined_flag_yields_one_carrier_per_flag():
+def test_semicolon_joined_flag_yields_one_carrier_per_flag() -> None:
     inputs = plan_inputs(
         traits=(
             bias_trait("loss_aversion_lambda", trait_id="t_01"),
@@ -68,7 +68,7 @@ def test_semicolon_joined_flag_yields_one_carrier_per_flag():
     assert len(pools["t_02"]) == 1
 
 
-def test_flag_on_inactive_bias_yields_nothing():
+def test_flag_on_inactive_bias_yields_nothing() -> None:
     inputs = plan_inputs(
         traits=(bias_trait("loss_aversion_lambda", trait_id="t_01", active=False),),
         ideas={"ti_001": idea_row()},
@@ -78,7 +78,7 @@ def test_flag_on_inactive_bias_yields_nothing():
     assert "t_01" not in pools
 
 
-def test_hold_flags_count_only_first_day_per_idea():
+def test_hold_flags_count_only_first_day_per_idea() -> None:
     inputs = plan_inputs(
         traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
         ideas={"ti_001": idea_row()},
@@ -93,7 +93,32 @@ def test_hold_flags_count_only_first_day_per_idea():
     )
 
 
-def test_loss_aversion_add_on_position_days_yields_every_day():
+def test_hold_first_day_skips_a_dormant_day_so_a_later_hold_still_counts() -> None:
+    """The idea's first flagged hold day falls in a dormant window and gets filtered out by
+    dormancy; the rule must not have already spent its "first day" on that dormant day, or
+    the hold that continues after the revive would get no carrier at all.
+    """
+    dormant_date = date(2026, 1, 5)
+    revive_date = date(2026, 1, 12)
+    inputs = plan_inputs(
+        traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
+        ideas={"ti_001": idea_row()},
+        position_days=(
+            position_day(date=dormant_date, bias_flag="loss_aversion:hold"),
+            position_day(date=revive_date, bias_flag="loss_aversion:hold"),
+        ),
+        drift_events=(
+            drift_event("t_01", dormant_date, DriftEventType.DORMANT),
+            drift_event("t_01", revive_date, DriftEventType.REVIVE),
+        ),
+    )
+    pools = carrier_pools(inputs)
+    assert pools["t_01"] == (
+        Carrier("t_01", "ti_001", revive_date, CarrierSource.POSITION_DAY, "hold"),
+    )
+
+
+def test_loss_aversion_add_on_position_days_yields_every_day() -> None:
     inputs = plan_inputs(
         traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
         ideas={"ti_001": idea_row()},
@@ -106,7 +131,7 @@ def test_loss_aversion_add_on_position_days_yields_every_day():
     assert len(pools["t_01"]) == 2
 
 
-def test_acked_no_action_and_added_are_exit_deficiency_carriers():
+def test_acked_no_action_and_added_are_exit_deficiency_carriers() -> None:
     inputs = plan_inputs(
         traits=(bias_trait("exit_deficiency", trait_id="t_01"),),
         ideas={"ti_001": idea_row()},
@@ -121,7 +146,7 @@ def test_acked_no_action_and_added_are_exit_deficiency_carriers():
     assert set(BREACH_RESPONSES) == {RuleResponse.ACKED_NO_ACTION, RuleResponse.ADDED}
 
 
-def test_added_rule_event_is_an_exit_deficiency_carrier():
+def test_added_rule_event_is_an_exit_deficiency_carrier() -> None:
     inputs = plan_inputs(
         traits=(bias_trait("exit_deficiency", trait_id="t_01"),),
         ideas={"ti_001": idea_row()},
@@ -133,7 +158,7 @@ def test_added_rule_event_is_an_exit_deficiency_carrier():
     )
 
 
-def test_acted_and_overridden_are_not_carriers():
+def test_acted_and_overridden_are_not_carriers() -> None:
     inputs = plan_inputs(
         traits=(bias_trait("exit_deficiency", trait_id="t_01"),),
         ideas={"ti_001": idea_row()},
@@ -146,7 +171,7 @@ def test_acted_and_overridden_are_not_carriers():
     assert pools["t_01"] == ()
 
 
-def test_chased_trend_counts_only_when_extrapolation_active():
+def test_chased_trend_counts_only_when_extrapolation_active() -> None:
     idea = idea_row(chased_trend=True)
     inactive_inputs = plan_inputs(
         traits=(bias_trait("extrapolation_theta", trait_id="t_01", active=False),),
@@ -164,7 +189,7 @@ def test_chased_trend_counts_only_when_extrapolation_active():
     )
 
 
-def test_same_day_ledger_and_position_day_flag_dedupe_to_one_ledger_carrier():
+def test_same_day_ledger_and_position_day_flag_dedupe_to_one_ledger_carrier() -> None:
     inputs = plan_inputs(
         traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
         ideas={"ti_001": idea_row()},
@@ -175,7 +200,7 @@ def test_same_day_ledger_and_position_day_flag_dedupe_to_one_ledger_carrier():
     assert pools["t_01"] == (Carrier("t_01", "ti_001", DEFAULT_DATE, CarrierSource.LEDGER, "add"),)
 
 
-def test_dormant_window_carriers_are_dropped():
+def test_dormant_window_carriers_are_dropped() -> None:
     inputs = plan_inputs(
         traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
         ideas={"ti_001": idea_row()},
@@ -189,7 +214,7 @@ def test_dormant_window_carriers_are_dropped():
     assert pools["t_01"] == ()
 
 
-def test_unknown_prefix_raises_plan_error():
+def test_unknown_prefix_raises_plan_error() -> None:
     inputs = plan_inputs(
         ideas={"ti_001": idea_row()},
         ledger=(ledger_row(bias_flag="mystery:pattern"),),
@@ -198,7 +223,7 @@ def test_unknown_prefix_raises_plan_error():
         carrier_pools(inputs)
 
 
-def test_unknown_pattern_for_known_prefix_raises_plan_error():
+def test_unknown_pattern_for_known_prefix_raises_plan_error() -> None:
     inputs = plan_inputs(
         traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
         ideas={"ti_001": idea_row()},
@@ -208,7 +233,7 @@ def test_unknown_pattern_for_known_prefix_raises_plan_error():
         carrier_pools(inputs)
 
 
-def test_expression_preference_carriers_track_value_in_force():
+def test_expression_preference_carriers_track_value_in_force() -> None:
     trait = pref_trait("duration_expression", "steepeners over outright duration", trait_id="t_50")
     curve_idea = idea_row(
         trade_idea_id="ti_001",
@@ -242,13 +267,13 @@ def test_expression_preference_carriers_track_value_in_force():
     )
 
 
-def test_every_active_bias_key_exists_even_with_empty_pool():
+def test_every_active_bias_key_exists_even_with_empty_pool() -> None:
     inputs = plan_inputs(traits=(bias_trait("anchoring_rho", trait_id="t_01"),))
     pools = carrier_pools(inputs)
     assert pools == {"t_01": ()}
 
 
-def test_ledger_hold_flag_does_not_suppress_position_day_first_day():
+def test_ledger_hold_flag_does_not_suppress_position_day_first_day() -> None:
     """The hold-flag first-day rule is per `position_days`; a ledger row never claims it."""
     inputs = plan_inputs(
         traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
@@ -266,7 +291,7 @@ def test_ledger_hold_flag_does_not_suppress_position_day_first_day():
     )
 
 
-def test_carrier_patterns_are_all_known_revealed_patterns():
+def test_carrier_patterns_are_all_known_revealed_patterns() -> None:
     """Build a carrier from every flag, hold flag, rule-event and chased_trend pattern and
     check each lands in the bank for its bias, with the exact count built for it.
     """

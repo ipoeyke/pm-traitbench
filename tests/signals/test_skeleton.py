@@ -44,7 +44,7 @@ def _sid(day, letter: int = 0) -> str:
 # --- forbidden_sets -------------------------------------------------------------------------
 
 
-def test_forbidden_sets_lists_only_inactive_biases_and_unheld_asset_class_prefs():
+def test_forbidden_sets_lists_only_inactive_biases_and_unheld_asset_class_prefs() -> None:
     active_param = BIAS_PARAMS[0]
     traits = tuple(
         bias_trait(param, active=(param == active_param), trait_id=f"t_{i:02d}")
@@ -66,7 +66,7 @@ def test_forbidden_sets_lists_only_inactive_biases_and_unheld_asset_class_prefs(
     assert unheld == tuple(sorted(unheld))
 
 
-def test_forbidden_sets_appear_on_every_skeleton_even_with_a_third_party_stance():
+def test_forbidden_sets_appear_on_every_skeleton_even_with_a_third_party_stance() -> None:
     inactive_trait_id = "t_01"
     traits = tuple(
         bias_trait(param, active=(param != "loss_aversion_lambda"), trait_id=f"t_{i:02d}")
@@ -166,7 +166,7 @@ def _revealed_bias_stance(trait_param: str, trait_id: str, pattern: str, idea):
     return skeletons[0].stances[0].stance
 
 
-def test_revealed_bias_stance_names_carrier_instrument_and_entry_level():
+def test_revealed_bias_stance_names_carrier_instrument_and_entry_level() -> None:
     # Every 'add' line for loss_aversion_lambda quotes both {instrument} and {entry}.
     idea = idea_row(
         trade_idea_id="ti_001",
@@ -180,7 +180,7 @@ def test_revealed_bias_stance_names_carrier_instrument_and_entry_level():
     assert "{" not in text
 
 
-def test_revealed_bias_stance_names_carrier_target_level():
+def test_revealed_bias_stance_names_carrier_target_level() -> None:
     # Every 'realise_gain_early' line for disposition_ratio quotes {instrument} and {target}.
     idea = idea_row(
         trade_idea_id="ti_002",
@@ -197,7 +197,7 @@ def test_revealed_bias_stance_names_carrier_target_level():
 # --- claim and revealed pair on separate sessions ---------------------------------------------
 
 
-def test_claim_and_carrier_stances_share_the_contradiction_signal_id():
+def test_claim_and_carrier_stances_share_the_contradiction_signal_id() -> None:
     claim_day = TRADING_DAYS[0]
     carrier_day = TRADING_DAYS[5]
     idea = idea_row(trade_idea_id="ti_001", entry_date=carrier_day)
@@ -254,7 +254,7 @@ def test_claim_and_carrier_stances_share_the_contradiction_signal_id():
 # --- preference drift -------------------------------------------------------------------------
 
 
-def test_preference_stance_after_drift_uses_new_value_and_note_names_both():
+def test_preference_stance_after_drift_uses_new_value_and_note_names_both() -> None:
     drift_day = TRADING_DAYS[10]
     after_day = TRADING_DAYS[20]
 
@@ -334,7 +334,7 @@ def test_preference_stance_after_drift_uses_new_value_and_note_names_both():
 # --- third-party preference --------------------------------------------------------------------
 
 
-def test_third_party_preference_stance_names_value_and_who():
+def test_third_party_preference_stance_names_value_and_who() -> None:
     day = TRADING_DAYS[0]
 
     trait = pref_trait("response_format", "short bullets", trait_id="t_90")
@@ -376,7 +376,7 @@ def test_third_party_preference_stance_names_value_and_who():
 # --- advisor violation ------------------------------------------------------------------------
 
 
-def test_advisor_violation_set_exactly_with_revealed_reaction_and_names_value():
+def test_advisor_violation_set_exactly_with_revealed_reaction_and_names_value() -> None:
     day = TRADING_DAYS[0]
 
     trait = pref_trait("response_format", "short bullets", trait_id="t_90")
@@ -446,7 +446,7 @@ def test_advisor_violation_set_exactly_with_revealed_reaction_and_names_value():
 # --- validation, silence and determinism -------------------------------------------------------
 
 
-def test_silence_skeleton_has_no_stances_and_full_run_validates():
+def test_silence_skeleton_has_no_stances_and_full_run_validates() -> None:
     days = TRADING_DAYS[:30]
     ledger_rows = tuple(
         ledger_row(date=d, trade_idea_id=f"ti_{i:03d}", bias_flag="loss_aversion:add")
@@ -492,7 +492,7 @@ def test_silence_skeleton_has_no_stances_and_full_run_validates():
     assert silence_skeleton.advisor_violation is None
 
 
-def test_equal_seeds_give_equal_output():
+def test_equal_seeds_give_equal_output() -> None:
     days = TRADING_DAYS[:30]
     ledger_rows = tuple(
         ledger_row(date=d, trade_idea_id=f"ti_{i:03d}", bias_flag="loss_aversion:add")
@@ -521,7 +521,7 @@ def test_equal_seeds_give_equal_output():
 # --- revealed preference (expression) stance -----------------------------------------------------
 
 
-def test_revealed_preference_stance_names_value_and_instrument():
+def test_revealed_preference_stance_names_value_and_instrument() -> None:
     day = TRADING_DAYS[0]
 
     trait = pref_trait("pair_vs_outright", "express the view as a pair trade", trait_id="t_90")

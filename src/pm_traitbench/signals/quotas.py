@@ -246,12 +246,16 @@ def _trait_confirm_signals(
         ]
     )
     modes = _mode_sequence(n, weights, rng)
-    has_pool = bool(pools.get(trait.trait_id))
+    pool = pools.get(trait.trait_id, ())
 
     signals = []
     mode_iter = iter(modes)
     for segment, count in zip(segments, counts, strict=True):
         window = DateWindow(segment[0], segment[-1])
+        # A preference's revealed signals need a carrier only where its pool actually has
+        # one: a drift across a mapped/unmapped expression form can leave one segment
+        # without any, and that segment's revealed signals fall back to an advisor reaction.
+        has_pool = any(window.first <= c.date <= window.last for c in pool)
         for _ in range(count):
             mode = next(mode_iter)
             entry, needs_carrier = _bias_entry(mode) if is_bias else _pref_entry(mode, has_pool)

@@ -67,7 +67,7 @@ def _revealed(
 # --- carrier placement -------------------------------------------------------------------
 
 
-def test_carrier_signals_land_on_carrier_dates_with_no_reuse():
+def test_carrier_signals_land_on_carrier_dates_with_no_reuse() -> None:
     days = TRADING_DAYS[:30]
     ledger_rows = tuple(
         ledger_row(date=d, trade_idea_id=f"ti_{i:03d}", bias_flag="loss_aversion:add")
@@ -92,7 +92,7 @@ def test_carrier_signals_land_on_carrier_dates_with_no_reuse():
     assert len(carrier_placements) == len({ps.carrier for ps in carrier_placements})
 
 
-def test_two_carriers_and_six_signals_places_two_and_warns_four_times():
+def test_two_carriers_and_six_signals_places_two_and_warns_four_times() -> None:
     inputs = plan_inputs()
     trait_id = "t_01"
     c1 = Carrier(trait_id, "ti_001", TRADING_DAYS[0], CarrierSource.LEDGER, "add")
@@ -117,7 +117,7 @@ def test_two_carriers_and_six_signals_places_two_and_warns_four_times():
 # --- contradiction claims ------------------------------------------------------------------
 
 
-def test_contradiction_carrier_filter_respects_claim_lead_days_floor():
+def test_contradiction_carrier_filter_respects_claim_lead_days_floor() -> None:
     """A carrier inside the window but too close to the horizon start cannot back a
     contradiction (no room left for its claim), even though the very same carrier is
     eligible for a plain revealed signal.
@@ -142,7 +142,7 @@ def test_contradiction_carrier_filter_respects_claim_lead_days_floor():
     assert placed[0].date == early_date
 
 
-def test_contradiction_dropped_for_no_claim_day_leaves_carrier_unused():
+def test_contradiction_dropped_for_no_claim_day_leaves_carrier_unused() -> None:
     """Every trading day in the carrier's whole claim window is dormant for the trait, so no
     claim day qualifies even though the carrier itself clears the `claim_lead_days[0]` floor.
     """
@@ -167,7 +167,7 @@ def test_contradiction_dropped_for_no_claim_day_leaves_carrier_unused():
     assert not any(s.date == carrier_date for s in assembly.sessions)
 
 
-def test_contradiction_claim_precedes_carrier_by_10_to_40_trading_days():
+def test_contradiction_claim_precedes_carrier_by_10_to_40_trading_days() -> None:
     inputs = plan_inputs()
     trait_id = "t_01"
     knobs = Config().plan
@@ -191,7 +191,7 @@ def test_contradiction_claim_precedes_carrier_by_10_to_40_trading_days():
 # --- capacity --------------------------------------------------------------------------
 
 
-def test_capacity_rules_hold_across_sessions():
+def test_capacity_rules_hold_across_sessions() -> None:
     inputs = plan_inputs()
     knobs = Config().plan
     window = DateWindow(TRADING_DAYS[0], TRADING_DAYS[0])
@@ -208,7 +208,7 @@ def test_capacity_rules_hold_across_sessions():
         assert len(reactions) <= 1
 
 
-def test_cap_of_one_isolates_every_stance():
+def test_cap_of_one_isolates_every_stance() -> None:
     inputs = plan_inputs()
     knobs = Config().plan.model_copy(update={"max_signals_per_session": 1})
     window = DateWindow(TRADING_DAYS[0], TRADING_DAYS[3])
@@ -224,7 +224,7 @@ def test_cap_of_one_isolates_every_stance():
 # --- packable ----------------------------------------------------------------------------
 
 
-def test_packable_signals_avoid_dormant_windows_and_stay_in_window():
+def test_packable_signals_avoid_dormant_windows_and_stay_in_window() -> None:
     inputs = plan_inputs(
         drift_events=(
             drift_event("t_01", TRADING_DAYS[10], DriftEventType.DORMANT),
@@ -246,7 +246,7 @@ def test_packable_signals_avoid_dormant_windows_and_stay_in_window():
 # --- drift notes -------------------------------------------------------------------------
 
 
-def test_drift_note_opens_new_session_when_none_has_room():
+def test_drift_note_opens_new_session_when_none_has_room() -> None:
     inputs = plan_inputs()
     knobs = Config().plan.model_copy(update={"max_signals_per_session": 1})
     drift_date = TRADING_DAYS[30]
@@ -270,7 +270,10 @@ def test_drift_note_opens_new_session_when_none_has_room():
     assert len([s for s in assembly.sessions if s.date == drift_date]) >= 2
 
 
-def test_drift_note_joins_earliest_existing_session_on_or_after_its_date():
+def test_drift_note_lands_on_its_own_date_even_when_a_later_session_has_room() -> None:
+    """A note never trades its own event date for room elsewhere: it opens a session at
+    its own date rather than joining a session on a later day that has space to spare.
+    """
     inputs = plan_inputs()
     knobs = Config().plan
     drift_date = TRADING_DAYS[50]
@@ -290,14 +293,134 @@ def test_drift_note_joins_earliest_existing_session_on_or_after_its_date():
 
     note_row = next(r for r in assembly.signals if r.trait_id == "t_01")
     other_row = next(r for r in assembly.signals if r.trait_id == "t_02")
-    assert note_row.date == later_day
-    assert note_row.session_id == other_row.session_id
+    assert note_row.date == drift_date
+    assert note_row.session_id != other_row.session_id
+
+
+def test_drift_note_joins_a_session_already_placed_on_its_own_date() -> None:
+    inputs = plan_inputs()
+    knobs = Config().plan
+    drift_date = TRADING_DAYS[50]
+    carrier = Carrier("t_02", "ti_001", drift_date, CarrierSource.LEDGER, "add")
+    pools = {"t_02": (carrier,)}
+    revealed = _revealed("t_02", DateWindow(drift_date, drift_date))
+    note = PlannedSignal(
+        trait_id="t_01",
+        mode=SignalMode.STATED,
+        valence=Valence.CONFIRM,
+        ownership=Ownership.SELF,
+        entry=StanceEntry.DRIFT_UPDATE,
+        window=DateWindow(drift_date, TRADING_DAYS[-1]),
+        needs_carrier=False,
+        drift_date=drift_date,
+    )
+    assembly = assemble(inputs, [revealed, note], pools, knobs, _rng(8))
+
+    note_row = next(r for r in assembly.signals if r.trait_id == "t_01")
+    carrier_row = next(r for r in assembly.signals if r.trait_id == "t_02")
+    assert note_row.date == drift_date
+    assert note_row.session_id == carrier_row.session_id
+
+
+def test_drift_notes_open_a_second_same_day_session_rather_than_skip_ahead() -> None:
+    """With every candidate day full, a dormant note and its revive note still land on
+    their own event dates, each opening a second session on its own day, and the dormant
+    note still precedes the revive it announces the end of.
+    """
+    inputs = plan_inputs()
+    knobs = Config().plan.model_copy(update={"max_signals_per_session": 1})
+    trait_id = "t_01"
+    dormant_date = TRADING_DAYS[40]
+    revive_date = TRADING_DAYS[60]
+    c1 = Carrier("t_02", "ti_001", dormant_date, CarrierSource.LEDGER, "add")
+    c2 = Carrier("t_03", "ti_002", revive_date, CarrierSource.LEDGER, "add")
+    pools = {"t_02": (c1,), "t_03": (c2,)}
+    r1 = _revealed("t_02", DateWindow(dormant_date, dormant_date))
+    r2 = _revealed("t_03", DateWindow(revive_date, revive_date))
+    dormant_note = PlannedSignal(
+        trait_id=trait_id,
+        mode=SignalMode.STATED,
+        valence=Valence.CONFIRM,
+        ownership=Ownership.SELF,
+        entry=StanceEntry.DRIFT_DORMANT,
+        window=DateWindow(dormant_date, TRADING_DAYS[-1]),
+        needs_carrier=False,
+        drift_date=dormant_date,
+    )
+    revive_note = PlannedSignal(
+        trait_id=trait_id,
+        mode=SignalMode.STATED,
+        valence=Valence.CONFIRM,
+        ownership=Ownership.SELF,
+        entry=StanceEntry.DRIFT_REVIVE,
+        window=DateWindow(revive_date, TRADING_DAYS[-1]),
+        needs_carrier=False,
+        drift_date=revive_date,
+    )
+    assembly = assemble(inputs, [r1, r2, dormant_note, revive_note], pools, knobs, _rng(13))
+
+    placed = [
+        ps
+        for session in assembly.sessions
+        for ps in session.signals
+        if ps.planned.trait_id == trait_id
+    ]
+    dormant_row = next(ps for ps in placed if ps.planned.entry == StanceEntry.DRIFT_DORMANT)
+    revive_row = next(ps for ps in placed if ps.planned.entry == StanceEntry.DRIFT_REVIVE)
+    assert dormant_row.date == dormant_date
+    assert revive_row.date == revive_date
+    assert dormant_row.date < revive_row.date
+    assert len({s.session_id for s in assembly.sessions if s.date == dormant_date}) == 2
+    assert len({s.session_id for s in assembly.sessions if s.date == revive_date}) == 2
+
+
+# --- drift-side warnings -----------------------------------------------------------------
+
+
+def test_drift_side_warning_names_a_segment_that_lost_every_signal_to_a_carrier_shortfall() -> None:
+    """The after-side revealed signals all drop for lack of any carrier, so that segment's
+    only confirming evidence is its own drift note - and it still gets warned about even
+    though it is not empty of *planned* signals, only of *placed* ones.
+    """
+    inputs = plan_inputs()
+    knobs = Config().plan
+    trait_id = "t_01"
+    update_date = TRADING_DAYS[100]
+    before_window = DateWindow(TRADING_DAYS[0], TRADING_DAYS[99])
+    after_window = DateWindow(update_date, TRADING_DAYS[-1])
+    before_signals = [_stated(trait_id, before_window) for _ in range(knobs.drift_min_per_side)]
+    after_signals = [_revealed(trait_id, after_window) for _ in range(knobs.drift_min_per_side)]
+    note = PlannedSignal(
+        trait_id=trait_id,
+        mode=SignalMode.STATED,
+        valence=Valence.CONFIRM,
+        ownership=Ownership.SELF,
+        entry=StanceEntry.DRIFT_UPDATE,
+        window=after_window,
+        needs_carrier=False,
+        drift_date=update_date,
+    )
+    planned = [*before_signals, *after_signals, note]
+    assembly = assemble(inputs, planned, {}, knobs, _rng(40))
+
+    placed_after_revealed = [
+        row
+        for row in assembly.signals
+        if row.trait_id == trait_id and row.mode == SignalMode.REVEALED and row.date >= update_date
+    ]
+    assert placed_after_revealed == []
+    expected = (
+        f"{inputs.persona.pm_id} {trait_id}: drift side {update_date}..{TRADING_DAYS[-1]} "
+        f"has 1 signals, below {knobs.drift_min_per_side}"
+    )
+    assert expected in assembly.warnings
+    assert not any(f"drift side {before_window.first}" in w for w in assembly.warnings)
 
 
 # --- ledger sessions ---------------------------------------------------------------------
 
 
-def test_ledger_sessions_hold_qualifying_orders_and_are_decisions():
+def test_ledger_sessions_hold_qualifying_orders_and_are_decisions() -> None:
     days = TRADING_DAYS[:10]
     rows = tuple(
         ledger_row(date=d, trade_idea_id=f"ti_{i:03d}", risk_amount=float(i))
@@ -319,7 +442,7 @@ def test_ledger_sessions_hold_qualifying_orders_and_are_decisions():
 # --- filler ------------------------------------------------------------------------------
 
 
-def test_filler_keeps_signal_session_share_within_cap_when_free_days_suffice():
+def test_filler_keeps_signal_session_share_within_cap_when_free_days_suffice() -> None:
     inputs = plan_inputs()
     knobs = Config().plan
     window = DateWindow(TRADING_DAYS[0], TRADING_DAYS[50])
@@ -331,7 +454,7 @@ def test_filler_keeps_signal_session_share_within_cap_when_free_days_suffice():
     assert signal_sessions / total <= knobs.signal_session_cap + 1e-9
 
 
-def test_filler_warns_when_cap_cannot_be_met_on_a_short_horizon():
+def test_filler_warns_when_cap_cannot_be_met_on_a_short_horizon() -> None:
     days = TRADING_DAYS[:5]
     inputs = plan_inputs(trading_days=days)
     knobs = Config().plan
@@ -344,7 +467,7 @@ def test_filler_warns_when_cap_cannot_be_met_on_a_short_horizon():
 # --- ids ---------------------------------------------------------------------------------
 
 
-def test_session_and_signal_ids():
+def test_session_and_signal_ids() -> None:
     inputs = plan_inputs()
     knobs = Config().plan
     window = DateWindow(TRADING_DAYS[0], TRADING_DAYS[0])
@@ -362,7 +485,7 @@ def test_session_and_signal_ids():
     assert ids == [f"sg_{n:03d}" for n in range(1, len(ids) + 1)]
 
 
-def test_session_id_past_z_raises_plan_error():
+def test_session_id_past_z_raises_plan_error() -> None:
     with pytest.raises(PlanError):
         session_id("pm_001", TRADING_DAYS[0], 26)
     assert session_id("pm_001", TRADING_DAYS[0], 0).endswith("_a")
@@ -371,7 +494,7 @@ def test_session_id_past_z_raises_plan_error():
 # --- counts ------------------------------------------------------------------------------
 
 
-def test_counts_are_internally_consistent():
+def test_counts_are_internally_consistent() -> None:
     days = TRADING_DAYS[:200]
     ledger_rows = tuple(
         ledger_row(
@@ -416,7 +539,7 @@ def test_counts_are_internally_consistent():
 # --- validity and determinism -------------------------------------------------------------
 
 
-def test_rows_validate_and_same_seed_gives_equal_assembly():
+def test_rows_validate_and_same_seed_gives_equal_assembly() -> None:
     days = TRADING_DAYS[:120]
     ledger_rows = tuple(
         ledger_row(

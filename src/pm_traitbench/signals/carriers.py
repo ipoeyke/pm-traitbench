@@ -110,12 +110,15 @@ def carrier_pools(inputs: PlanInputs) -> dict[str, tuple[Carrier, ...]]:
                     raise PlanError(
                         f"PM '{pm_id}': flag '{flag}' pattern is not a known '{param}' pattern"
                     )
+                trait = active_biases.get(param)
                 if flag in HOLD_FLAGS and source is CarrierSource.POSITION_DAY:
+                    dormant = trait is not None and inputs.is_dormant(trait.trait_id, row.date)
                     hold_key = (row.trade_idea_id, flag)
-                    if hold_key in hold_seen:
-                        continue
-                    hold_seen.add(hold_key)
-                emit(active_biases.get(param), row.trade_idea_id, row.date, source, pattern)
+                    if not dormant:
+                        if hold_key in hold_seen:
+                            continue
+                        hold_seen.add(hold_key)
+                emit(trait, row.trade_idea_id, row.date, source, pattern)
 
     exit_trait = active_biases.get("exit_deficiency")
     for event in inputs.rule_events:

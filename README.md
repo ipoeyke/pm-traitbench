@@ -526,18 +526,25 @@ Every revealed stance line is keyed by the specific engine action behind its
 carrier, not just the bias it plants, so the line drawn always matches what
 the engine actually logged that day. A signal with no carrier to point at
 (too few qualifying rows, or the window already used up) is dropped rather
-than backfilled with another mode. Signals that need no carrier - stated and
-third-party rows, drift notes, retractions - pack into existing sessions up
-to `plan.max_signals_per_session` (default 2), never two stances of the same
-trait or more than one advisor-violation stance in a session.
+than backfilled with another mode. An expression preference's revealed
+signals need a carrier only where its own pool has one dated inside that
+signal's segment; a segment left without a carrier (a drift across a mapped
+and an unmapped form) falls back to an advisor-reaction signal instead of
+being dropped. Signals that need no carrier - stated and third-party rows,
+retractions - pack into existing sessions up to
+`plan.max_signals_per_session` (default 2), never two stances of the same
+trait or more than one advisor-violation stance in a session. A drift note
+instead anchors at its own event: it sits on the first trading day on or
+after the event date, joining an existing session there if one has room and
+opening a new one otherwise, and never lands on a later date.
 
 A shortfall never fails the run: too few revealed signals placed against
-their planted quota, a drift window with fewer confirming signals than
-`plan.drift_min_per_side` on one side, or the session cap that could not be
-met for lack of free trading days are all warnings in
-`run_metadata/plan.json`, in PM order. Multi-asset PMs are skipped, the same
-PMs the engine stage already skipped, and are listed under `skipped` in the
-plan's own run metadata.
+their planted quota, a drifted trait's segment with fewer confirming
+signals (its placed confirm signals plus the drift notes that land in it)
+than `plan.drift_min_per_side`, or the session cap that could not be met for
+lack of free trading days are all warnings in `run_metadata/plan.json`, in
+PM order. Multi-asset PMs are skipped, the same PMs the engine stage already
+skipped, and are listed under `skipped` in the plan's own run metadata.
 
 ## Development
 

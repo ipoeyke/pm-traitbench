@@ -21,7 +21,7 @@ from pm_traitbench.enums import Ownership, SessionKind, SignalMode, StanceEntry,
 from pm_traitbench.errors import PlanError
 from pm_traitbench.signals.carriers import Carrier
 from pm_traitbench.signals.inputs import PlanInputs
-from pm_traitbench.signals.quotas import PlannedSignal
+from pm_traitbench.signals.quotas import DateWindow, PlannedSignal
 from pm_traitbench.tables.schema import Signal
 
 
@@ -90,7 +90,9 @@ class _DraftSession:
     letter_rank: int = 0
 
     def has_room(self, trait_id: str, entry: StanceEntry, cap: int) -> bool:
-        """Whether this session can take one more stance of `trait_id`, per the shared rule."""
+        """Whether this session can take one more stance: not a forced filler session, under
+        `cap` stances, no stance of this trait yet, and at most one `revealed_reaction`.
+        """
         if self.forced_kind is not None:
             return False
         if len(self.slots) >= cap:
@@ -232,6 +234,28 @@ def assemble(
         record.claim_session = claim_session
         record.claim_date = claim_day
 
+    # Drift notes, in drift_date order: each note sits on the first trading day on or after
+    # its event, joining an existing session there if one has room, else opening a new one.
+    # It never moves to a later date, so it always precedes any same-trait signal or note of
+    # a later event.
+    drift_pairs = sorted(
+        ((i, s) for i, s in enumerate(planned) if s.drift_date is not None),
+        key=lambda pair: pair[1].drift_date,
+    )
+    for i, s in drift_pairs:
+        assert s.drift_date is not None
+        day = next((d for d in inputs.trading_days if d >= s.drift_date), None)
+        if day is None:
+            raise PlanError(
+                f"PM '{pm_id}': trait '{s.trait_id}' has a drift event on {s.drift_date} "
+                "after the PM's last trading day"
+            )
+        session = find_room(day, s.trait_id, s.entry) or new_session(day)
+        record = _Record(planned=s)
+        record.main_order = place(session, s.trait_id, s.entry, record)
+        record.main_session = session
+        records[i] = record
+
     # Every remaining non-note signal, in random order.
     packable = [
         (i, s) for i, s in enumerate(planned) if not s.needs_carrier and s.drift_date is None
@@ -259,39 +283,6 @@ def assemble(
             session = candidates[rng.integers(len(candidates))]
         else:
             day = allowed_dates[rng.integers(len(allowed_dates))]
-            session = new_session(day)
-        record = _Record(planned=s)
-        record.main_order = place(session, s.trait_id, s.entry, record)
-        record.main_session = session
-        records[i] = record
-
-    # Drift notes, in drift_date order.
-    drift_pairs = sorted(
-        ((i, s) for i, s in enumerate(planned) if s.drift_date is not None),
-        key=lambda pair: pair[1].drift_date,
-    )
-    for i, s in drift_pairs:
-        assert s.drift_date is not None
-        candidates = sorted(
-            (
-                session
-                for lst in by_date.values()
-                for session in lst
-                if session.date >= s.drift_date
-            ),
-            key=lambda session: session.date,
-        )
-        session = next(
-            (c for c in candidates if c.has_room(s.trait_id, s.entry, cap)),
-            None,
-        )
-        if session is None:
-            day = next((d for d in inputs.trading_days if d >= s.drift_date), None)
-            if day is None:
-                raise PlanError(
-                    f"PM '{pm_id}': trait '{s.trait_id}' has a drift event on {s.drift_date} "
-                    "after the PM's last trading day"
-                )
             session = new_session(day)
         record = _Record(planned=s)
         record.main_order = place(session, s.trait_id, s.entry, record)
@@ -353,6 +344,8 @@ def assemble(
     )
     for n, record in enumerate(ordered_records, start=1):
         record.signal_id = f"sg_{n:03d}"
+
+    warnings.extend(_drift_side_warnings(pm_id, planned, ordered_records, knobs))
 
     placed_by_record: dict[int, PlacedSignal] = {}
     for record in ordered_records:
@@ -426,6 +419,61 @@ def assemble(
     )
 
 
+def _is_trait_confirm(s: PlannedSignal) -> bool:
+    """Whether `s` is one of the trait's own self-owned confirm signals, not a note, a
+    retraction or a row attributed to someone else.
+    """
+    return s.valence == Valence.CONFIRM and s.ownership == Ownership.SELF and s.drift_date is None
+
+
+def _drift_side_warnings(
+    pm_id: str,
+    planned: Sequence[PlannedSignal],
+    ordered_records: list[_Record],
+    knobs: PlanConfig,
+) -> list[str]:
+    """Warn for each of a drifted trait's segments whose confirming evidence - its placed
+    confirm signals plus the drift notes that land in it - falls short of `drift_min_per_side`.
+
+    Segments come from every confirm signal the trait's plan ever asked for, placed or not,
+    so a segment that lost every one of its signals to a carrier shortfall still gets counted
+    and, if it is empty, still warned about.
+    """
+    windows_by_trait: dict[str, set[DateWindow]] = {}
+    for s in planned:
+        if _is_trait_confirm(s):
+            windows_by_trait.setdefault(s.trait_id, set()).add(s.window)
+
+    warnings: list[str] = []
+    for trait_id in sorted(windows_by_trait):
+        windows = windows_by_trait[trait_id]
+        if len(windows) <= 1:
+            continue
+        segments = sorted(windows, key=lambda w: (w.first, w.last))
+        counts = [0] * len(segments)
+        for record in ordered_records:
+            p = record.planned
+            if p.trait_id == trait_id and _is_trait_confirm(p):
+                counts[segments.index(p.window)] += 1
+        for record in ordered_records:
+            p = record.planned
+            if (
+                p.trait_id == trait_id
+                and p.drift_date is not None
+                and p.entry in (StanceEntry.DRIFT_UPDATE, StanceEntry.DRIFT_REVIVE)
+            ):
+                index = next((i for i, w in enumerate(segments) if w.first >= p.drift_date), None)
+                if index is not None:
+                    counts[index] += 1
+        for window, n in zip(segments, counts, strict=True):
+            if n < knobs.drift_min_per_side:
+                warnings.append(
+                    f"{pm_id} {trait_id}: drift side {window.first}..{window.last} "
+                    f"has {n} signals, below {knobs.drift_min_per_side}"
+                )
+    return warnings
+
+
 def _counts(
     inputs: PlanInputs,
     planned: Sequence[PlannedSignal],
@@ -459,7 +507,7 @@ def _counts(
     windows_by_trait: dict[str, dict[Any, int]] = {}
     for record in ordered_records:
         p = record.planned
-        if p.valence == Valence.CONFIRM and p.ownership == Ownership.SELF and p.drift_date is None:
+        if _is_trait_confirm(p):
             by_window = windows_by_trait.setdefault(p.trait_id, {})
             by_window[p.window] = by_window.get(p.window, 0) + 1
     segments: dict[str, list[int]] = {}

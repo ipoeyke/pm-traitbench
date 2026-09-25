@@ -254,7 +254,7 @@ def test_sample_market_engine_then_plan_on_synthetic_seeds(tmp_path: Path) -> No
     assert direct_asset_pms <= pms_with_skeletons
 
 
-def test_help_output_lists_the_plan_subcommand() -> None:
+def test_parser_accepts_the_plan_subcommand() -> None:
     parser = build_parser(pipeline.STAGES)
     args = parser.parse_args(["plan", "--config", str(_DEMO_CONFIG)])
     assert args.command == PLAN_STAGE.name

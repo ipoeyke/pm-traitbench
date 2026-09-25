@@ -21,13 +21,13 @@ from tests.signals.conftest import (
 )
 
 
-def test_trading_days_equals_engine_horizon():
+def test_trading_days_equals_engine_horizon() -> None:
     config = Config()
     axis = build_axis(config.timeline(), config.market.burn_in_days)
     assert trading_days(config) == tuple(axis.dates[axis.horizon])
 
 
-def test_dormant_windows_with_and_without_revive():
+def test_dormant_windows_with_and_without_revive() -> None:
     inputs = plan_inputs(
         drift_events=(
             drift_event("t_01", date(2026, 1, 10), DriftEventType.DORMANT),
@@ -42,7 +42,7 @@ def test_dormant_windows_with_and_without_revive():
     assert inputs.dormant_windows("t_02") == ()
 
 
-def test_is_dormant_boundaries():
+def test_is_dormant_boundaries() -> None:
     inputs = plan_inputs(
         drift_events=(
             drift_event("t_01", date(2026, 1, 10), DriftEventType.DORMANT),
@@ -55,7 +55,7 @@ def test_is_dormant_boundaries():
     assert inputs.is_dormant("t_01", date(2026, 2, 10)) is False
 
 
-def test_value_at_before_on_and_after_update():
+def test_value_at_before_on_and_after_update() -> None:
     inputs = plan_inputs(
         traits=(bias_trait("loss_aversion_lambda", trait_id="t_01", value=1.5, active=False),),
         drift_events=(
@@ -73,25 +73,25 @@ def test_value_at_before_on_and_after_update():
     assert inputs.value_at("t_01", date(2026, 2, 2)) == 2.5
 
 
-def test_trait_unknown_id_raises():
+def test_trait_unknown_id_raises() -> None:
     inputs = plan_inputs()
     with pytest.raises(PlanError):
         inputs.trait("t_missing")
 
 
-def test_build_inputs_skips_and_sorts_by_pm_id():
+def test_build_inputs_skips_and_sorts_by_pm_id() -> None:
     personas = [persona_for("pm_002"), persona_for("pm_001")]
     result = build_inputs(personas, [], [], [], [], [], [], (date(2026, 1, 5),), skipped=set())
     assert [inputs.persona.pm_id for inputs in result] == ["pm_001", "pm_002"]
 
 
-def test_build_inputs_respects_skipped():
+def test_build_inputs_respects_skipped() -> None:
     personas = [persona_for("pm_001"), persona_for("pm_002")]
     result = build_inputs(personas, [], [], [], [], [], [], (date(2026, 1, 5),), skipped={"pm_002"})
     assert [inputs.persona.pm_id for inputs in result] == ["pm_001"]
 
 
-def test_build_inputs_raises_on_unknown_drift_trait():
+def test_build_inputs_raises_on_unknown_drift_trait() -> None:
     personas = [persona_for("pm_001")]
     traits = [bias_trait("loss_aversion_lambda", trait_id="t_01")]
     drift_events = [drift_event("t_99", date(2026, 1, 5), DriftEventType.DORMANT)]
@@ -101,7 +101,7 @@ def test_build_inputs_raises_on_unknown_drift_trait():
         )
 
 
-def test_build_inputs_raises_on_unknown_ledger_idea():
+def test_build_inputs_raises_on_unknown_ledger_idea() -> None:
     personas = [persona_for("pm_001")]
     ideas = [idea_row(pm_id="pm_001", trade_idea_id="ti_001")]
     ledger = [ledger_row(pm_id="pm_001", trade_idea_id="ti_999")]
@@ -109,7 +109,7 @@ def test_build_inputs_raises_on_unknown_ledger_idea():
         build_inputs(personas, [], [], ideas, ledger, [], [], (date(2026, 1, 5),), skipped=set())
 
 
-def test_build_inputs_raises_on_unknown_rule_event_and_position_day_idea():
+def test_build_inputs_raises_on_unknown_rule_event_and_position_day_idea() -> None:
     personas = [persona_for("pm_001")]
     ideas = [idea_row(pm_id="pm_001", trade_idea_id="ti_001")]
     with pytest.raises(PlanError, match="pm_001.*ti_999"):

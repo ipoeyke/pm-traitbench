@@ -731,7 +731,10 @@ class PlanConfig(BaseModel):
         ge=1,
         json_schema_extra={
             "basis": "design",
-            "note": "keeps a PM's year at about 55-80 sessions without crowding one short exchange",
+            "note": (
+                "two stances per session keeps planted signals from crowding one short "
+                "exchange while holding signal-carrying sessions near the share cap"
+            ),
         },
     )
 
