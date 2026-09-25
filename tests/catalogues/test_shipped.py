@@ -201,6 +201,7 @@ def test_packaged_yaml_files_exist() -> None:
         "self_descriptions.yaml",
         "signposts.yaml",
         "theses.yaml",
+        "stances.yaml",
     ):
         assert base.joinpath(name).is_file()
 
@@ -264,6 +265,7 @@ def test_self_description_phrasings_are_lowercase_no_period_3_to_8_words() -> No
         "self_descriptions.yaml",
         "signposts.yaml",
         "theses.yaml",
+        "stances.yaml",
     ],
 )
 def test_no_em_dash_or_banned_words_in_any_shipped_file(name: str) -> None:

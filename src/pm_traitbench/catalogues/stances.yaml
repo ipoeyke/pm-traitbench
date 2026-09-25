@@ -1,0 +1,404 @@
+biases:
+  loss_aversion_lambda:
+    revealed:
+      all:
+      - add to {instrument} below your entry at {entry} instead of cutting it
+      - hold {instrument} through the stop at {stop} rather than closing it
+      - average down into {instrument} as it falls past {entry}
+    stated:
+      all:
+      - say a loss feels far worse to you than an equivalent gain
+      - tell the advisor you find it much harder to sell at a loss than to take a profit
+      - describe how losses sting more than gains ever feel good
+    claim:
+      all:
+      - tell the advisor gains and losses feel exactly the same to you
+      - say a dollar lost affects you no more than a dollar gained
+      - tell the advisor losing and winning trades never feel different
+    retract:
+      all:
+      - 'say losses hit you harder than gains, then correct yourself: they feel about the same'
+      - 'tell the advisor you struggle to cut a loss, then walk it back: it is no harder than taking profit'
+    third_party:
+      all:
+      - tell the advisor {who} feels losses far more than gains
+      - say {who} finds it much harder to sell a loser than to take a profit
+    drift_update:
+      all:
+      - tell the advisor you have been working on treating gains and losses the same way
+      - say you have started cutting losers as fast as you take profits
+    drift_dormant:
+      all:
+      - tell the advisor you have stopped holding losers longer than winners
+      - say the gap between how a loss and a gain feel has faded for you
+    drift_revive:
+      all:
+      - tell the advisor losses have started stinging more than gains again
+      - say you have slipped back into holding losers longer than winners
+  disposition_ratio:
+    revealed:
+      all:
+      - trim {instrument} well before it reaches the target at {target}
+      - sell {instrument} for a quick gain instead of letting it run toward {target}
+      - hold {instrument} through the stop at {stop} instead of closing the loss
+    stated:
+      all:
+      - say you take profits quickly but let losing positions sit
+      - tell the advisor you sell winners fast and hold losers hoping for a rebound
+      - describe how you lock in gains early and ride out the losses
+    claim:
+      all:
+      - tell the advisor you let winners run just as long as losers
+      - say you exit winning and losing positions the same way
+      - tell the advisor you cut losses just as fast as you take gains
+    retract:
+      all:
+      - 'say you sell winners fast, then correct yourself: you treat winners and losers alike'
+      - 'tell the advisor you hold losers hoping for a rebound, then take it back: you cut them just as
+        quickly'
+    third_party:
+      all:
+      - say {who} takes profits quickly but lets losers sit
+      - tell the advisor {who} sells winners fast and rides losers hoping for a bounce
+    drift_update:
+      all:
+      - tell the advisor you have been working on letting winners run longer
+      - say you have started exiting losers as quickly as winners
+    drift_dormant:
+      all:
+      - tell the advisor you have stopped selling winners early
+      - say you no longer ride losers hoping for a rebound
+    drift_revive:
+      all:
+      - tell the advisor you have slipped back into selling winners too early
+      - say you are riding losers again, hoping for a rebound
+  anchoring_rho:
+    revealed:
+      all:
+      - close {instrument} exactly at your entry price of {entry}
+      - exit {instrument} the moment it returns to a round number near {entry}
+      - flatten {instrument} right where you first bought it at {entry}
+    stated:
+      all:
+      - say your target always stays tied to the price you first paid
+      - tell the advisor you judge a position against your own entry, not fresh information
+      - describe how the price you paid shapes every target you set
+    claim:
+      all:
+      - tell the advisor your entry price barely affects your target
+      - say you reprice every position fresh each session, entry price aside
+      - tell the advisor you judge each price on today's information alone
+    retract:
+      all:
+      - 'say your target stays tied to your entry, then correct yourself: you reprice fresh each session'
+      - 'tell the advisor your entry shapes your view, then walk it back: today''s price is all that matters'
+    third_party:
+      all:
+      - say {who} keeps a target tied to the price first paid
+      - tell the advisor {who} judges a position against the entry price, not fresh information
+    drift_update:
+      all:
+      - tell the advisor you have been working on repricing fresh each session
+      - say you have started letting go of your entry price when you judge a position
+    drift_dormant:
+      all:
+      - tell the advisor your entry price no longer shapes your target
+      - say you have stopped judging a position against where you bought it
+    drift_revive:
+      all:
+      - tell the advisor your entry price has crept back into your target
+      - say you have slipped back into judging a position against where you bought it
+  extrapolation_theta:
+    revealed:
+      all:
+      - add to {instrument} after a strong run higher, chasing the move
+      - cut {instrument} after a sharp drop, selling into the fall
+      - buy more {instrument} simply because it just ran hard
+    stated:
+      all:
+      - say a strong recent run makes you expect the move to continue
+      - tell the advisor a short winning streak shifts your whole forecast
+      - describe how a run of good sessions raises your outlook
+    claim:
+      all:
+      - tell the advisor a recent run never changes your forecast
+      - say you treat any short winning or losing streak as pure noise
+      - tell the advisor your forecast ignores the last few sessions
+    retract:
+      all:
+      - 'say a strong run raises your forecast, then correct yourself: the move changes nothing'
+      - 'tell the advisor a winning streak shifts your outlook, then take it back: you treat it as noise'
+    third_party:
+      all:
+      - say {who} expects more of a move after a strong recent run
+      - tell the advisor a short streak shifts {who}'s whole forecast
+    drift_update:
+      all:
+      - tell the advisor you have been working on ignoring recent streaks
+      - say you have started treating a strong run as noise, not a signal
+    drift_dormant:
+      all:
+      - tell the advisor a recent run no longer moves your forecast
+      - say short streaks have stopped shifting your outlook
+    drift_revive:
+      all:
+      - tell the advisor a strong run is shifting your forecast again
+      - say a short streak has started moving your outlook once more
+  herding_weight:
+    revealed:
+      all:
+      - enter {instrument} on the street's view even though your own read points the other way
+      - size into {instrument} to match consensus positioning, not your own call
+      - put on {instrument} because the desk is already there, against your own read
+    stated:
+      all:
+      - say you feel safer holding a name once other desks are in it
+      - tell the advisor seeing peers crowd a trade makes you size up
+      - describe how knowing others agree makes you more comfortable in a position
+    claim:
+      all:
+      - tell the advisor what other desks hold never changes your sizing
+      - say you ignore consensus positioning completely when you size a trade
+      - tell the advisor your sizing has nothing to do with what peers hold
+    retract:
+      all:
+      - 'say you feel safer with the crowd, then correct yourself: consensus positioning means nothing
+        to you'
+      - 'tell the advisor peers in a trade reassure you, then walk it back: their positioning never enters
+        your call'
+    third_party:
+      all:
+      - say {who} feels safer once other desks are in a trade
+      - tell the advisor {who} sizes up whenever peers crowd a position
+    drift_update:
+      all:
+      - tell the advisor you have been working on sizing off your own read alone
+      - say you have started ignoring where other desks are positioned
+    drift_dormant:
+      all:
+      - tell the advisor other desks' positioning no longer affects your sizing
+      - say you have stopped sizing up just because peers are in a trade
+    drift_revive:
+      all:
+      - tell the advisor peers in a trade are making you size up again
+      - say other desks' positioning has crept back into your sizing
+  overconfidence_coverage:
+    revealed:
+      all:
+      - size {instrument} large while keeping the target-to-stop range narrow
+      - put on a big position in {instrument} with only a thin band between {target} and {stop}
+      - run {instrument} at full size on a range too tight to be safe
+    stated:
+      all:
+      - say your price targets carry a narrow range because you trust your read
+      - tell the advisor you rarely widen your range even under real uncertainty
+      - describe how your confidence keeps your target range tight
+    claim:
+      all:
+      - tell the advisor you keep a wide range around every target
+      - say you size assuming you could easily be wrong
+      - tell the advisor you size for being wrong fairly often
+    retract:
+      all:
+      - 'say your range stays narrow, then correct yourself: you keep it wide around every target'
+      - 'tell the advisor you rarely widen your range, then take it back: you size for being wrong often'
+    third_party:
+      all:
+      - say {who} keeps a narrow range around every price target
+      - tell the advisor {who} rarely widens a range even under real uncertainty
+    drift_update:
+      all:
+      - tell the advisor you have been working on widening your target range
+      - say you have started sizing for being wrong more often
+    drift_dormant:
+      all:
+      - tell the advisor you have stopped keeping such a narrow range
+      - say you no longer trust your read enough to skip a wider band
+    drift_revive:
+      all:
+      - tell the advisor your range has narrowed back down again
+      - say you are trusting your read too much once more
+  conviction_size_miscalibration:
+    revealed:
+      all:
+      - size {instrument} far below the conviction you stated for it
+      - put your largest size on {instrument}, a name you rank as low conviction
+      - size {instrument} well above what your own conviction ranking supports
+    stated:
+      all:
+      - say your biggest positions are not always your best ideas
+      - tell the advisor position size and conviction do not line up for you
+      - describe how your smallest positions sometimes carry your most conviction
+    claim:
+      all:
+      - tell the advisor you size every position to match your conviction
+      - say your largest positions are always your highest conviction ideas
+      - tell the advisor size and conviction move together for you
+    retract:
+      all:
+      - 'say your biggest position is not your best idea, then correct yourself: size always tracks conviction
+        for you'
+      - 'tell the advisor size and conviction can drift apart, then walk it back: they always move together'
+    third_party:
+      all:
+      - say {who}'s biggest positions are not always the best ideas
+      - tell the advisor size and conviction do not line up for {who}
+    drift_update:
+      all:
+      - tell the advisor you have been working on matching size to conviction
+      - say you have started sizing your best ideas the largest
+    drift_dormant:
+      all:
+      - tell the advisor your size now tracks your conviction
+      - say the gap between size and conviction has closed for you
+    drift_revive:
+      all:
+      - tell the advisor your size and conviction have drifted apart again
+      - say your biggest position is no longer your best idea again
+  exit_deficiency:
+    revealed:
+      all:
+      - let the stop at {stop} on {instrument} fire and stay in the position anyway
+      - add to {instrument} after its signpost has already fired
+      - roll {instrument} well past the point your own rule called for
+    stated:
+      all:
+      - say closing a position once decided takes you longer than it should
+      - tell the advisor you delay selling even after your own case has broken
+      - describe how you struggle to close a position once you have decided to
+    claim:
+      all:
+      - tell the advisor you exit the instant your case is met
+      - say you close a position the moment your own signal fires
+      - tell the advisor you act immediately once your case breaks
+    retract:
+      all:
+      - 'say closing a trade takes you longer than it should, then correct yourself: you act the moment
+        your signal fires'
+      - 'tell the advisor you delay an exit after your case breaks, then take it back: you close it immediately'
+    third_party:
+      all:
+      - say {who} takes longer than needed to close a decided position
+      - tell the advisor {who} delays selling even after the case has broken
+    drift_update:
+      all:
+      - tell the advisor you have been working on closing positions the moment your case breaks
+      - say you have started acting the instant your exit signal fires
+    drift_dormant:
+      all:
+      - tell the advisor you no longer delay closing a decided position
+      - say you act on your own signal without the old hesitation
+    drift_revive:
+      all:
+      - tell the advisor you are delaying exits again after your case breaks
+      - say closing a decided position is taking you longer again
+preferences:
+  communication:
+    stated:
+      all:
+      - 'tell the advisor: {value}'
+      - 'open the session by stating your rule: {value}'
+      - 'say plainly: {value}'
+    revealed_reaction:
+      all:
+      - push back the moment a reply drifts from {value}
+      - cut a reply short when it ignores {value}
+    violation:
+      all:
+      - answer in full even though the pm prefers {value}
+      - give a longer reply even though the pm prefers {value}
+    retract:
+      all:
+      - 'state your rule as {value}, then correct yourself: that is not it'
+      - say your preference is {value}, then take it back
+    third_party:
+      all:
+      - 'tell the advisor {who} wants: {value}'
+      - 'say {who}''s rule is: {value}'
+    drift_update:
+      all:
+      - tell the advisor your rule has changed from {old_value} to {value}
+      - say you used to want {old_value}, now you want {value}
+  information:
+    stated:
+      all:
+      - 'tell the advisor: {value}'
+      - 'state your standing rule on context: {value}'
+      - 'say outright: {value}'
+    revealed_reaction:
+      all:
+      - push back when an answer skips {value}
+      - flag it when a reply does not follow {value}
+    violation:
+      all:
+      - leave out the detail even though the pm prefers {value}
+      - answer without following the rule even though the pm prefers {value}
+    retract:
+      all:
+      - 'say your rule is {value}, then correct yourself: it is not'
+      - state {value} as your preference, then walk it back
+    third_party:
+      all:
+      - 'tell the advisor {who} wants: {value}'
+      - 'say {who} always asks for: {value}'
+    drift_update:
+      all:
+      - tell the advisor you now want {value} instead of {old_value}
+      - say your rule moved from {old_value} to {value}
+  workflow:
+    stated:
+      all:
+      - 'tell the advisor: {value}'
+      - 'state your standing workflow rule: {value}'
+      - 'say plainly what you want: {value}'
+    revealed_reaction:
+      all:
+      - push back when the session skips {value}
+      - call out a step that ignores {value}
+    violation:
+      all:
+      - skip the step even though the pm prefers {value}
+      - run the session differently even though the pm prefers {value}
+    retract:
+      all:
+      - 'state your rule as {value}, then correct yourself: that is wrong'
+      - say you want {value}, then take it back
+    third_party:
+      all:
+      - 'tell the advisor {who} wants: {value}'
+      - 'say {who}''s workflow rule is: {value}'
+    drift_update:
+      all:
+      - tell the advisor your workflow rule changed from {old_value} to {value}
+      - say you used to want {old_value}, now you want {value}
+  expression:
+    revealed:
+      all:
+      - 'build the idea in {instrument} the way your rule calls for: {value}'
+      - 'shape {instrument} to match your rule: {value}'
+      - 'trade {instrument} in the form your rule sets: {value}'
+    stated:
+      all:
+      - 'tell the advisor: {value}'
+      - 'state your standing rule on how to trade it: {value}'
+      - 'say outright: {value}'
+    revealed_reaction:
+      all:
+      - push back when a build ignores {value}
+      - flag an idea shaped against {value}
+    violation:
+      all:
+      - build the idea a different way even though the pm prefers {value}
+      - shape the trade against the rule even though the pm prefers {value}
+    retract:
+      all:
+      - 'state your rule as {value}, then correct yourself: that is not it'
+      - say you want {value}, then walk it back
+    third_party:
+      all:
+      - 'tell the advisor {who} wants trades shaped as: {value}'
+      - 'say {who}''s rule for expression is: {value}'
+    drift_update:
+      all:
+      - tell the advisor your rule changed from {old_value} to {value}
+      - say you used to want {old_value}, now you want {value}

@@ -2,7 +2,7 @@
 
 import functools
 import string
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -18,11 +18,13 @@ from pm_traitbench.catalogues.models import (
     PreferenceGroup,
     RuleCatalogue,
     SignpostTemplates,
+    StanceLines,
+    Stances,
     SubStyle,
     ThesisTemplates,
 )
 from pm_traitbench.config import BIAS_PARAMS
-from pm_traitbench.enums import AssetClass
+from pm_traitbench.enums import AssetClass, Kind, StanceEntry
 from pm_traitbench.errors import CatalogueError
 
 _FILE_NAMES = (
@@ -32,6 +34,43 @@ _FILE_NAMES = (
     "self_descriptions.yaml",
     "signposts.yaml",
     "theses.yaml",
+    "stances.yaml",
+)
+
+# A stance line's slots vary by (kind of trait, kind of evidence): which parts of the
+# planted event a line may quote. "value" names the preference itself, so any entry
+# whose slot set contains it must use it, or the line would never say what the PM wants.
+STANCE_SLOTS: dict[tuple[Kind, StanceEntry], frozenset[str]] = {
+    (Kind.BIAS, StanceEntry.REVEALED): frozenset({"instrument", "entry", "target", "stop"}),
+    (Kind.BIAS, StanceEntry.STATED): frozenset(),
+    (Kind.BIAS, StanceEntry.CLAIM): frozenset(),
+    (Kind.BIAS, StanceEntry.RETRACT): frozenset(),
+    (Kind.BIAS, StanceEntry.THIRD_PARTY): frozenset({"who"}),
+    (Kind.BIAS, StanceEntry.DRIFT_UPDATE): frozenset(),
+    (Kind.BIAS, StanceEntry.DRIFT_DORMANT): frozenset(),
+    (Kind.BIAS, StanceEntry.DRIFT_REVIVE): frozenset(),
+    (Kind.PREFERENCE, StanceEntry.STATED): frozenset({"value"}),
+    (Kind.PREFERENCE, StanceEntry.REVEALED): frozenset({"value", "instrument"}),
+    (Kind.PREFERENCE, StanceEntry.REVEALED_REACTION): frozenset({"value"}),
+    (Kind.PREFERENCE, StanceEntry.VIOLATION): frozenset({"value"}),
+    (Kind.PREFERENCE, StanceEntry.RETRACT): frozenset({"value"}),
+    (Kind.PREFERENCE, StanceEntry.THIRD_PARTY): frozenset({"value", "who"}),
+    (Kind.PREFERENCE, StanceEntry.DRIFT_UPDATE): frozenset({"value", "old_value"}),
+}
+# Words that would name the bias a stance is planted for, leaking the label the
+# dataset otherwise hides; "conviction" is left out because it is ordinary desk
+# vocabulary and a public ledger column.
+BANNED_STANCE_WORDS: tuple[str, ...] = (
+    "loss aversion",
+    "loss averse",
+    "disposition",
+    "anchor",
+    "extrapolat",
+    "herd",
+    "overconfiden",
+    "miscalibrat",
+    "exit deficiency",
+    "bias",
 )
 
 # A signpost's {level} slot arrives rendered with its own unit (or as a bare price).
@@ -106,6 +145,7 @@ def _build_catalogue(base: Any) -> Catalogue:
         ).self_descriptions
         signposts = _SignpostsFile.model_validate(raw["signposts.yaml"]).signposts
         theses = ThesisTemplates.model_validate(raw["theses.yaml"])
+        stances = Stances.model_validate(raw["stances.yaml"])
     except ValidationError as e:
         raise CatalogueError(f"invalid catalogue content: {e}") from e
     return Catalogue(
@@ -115,6 +155,7 @@ def _build_catalogue(base: Any) -> Catalogue:
         self_descriptions=self_descriptions,
         signposts=signposts,
         theses=theses,
+        stances=stances,
     )
 
 
@@ -189,6 +230,14 @@ def render_thesis(template: str, **slots: Any) -> str:
         else:
             rendered[key] = str(value)
     return template.format(**rendered)
+
+
+def render_stance(line: str, slots: Mapping[str, str]) -> str:
+    """Render a stance line, filling its slots from a mapping of slot name to value."""
+    try:
+        return line.format(**slots)
+    except KeyError as e:
+        raise CatalogueError(f"stance line '{line}' is missing slot {e}") from e
 
 
 def _check_preference_group_coverage(
@@ -397,6 +446,83 @@ def _check_engine_templates(catalogue: Catalogue) -> None:
         _check_no_unknown_slots(templates, _OUTCOME_SLOTS, f"outcomes: kind '{kind}'")
 
 
+def _check_stance_lines(
+    kind: Kind, key: str, entry: StanceEntry, stance_lines: StanceLines
+) -> None:
+    context = f"stances: {kind} '{key}' entry '{entry.value}'"
+    if "all" not in stance_lines:
+        raise CatalogueError(f"{context} has no 'all' key")
+    allowed_slots = STANCE_SLOTS[(kind, entry)]
+    asset_class_values = {asset_class.value for asset_class in AssetClass}
+    for lines_key, lines in stance_lines.items():
+        if lines_key != "all" and lines_key not in asset_class_values:
+            raise CatalogueError(f"{context} has unknown key '{lines_key}'")
+        if len(lines) < 2:
+            raise CatalogueError(f"{context} key '{lines_key}' has fewer than 2 lines")
+        for line in lines:
+            fields = _template_fields(line, context)
+            unknown = fields - allowed_slots
+            if unknown:
+                raise CatalogueError(
+                    f"{context} line '{line}' uses unknown slot(s) {sorted(unknown)}"
+                )
+            if "value" in allowed_slots and "value" not in fields:
+                raise CatalogueError(f"{context} line '{line}' does not use the {{value}} slot")
+            lowered = line.lower()
+            for banned in BANNED_STANCE_WORDS:
+                if banned in lowered:
+                    raise CatalogueError(f"{context} line '{line}' contains banned word '{banned}'")
+
+
+def check_stances(catalogue: Catalogue) -> None:
+    """Check the stance bank's coverage, slot usage and banned-word list.
+
+    A stance line describes behaviour, never the bias it plants, since the dataset
+    hides trait labels from the text a narrator turns into PM dialogue.
+    """
+    stances = catalogue.stances
+    actual_bias_keys = set(stances.biases)
+    expected_bias_keys = set(BIAS_PARAMS)
+    if actual_bias_keys != expected_bias_keys:
+        missing = sorted(expected_bias_keys - actual_bias_keys)
+        extra = sorted(actual_bias_keys - expected_bias_keys)
+        raise CatalogueError(
+            f"stances: biases keys must equal the bias parameter set; "
+            f"missing {missing}, extra {extra}"
+        )
+    actual_pref_keys = set(stances.preferences)
+    expected_pref_keys = set(PreferenceGroup)
+    if actual_pref_keys != expected_pref_keys:
+        missing = sorted(expected_pref_keys - actual_pref_keys)
+        extra = sorted(actual_pref_keys - expected_pref_keys)
+        raise CatalogueError(
+            f"stances: preferences keys must equal the preference group set; "
+            f"missing {missing}, extra {extra}"
+        )
+
+    for param, bank in stances.biases.items():
+        for field_name in type(bank).model_fields:
+            entry = StanceEntry(field_name)
+            _check_stance_lines(Kind.BIAS, param, entry, getattr(bank, field_name))
+
+    for group, bank in stances.preferences.items():
+        for field_name in type(bank).model_fields:
+            if field_name == "revealed":
+                continue
+            entry = StanceEntry(field_name)
+            _check_stance_lines(Kind.PREFERENCE, group.value, entry, getattr(bank, field_name))
+        if group == PreferenceGroup.EXPRESSION:
+            if not bank.revealed:
+                raise CatalogueError(
+                    f"stances: preference '{group.value}' entry 'revealed' must not be empty"
+                )
+            _check_stance_lines(Kind.PREFERENCE, group.value, StanceEntry.REVEALED, bank.revealed)
+        elif bank.revealed:
+            raise CatalogueError(
+                f"stances: preference '{group.value}' entry 'revealed' must be empty"
+            )
+
+
 def check_catalogue(
     catalogue: Catalogue, asset_classes: Sequence[AssetClass], n_preferences_max: int
 ) -> None:
@@ -411,3 +537,4 @@ def check_catalogue(
     _check_sub_styles(catalogue, asset_classes)
     _check_self_descriptions(catalogue)
     _check_engine_templates(catalogue)
+    check_stances(catalogue)

@@ -9,8 +9,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pm_traitbench.enums import Action, AssetClass, Expression, Op
-from pm_traitbench.errors import CatalogueError
+from pm_traitbench.enums import Action, AssetClass, Expression, Op, StanceEntry
+from pm_traitbench.errors import CatalogueError, PlanError
 
 # The (asset class, expression) pairs an adapter can build an idea in; used to
 # check every cell has thesis templates without the loader importing the engine.
@@ -191,6 +191,66 @@ class ThesisTemplates(BaseModel):
         return self
 
 
+StanceLines = dict[str, tuple[str, ...]]
+"""Lines for one stance entry, keyed by "all" or an `AssetClass` value."""
+
+
+class BiasStances(BaseModel):
+    """One bias parameter's stance lines, by the kind of evidence they carry."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    revealed: StanceLines
+    stated: StanceLines
+    claim: StanceLines
+    retract: StanceLines
+    third_party: StanceLines
+    drift_update: StanceLines
+    drift_dormant: StanceLines
+    drift_revive: StanceLines
+
+
+class PreferenceStances(BaseModel):
+    """One preference group's stance lines, by the kind of evidence they carry.
+
+    ``revealed`` is empty for every group but expression, whose ideas are the
+    only preference evidence the engine itself can act out.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    stated: StanceLines
+    revealed_reaction: StanceLines
+    violation: StanceLines
+    retract: StanceLines
+    third_party: StanceLines
+    drift_update: StanceLines
+    revealed: StanceLines = {}
+
+
+class Stances(BaseModel):
+    """The stance bank: short instruction lines a narrator turns into PM dialogue."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    biases: dict[str, BiasStances]
+    preferences: dict[PreferenceGroup, PreferenceStances]
+
+    def lines(self, key: str, entry: StanceEntry, asset_class: AssetClass) -> tuple[str, ...]:
+        """Asset-class lines if present, else the "all" lines.
+
+        `key` is a bias param name or a `PreferenceGroup` value. Raises `PlanError`
+        naming key and entry when the bank has no such entry.
+        """
+        bank = self.biases.get(key, self.preferences.get(key))
+        if bank is None:
+            raise PlanError(f"stance bank has no entry for key '{key}'")
+        stance_lines = getattr(bank, entry.value, None)
+        if not stance_lines:
+            raise PlanError(f"stance bank key '{key}' has no lines for entry '{entry.value}'")
+        return stance_lines.get(asset_class.value, stance_lines.get("all", ()))
+
+
 class Catalogue(BaseModel):
     """The full reference catalogue that samplers draw from."""
 
@@ -202,6 +262,7 @@ class Catalogue(BaseModel):
     self_descriptions: dict[str, Phrasings]
     signposts: dict[AssetClass, SignpostTemplates]
     theses: ThesisTemplates
+    stances: Stances
 
     def preferences_for(self, asset_class: AssetClass) -> tuple[PreferenceEntry, ...]:
         """Return preference entries applicable to an asset class, in catalogue order."""

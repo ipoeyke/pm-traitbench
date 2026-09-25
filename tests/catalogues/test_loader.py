@@ -30,6 +30,7 @@ _CATALOGUE_FILES = (
     "self_descriptions.yaml",
     "signposts.yaml",
     "theses.yaml",
+    "stances.yaml",
 )
 _ASSET_CLASSES = list(AssetClass)
 _N_PREFERENCES_MAX = 8
