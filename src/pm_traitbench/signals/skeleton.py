@@ -111,7 +111,7 @@ def _signal_stance(
         values["who"] = _WHO_BY_OWNERSHIP[ps.planned.ownership]
         if not is_bias:
             values["value"] = str(ps.planned.third_party_value)
-    elif entry == StanceEntry.STATED or entry == StanceEntry.RETRACT:
+    elif entry in (StanceEntry.STATED, StanceEntry.RETRACT):
         if not is_bias:
             values["value"] = str(inputs.value_at(trait.trait_id, session_date))
     elif entry == StanceEntry.REVEALED_REACTION:
