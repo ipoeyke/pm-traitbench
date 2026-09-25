@@ -13,7 +13,7 @@ from pm_traitbench.engine.adapters.equities import EquitiesAdapter
 from pm_traitbench.engine.adapters.rates_credit import RatesCreditAdapter
 from pm_traitbench.engine.biases import conviction, herding, overconfidence
 from pm_traitbench.engine.biases.herding import HerdingDecision
-from pm_traitbench.engine.constants import NO_ENTRY_LAST_SESSIONS, SIZE_HEADROOM
+from pm_traitbench.engine.constants import NO_ENTRY_LAST_SESSIONS, RISK_STEPS, SIZE_HEADROOM
 from pm_traitbench.engine.ideas import attempt_entry, entries_for_day, forecast_z
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.own_signal import SignalDraw
@@ -821,6 +821,7 @@ def test_overconfident_pm_stays_at_or_under_cap_and_ranks_four_and_five_differ(
     monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
     _force_no_conflict(monkeypatch)
     params = _params(coverage=0.4)
+    factor, _ = overconfidence.size_factor(params)
     cap = float(next(r for r in setup["rules"] if r.param == "max_risk_pct").level)
     sizes: dict[int, float] = {}
     for rank in (4, 5):
@@ -841,8 +842,10 @@ def test_overconfident_pm_stays_at_or_under_cap_and_ranks_four_and_five_differ(
             attempt=0,
         )
         assert new_idea is not None
-        assert new_idea.position.size_pct_book <= cap
+        expected = cap * RISK_STEPS[rank - 1] * factor / SIZE_HEADROOM
+        assert new_idea.position.size_pct_book == pytest.approx(expected)
         sizes[rank] = new_idea.position.size_pct_book
+    assert sizes[5] < cap
     assert sizes[4] != sizes[5]
 
 

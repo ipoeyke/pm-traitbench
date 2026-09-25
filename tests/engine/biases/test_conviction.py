@@ -31,10 +31,11 @@ def test_m_zero_always_returns_the_stated_conviction() -> None:
     n = 20_000
     params = _params(0.0)
     rng = stream(1, "conviction-m-zero")
-    for _ in range(n):
-        rank, flag = size_rank(_CONVICTION, params, rng)
-        assert rank == _CONVICTION
-        assert flag is None
+    for conviction in range(1, 6):
+        for _ in range(n):
+            rank, flag = size_rank(conviction, params, rng)
+            assert rank == conviction
+            assert flag is None
 
 
 def test_m_one_spreads_ranks_uniformly_over_one_to_five() -> None:
