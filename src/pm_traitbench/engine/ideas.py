@@ -224,7 +224,7 @@ def _build_signposts(
 def forecast_z(own_signal: float, trail_z: float, theta: float) -> float:
     """Theta-blend of the own signal and the trailing move, in unit-variance z-units.
 
-    Both inputs already carry unit variance, so dividing by
+    Both inputs are independent, unit-variance z-scores, so dividing by
     `sqrt((1-theta)**2 + theta**2)` keeps the blend at unit variance for any theta.
     """
     return ((1 - theta) * own_signal + theta * trail_z) / math.sqrt((1 - theta) ** 2 + theta**2)

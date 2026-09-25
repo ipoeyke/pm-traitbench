@@ -61,7 +61,7 @@ def _strong_signal(own_signal: float = 2.0) -> SignalDraw:
 
 
 def _force_no_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Patch herding.decide so the resolved side always matches the PM's own signal."""
+    """Patch herding.decide so the resolved side always matches the PM's own side."""
 
     def _decide(own_side, street, params, rng) -> HerdingDecision:
         return HerdingDecision(conflict=False, followed_street=None, side=own_side, flag=None)
