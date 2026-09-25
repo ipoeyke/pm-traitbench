@@ -1,5 +1,5 @@
 """Per-trait signal quotas: how many signals of each kind a PM's plan needs, and in what
-date window, before task 7 places them on dated sessions.
+date window, before assembly places them on dated sessions.
 
 A trait's trading days split into segments at every value change (an `update` drift
 event) and around every dormant window, so a drifted trait's signals can be spread
@@ -38,7 +38,7 @@ class DateWindow:
 
 @dataclass(frozen=True)
 class PlannedSignal:
-    """One signal a trait needs, before task 7 gives it a date and a session."""
+    """One signal a trait needs, before assembly gives it a date and a session."""
 
     trait_id: str
     mode: SignalMode
