@@ -48,8 +48,7 @@ biases:
     revealed:
       realise_gain_early:
         all:
-        - close {instrument} for a quick profit well before the target at {target}, with nothing else
-          changed
+        - close {instrument} for a profit well before the target at {target}, with nothing else changed
         - take the whole profit on {instrument} early, well short of {target}, with the setup unchanged
       hold_loser:
         all:
@@ -281,7 +280,7 @@ biases:
       added:
         all:
         - add to {instrument} right after one of its own exit conditions has fired
-        - buy more {instrument} moments after its stop or signpost triggers
+        - buy more {instrument} moments after one of its own exit rules triggers
       late_roll:
         all:
         - roll {instrument} well past the date your own roll rule sets
