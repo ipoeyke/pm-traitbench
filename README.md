@@ -336,6 +336,13 @@ which only 1-11 are neutral for any given parameter; pooling the three
 synthetic seeds together is what gives the pooled `synthetic` cell enough
 neutral PMs for a usable baseline, about 36 PMs per asset class in all.
 
+A regime split compares the active PMs boosted in that regime with every
+neutral PM's rows for the same regime, since a neutral trait is estimated
+over all three regimes. A before or after split compares each drifted PM's
+rows for that window with the neutral PMs' full-horizon (`all`-split) rows
+instead of a regime-style shared date set, since a drift window differs per
+PM. Every split beyond `all` is report-only, the same as the per-seed rows.
+
 A cell passes when the active mean sits on the stronger side of the neutral
 mean (per the parameter's own direction) with the neutral standard deviation
 no more than half the gap between them (`gap_fraction`, default 0.5), and
@@ -353,17 +360,20 @@ blocks, and every split beyond `all` is report-only for the same reason.
 Four parameters also carry an opportunity-count minimum (`n_min`): exit
 deficiency 7, loss aversion 16, herding 14, anchoring 29 - each the
 observation count at which a neutral PM's binomial standard error is a
-quarter of the gap between the neutral and active centres. A seed whose
-10th-percentile PM count falls short of its `n_min` gets a `count_shortfall`
-warning rather than a fail.
+quarter of the gap between the neutral and active centres (herding's pair was
+derived for the conflict-follow rate, not the agreement statistic gate 1
+estimates, and its minimum is applied to the latter as an approximation). The
+`count_shortfall` warning compares each seed's 10th-percentile PM on the
+estimator's own opportunity count (`Estimate.n`) against `n_min`, rather than
+an engine counter.
 
 Gate 1 writes two tables: `gate1_pm`, one row per PM/parameter/split keyed on
 `(pm_id, param, split)`, and `gate1_cells`, one row per seed group/asset
 class/parameter/split keyed on `(seed_group, asset_class, param, split)`.
 
-On the default configuration, exit deficiency and overconfidence pass on all
-three asset classes, herding passes on rates/credit and commodities but
-fails on equities, and the other five parameters fail on all three:
+On the default root, exit deficiency and overconfidence pass on all three
+asset classes, herding passes on rates/credit and commodities but fails on
+equities, and the other five parameters fail on all three:
 
 - `exit_deficiency` passes: its miss probability acts directly on the
   fired-rule response the estimator reads, with no rule precedence or
@@ -387,6 +397,13 @@ fails on equities, and the other five parameters fail on all three:
 - `conviction_size_miscalibration` fails the gap test: the neutral spread
   across PMs is wider than half the active-neutral gap, although its rank
   correlation clears 0.5.
+
+This pattern holds beyond the default root: sweeping the default config over
+99 root seeds (`seed.root`, every other knob fixed), exit deficiency and
+overconfidence pass on 93-99% of roots per asset class; herding sits at the
+threshold, its median neutral sd running 0.48-0.51 of the gap, and passes on
+about half the roots; the other five parameters fail on nearly every root,
+with conviction-size miscalibration passing on at most 5%.
 
 Limitations from the model:
 
