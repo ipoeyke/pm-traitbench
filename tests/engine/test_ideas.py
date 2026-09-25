@@ -11,9 +11,9 @@ from pm_traitbench.config import Config, EngineConfig
 from pm_traitbench.engine import ideas as ideas_module
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
 from pm_traitbench.engine.adapters.rates_credit import RatesCreditAdapter
-from pm_traitbench.engine.biases import herding, overconfidence
+from pm_traitbench.engine.biases import conviction, herding, overconfidence
 from pm_traitbench.engine.biases.herding import HerdingDecision
-from pm_traitbench.engine.constants import NO_ENTRY_LAST_SESSIONS
+from pm_traitbench.engine.constants import NO_ENTRY_LAST_SESSIONS, SIZE_HEADROOM
 from pm_traitbench.engine.ideas import attempt_entry, entries_for_day, forecast_z
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.own_signal import SignalDraw
@@ -781,6 +781,69 @@ def test_herding_follow_thesis_move_points_the_way_of_the_side(
     assert captured["move"] < 0
     assert captured["unit"] == "pct"
     assert captured["price_quoted"] is True
+
+
+# --- entry sizing: conviction rank and overconfidence headroom -------------
+
+
+def test_calibrated_pm_at_top_rank_uses_the_size_headroom(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+    monkeypatch.setattr(conviction, "size_rank", lambda *a, **kw: (5, None))
+    params = _params(coverage=0.8)
+    _, new_idea = attempt_entry(
+        setup["state"],
+        _T,
+        setup["view"],
+        setup["adapter"],
+        params,
+        setup["persona"],
+        setup["rules"],
+        setup["traits"],
+        setup["universe"],
+        setup["config"],
+        setup["catalogue"],
+        _rng_for(setup["config"], _PM_ID),
+        attempt=0,
+    )
+    assert new_idea is not None
+    cap = float(next(r for r in setup["rules"] if r.param == "max_risk_pct").level)
+    assert new_idea.position.size_pct_book == pytest.approx(cap * 1.0 / SIZE_HEADROOM)
+
+
+def test_overconfident_pm_stays_at_or_under_cap_and_ranks_four_and_five_differ(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+    params = _params(coverage=0.4)
+    cap = float(next(r for r in setup["rules"] if r.param == "max_risk_pct").level)
+    sizes: dict[int, float] = {}
+    for rank in (4, 5):
+        monkeypatch.setattr(conviction, "size_rank", lambda *a, r=rank, **kw: (r, None))
+        _, new_idea = attempt_entry(
+            setup["state"],
+            _T,
+            setup["view"],
+            setup["adapter"],
+            params,
+            setup["persona"],
+            setup["rules"],
+            setup["traits"],
+            setup["universe"],
+            setup["config"],
+            setup["catalogue"],
+            _rng_for(setup["config"], _PM_ID),
+            attempt=0,
+        )
+        assert new_idea is not None
+        assert new_idea.position.size_pct_book <= cap
+        sizes[rank] = new_idea.position.size_pct_book
+    assert sizes[4] != sizes[5]
 
 
 # --- forecast_z -----------------------------------------------------------

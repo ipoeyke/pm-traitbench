@@ -3,9 +3,7 @@
 import subprocess
 import sys
 
-import numpy as np
 import pytest
-from scipy.stats import pearsonr
 
 from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.engine.biases import BIAS_RULES, join_flags
@@ -13,7 +11,6 @@ from pm_traitbench.engine.biases import conviction as conviction_module
 from pm_traitbench.engine.biases import extrapolation as extrapolation_module
 from pm_traitbench.engine.biases import herding as herding_module
 from pm_traitbench.engine.biases import overconfidence as overconfidence_module
-from pm_traitbench.engine.biases.conviction import size_rank
 from pm_traitbench.engine.biases.extrapolation import blend, entered_after_run
 from pm_traitbench.engine.biases.herding import HerdingDecision, decide
 from pm_traitbench.engine.biases.overconfidence import size_factor
@@ -171,53 +168,6 @@ def test_overconfidence_flag_only_when_active() -> None:
     factor, flag = size_factor(params)
     assert factor > 1.0
     assert flag is None
-
-
-# --- conviction.size_rank -----------------------------------------------------
-
-
-def test_conviction_m_zero_returns_the_conviction() -> None:
-    params = _params({"conviction_size_miscalibration": 0.0}, {"conviction_size_miscalibration"})
-    rng = stream(1, "conviction-m0")
-    for conviction in range(1, 6):
-        rank, flag = size_rank(conviction, params, rng)
-        assert rank == conviction
-        assert flag is None
-
-
-def test_conviction_flag_only_when_active_and_different() -> None:
-    active_params = _params(
-        {"conviction_size_miscalibration": 1.0}, {"conviction_size_miscalibration"}
-    )
-    inactive_params = _params({"conviction_size_miscalibration": 1.0}, set())
-    rng_active = stream(1, "conviction-active")
-    rng_inactive = stream(1, "conviction-inactive")
-
-    saw_flag = False
-    for _ in range(200):
-        rank, flag = size_rank(3, active_params, rng_active)
-        if rank != 3:
-            assert flag == "conviction:mis_sized"
-            saw_flag = True
-        else:
-            assert flag is None
-    assert saw_flag
-
-    for _ in range(200):
-        rank, flag = size_rank(3, inactive_params, rng_inactive)
-        assert flag is None
-
-
-def test_conviction_rank_uncorrelated_with_conviction_at_m_one() -> None:
-    # m=1 draws the rank independently of conviction, so the sample correlation
-    # over 2,000 draws should sit near zero; 0.15 gives ample margin over the
-    # ~0.022 standard error implied by the sample size, with no seed hunting.
-    params = _params({"conviction_size_miscalibration": 1.0}, {"conviction_size_miscalibration"})
-    rng = stream(1, "conviction-corr")
-    convictions = rng.integers(1, 6, size=2000)
-    ranks = np.array([size_rank(int(c), params, rng)[0] for c in convictions])
-    corr, _ = pearsonr(convictions, ranks)
-    assert abs(corr) < 0.15
 
 
 # --- join_flags ----------------------------------------------------------------

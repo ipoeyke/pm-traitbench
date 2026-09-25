@@ -8,6 +8,7 @@ from pm_traitbench.engine.constants import (
     LOSS_ADD_SLOPE,
     LOSS_CUT_HAZARD,
     RISK_STEPS,
+    SIZE_HEADROOM,
 )
 from pm_traitbench.enums import SOVEREIGN_TENORS
 from pm_traitbench.market.constants import COMMODITIES, CONTRACT_MULTIPLIER
@@ -38,3 +39,7 @@ def test_loss_aversion_hazard_constants() -> None:
     assert LOSS_CUT_HAZARD == 0.05
     assert LOSS_ADD_SLOPE == 0.1
     assert LOSS_ADD_CAP == 0.5
+
+
+def test_size_headroom_constant() -> None:
+    assert SIZE_HEADROOM == 2.5

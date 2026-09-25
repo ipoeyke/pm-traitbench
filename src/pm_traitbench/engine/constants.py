@@ -19,6 +19,9 @@ LOSS_ADD_SLOPE = 0.1
 LOSS_ADD_CAP = 0.5
 # Size at conviction rank 1-5 as a fraction of the mandate cap, linear.
 RISK_STEPS = (0.2, 0.4, 0.6, 0.8, 1.0)
+# Overconfidence's size factor at the active coverage centre 0.4 (Z_80 / z(0.4), about
+# 2.45), so a centre-planted PM's largest step still lands under the mandate cap.
+SIZE_HEADROOM = 2.5
 # No new entries in the final five sessions, so every idea gets at least a week of life.
 NO_ENTRY_LAST_SESSIONS = 5
 # Realised volatility for sizing and signposts is measured over a trailing 60 days.

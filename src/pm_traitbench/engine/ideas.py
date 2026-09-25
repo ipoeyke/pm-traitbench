@@ -31,6 +31,7 @@ from pm_traitbench.engine.constants import (
     NO_ENTRY_LAST_SESSIONS,
     RISK_STEPS,
     SIGNPOSTS_PER_IDEA,
+    SIZE_HEADROOM,
 )
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.own_signal import draw_signal
@@ -292,7 +293,7 @@ def attempt_entry(
     if cap_rule is None:
         raise EngineError("no mandate risk cap rule found for this PM")
     cap_level = float(cap_rule.level)
-    size_pct_book = min(cap_level, cap_level * RISK_STEPS[rank - 1] * factor)
+    size_pct_book = min(cap_level, cap_level * RISK_STEPS[rank - 1] * factor / SIZE_HEADROOM)
     if size_pct_book > cap_level:
         raise EngineError("sized idea exceeds the mandate risk cap")
 

@@ -266,9 +266,11 @@ trades off realism for a model whose biases are each one legible formula:
   normalised to unit variance; herding follows the
   street with probability `herding_weight` when it conflicts with the
   PM's own side; overconfidence narrows the stated interval and inflates
-  entry size by the same z-score ratio, `z(0.8) / z(coverage)`; conviction
-  blends the size rank `round((1-m)*conviction + m*u)` toward a
-  uniform(1,5) draw; exit deficiency makes a fired rule's response miss
+  entry size by the same z-score ratio, `z(0.8) / z(coverage)`, and entry
+  size divides the mandate cap's risk step by a headroom of 2.5 so that
+  inflation has room below the cap; conviction sizes at the stated
+  conviction rank with probability `1-m`, else at a uniform(1,5) draw;
+  exit deficiency makes a fired rule's response miss
   with probability `e` (adding instead of missing, at a loss, when loss
   aversion is also active).
 - A day's fired rules resolve in one precedence order: exclusions and the
