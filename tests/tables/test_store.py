@@ -158,6 +158,7 @@ def _idea_with_legs(pm_id: str, trade_idea_id: str) -> Idea:
         followed_street=None,
         conviction=3,
         size_rank=2,
+        chased_trend=False,
     )
 
 

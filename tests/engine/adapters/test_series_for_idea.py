@@ -42,6 +42,7 @@ def _idea(*, expression: Expression, instrument_id: str, side: Side, legs: tuple
         followed_street=None,
         conviction=3,
         size_rank=3,
+        chased_trend=False,
     )
 
 

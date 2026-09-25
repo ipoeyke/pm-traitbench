@@ -166,6 +166,7 @@ def _idea_with_two_legs() -> Idea:
         followed_street=None,
         conviction=3,
         size_rank=2,
+        chased_trend=False,
     )
 
 

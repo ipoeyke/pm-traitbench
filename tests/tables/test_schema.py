@@ -878,6 +878,7 @@ def _outright_idea(**overrides) -> Idea:
         followed_street=None,
         conviction=3,
         size_rank=2,
+        chased_trend=False,
     )
     fields.update(overrides)
     return Idea(**fields)

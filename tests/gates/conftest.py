@@ -57,6 +57,7 @@ def idea_row(**overrides) -> Idea:
         followed_street=None,
         conviction=3,
         size_rank=3,
+        chased_trend=False,
     )
     fields.update(overrides)
     return Idea(**fields)

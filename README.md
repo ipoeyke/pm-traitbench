@@ -32,8 +32,9 @@ the mandate- and self-imposed rules `sample` already wrote; a rerun replaces
 the previous run's idea-scope rules rather than adding to them.
 `position_days` is a hidden table in full. `ideas` and `ledger` also carry
 hidden columns: the PM's own signal, forecast and interval, its street-view
-context, conviction and size rank on `ideas`, and each order's bias flag and
-driving rule on `ledger`. Hidden data is generator provenance for checking
+context, conviction and size rank on `ideas`, whether the entry chased a
+trend that had already run, and each order's bias flag and driving rule on
+`ledger`. Hidden data is generator provenance for checking
 the engine itself and is never shown to a system under test. The `gate1`
 stage recovers each direct-asset PM's eight planted biases from the engine's
 ledger and pools them per asset class, writing `gate1_pm` and `gate1_cells`;

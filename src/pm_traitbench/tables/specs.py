@@ -85,6 +85,7 @@ HIDDEN_COLUMNS: dict[str, tuple[str, ...]] = {
         "followed_street",
         "conviction",
         "size_rank",
+        "chased_trend",
     ),
     "position_days": tuple(
         name for name in PositionDay.model_fields if name not in set(POSITION_DAYS.key)

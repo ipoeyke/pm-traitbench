@@ -479,6 +479,12 @@ class Idea(BaseModel):
     size_rank: int = Field(
         ge=1, le=5, description="Idea's size rank relative to the PM's other ideas."
     )
+    chased_trend: bool = Field(
+        description=(
+            "Whether the entry is on the side of a trailing move already past one "
+            "standard deviation of a horizon move."
+        )
+    )
 
     @model_validator(mode="after")
     def _check_invariants(self) -> "Idea":
