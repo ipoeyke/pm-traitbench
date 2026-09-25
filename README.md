@@ -436,7 +436,7 @@ Limitations from the model:
 ## Development
 
 ```sh
-uv run pytest
+uv run pytest -n auto
 uv run ruff check
 uv run ruff format
 ```
