@@ -149,11 +149,14 @@ def test_opportunities_ideas_equals_len_ideas(
 def test_chased_trend_count_equals_entries_after_run_counter(
     neutral_pm, catalogue, fixture_view, engine_config
 ) -> None:
+    total_entries_after_run = 0
     for asset_class, sub_style in _NEUTRAL_PMS:
         result = _run(neutral_pm, catalogue, fixture_view, asset_class, sub_style, engine_config)
         ideas = result.ideas
         opportunities = result.opportunities
         assert sum(idea.chased_trend for idea in ideas) == opportunities["entries_after_run"]
+        total_entries_after_run += opportunities["entries_after_run"]
+    assert total_entries_after_run > 0
 
 
 def test_unknown_rule_field_raises_before_any_day_runs(
