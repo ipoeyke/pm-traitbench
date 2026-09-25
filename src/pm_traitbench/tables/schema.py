@@ -639,7 +639,9 @@ class Gate1CellRow(BaseModel):
     seed_group_kind: SeedGroupKind = Field(
         description="Kind of seed group the cell aggregates over."
     )
-    asset_class: AssetClass = Field(description="Asset class the cell covers.")
+    asset_class: AssetClass | None = Field(
+        description="Asset class the cell covers; null pools every direct asset class."
+    )
     param: str = Field(description="Name of the bias parameter the cell compares.")
     split: Gate1Split = Field(description="Window of the ledger the cell was computed over.")
     n_neutral: int = Field(ge=0, description="Number of neutral PMs contributing to the cell.")

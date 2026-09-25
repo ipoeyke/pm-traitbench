@@ -138,6 +138,98 @@ def test_no_member_group_is_not_emitted() -> None:
     assert not any(c.seed_group in ("seed_b", "seed_r") for c in cells)
 
 
+# --- aggregate: cross-class pooled row -----------------------------------------
+
+
+def test_cross_class_row_sums_n_neutral_and_n_active_over_per_class_pooled_rows() -> None:
+    param = "disposition_ratio"
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False, asset_class=EQ),
+        _pm(
+            "pm_002",
+            "seed_a",
+            param,
+            Gate1Split.ALL,
+            0.2,
+            10,
+            0.3,
+            False,
+            asset_class=AssetClass.COMMODITIES,
+        ),
+        _pm(
+            "pm_003",
+            "seed_a",
+            param,
+            Gate1Split.ALL,
+            0.9,
+            10,
+            0.9,
+            True,
+            asset_class=AssetClass.COMMODITIES,
+        ),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+
+    per_class = [c for c in cells if c.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL]
+    cross_class = next(c for c in per_class if c.asset_class is None)
+    class_rows = [c for c in per_class if c.asset_class is not None]
+
+    assert cross_class.n_neutral == sum(c.n_neutral for c in class_rows)
+    assert cross_class.n_active == sum(c.n_active for c in class_rows)
+    assert cross_class.seed_group == "synthetic"
+
+
+def test_cross_class_row_only_emitted_for_the_synthetic_pool() -> None:
+    param = "disposition_ratio"
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False, asset_class=EQ),
+        _pm(
+            "pm_002",
+            "seed_r",
+            param,
+            Gate1Split.ALL,
+            0.2,
+            10,
+            0.3,
+            False,
+            asset_class=AssetClass.COMMODITIES,
+            is_real_seed=True,
+        ),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, {"seed_r"}, Gate1Config())
+    non_pool_null = [
+        c
+        for c in cells
+        if c.seed_group_kind != SeedGroupKind.SYNTHETIC_POOL and c.asset_class is None
+    ]
+    assert non_pool_null == []
+
+
+def test_cross_class_count_shortfall_propagates_from_any_asset_class() -> None:
+    param = "exit_deficiency"  # N_MIN: 7
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 5, 0.3, False, asset_class=EQ),
+        _pm(
+            "pm_002",
+            "seed_a",
+            param,
+            Gate1Split.ALL,
+            0.2,
+            50,
+            0.3,
+            False,
+            asset_class=AssetClass.COMMODITIES,
+        ),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+    cross_class = next(
+        c
+        for c in cells
+        if c.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL and c.asset_class is None
+    )
+    assert cross_class.count_shortfall is True  # equities seed_a fell short of n_min=7
+
+
 # --- aggregate: neutral/active stats -----------------------------------------
 
 

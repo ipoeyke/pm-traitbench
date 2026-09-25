@@ -2,9 +2,10 @@
 
 `judge` picks the per-PM or population rule by the cell's parameter, checks it
 against the cell's `Gate1Config` thresholds, and marks a cell as gate-blocking
-only when it is the pooled synthetic comparison over the full run for a
-parameter that is not report-only. `blocking_failures` and `count_warnings`
-then summarise a whole run's rows for reporting.
+only when it is the synthetic pool's cross-class comparison over the full run
+(`asset_class` null) for a parameter that is not report-only; a per-asset-class
+pooled row is judged the same way but never blocks. `blocking_failures` and
+`count_warnings` then summarise a whole run's rows for reporting.
 """
 
 from collections.abc import Sequence
@@ -47,6 +48,7 @@ def judge(stats: CellStats, knobs: Gate1Config) -> Gate1CellRow:
     blocking = (
         stats.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL
         and stats.split == Gate1Split.ALL
+        and stats.asset_class is None
         and stats.param not in knobs.report_only_params
     )
 
@@ -80,11 +82,9 @@ def judge(stats: CellStats, knobs: Gate1Config) -> Gate1CellRow:
 
 
 def blocking_failures(rows: Sequence[Gate1CellRow]) -> list[str]:
-    """`asset_class/param` for every blocking row whose verdict is not pass, sorted."""
+    """`all/param` for every blocking (cross-class) row whose verdict is not pass, sorted."""
     return sorted(
-        f"{row.asset_class}/{row.param}"
-        for row in rows
-        if row.blocking and row.verdict != Gate1Verdict.PASS
+        f"all/{row.param}" for row in rows if row.blocking and row.verdict != Gate1Verdict.PASS
     )
 
 

@@ -314,9 +314,10 @@ Limitations from the model:
 ## Gate 1
 
 Gate 1 recovers each direct-asset PM's eight planted bias parameters from the
-engine's own ledger, pools the recovered statistics per asset class, and
-blocks the pipeline only when the pooled synthetic comparison over the full
-horizon fails or has too few PMs to judge. One estimator per parameter:
+engine's own ledger, pools the recovered statistics per asset class and, for
+the synthetic pool, once more across every direct asset class together. Only
+that cross-class row blocks the pipeline, when it fails or has too few PMs to
+judge over the full horizon. One estimator per parameter:
 
 | Parameter | Statistic | Opportunity unit | Direction |
 | --- | --- | --- | --- |
@@ -335,13 +336,16 @@ regimes, an active trait over each regime that boosts it, and a drifted trait
 over its before and after windows only. The `all`-split estimates
 are then pooled into a neutral baseline and an active mean per asset class,
 over every synthetic seed together (seed group `synthetic`, seed group kind
-`synthetic_pool` - the one that blocks the pipeline) and again per seed on
-its own; a drifted PM's `all`-split estimate is dropped from every pooled
-comparison, since it mixes two different trait values. On the default
-population, each synthetic seed's own cell holds 12 PMs per asset class, of
-which only 1-11 are neutral for any given parameter; pooling the three
-synthetic seeds together is what gives the pooled `synthetic` cell enough
-neutral PMs for a usable baseline, about 36 PMs per asset class in all.
+`synthetic_pool`) and again per seed on its own; a drifted PM's `all`-split
+estimate is dropped from every pooled comparison, since it mixes two
+different trait values. For the synthetic pool, those same `all`-split
+estimates are pooled once more across every direct asset class together,
+into a cross-class row (`asset_class` null) - the one row that blocks the
+pipeline. On the default population, each synthetic seed's own cell holds 12
+PMs per asset class, of which only 1-11 are neutral for any given parameter;
+pooling the three synthetic seeds together gives each per-asset-class
+`synthetic` cell about 36 PMs, and pooling the three direct asset classes
+together again gives the cross-class row about 108 PMs in all.
 
 A regime split compares the active PMs boosted in that regime with every
 neutral PM's rows for the same regime, since a neutral trait is estimated
@@ -370,15 +374,16 @@ whichever rule applies. `floor_se` (default 2.0, standard deviations above or
 below the neutral mean) and the `active_share_past_floor` it produces are
 reported for re-centring the marginals, not part of either pass rule.
 
-Only the pooled `synthetic`/`all` cell (seed group `synthetic`, kind
-`synthetic_pool`) of a parameter not in `report_only_params` blocks the
-pipeline: every per-seed cell, synthetic or real, is reported but never
-blocks, every split beyond `all` is report-only for the same reason, and a
-report-only parameter's pooled `all` cell is reported but never blocks
-either, whatever its verdict. `report_only_params` defaults to
-`disposition_ratio` and `anchoring_rho`: population-tested parameters the
-default population has too few PMs per asset class to trust the population
-test for.
+Only the synthetic pool's cross-class row (seed group `synthetic`, kind
+`synthetic_pool`, split `all`, `asset_class` null) of a parameter not in
+`report_only_params` blocks the pipeline: every per-asset-class `synthetic`
+cell, every per-seed cell (synthetic or real), and every split beyond `all`
+are reported but never block, and a report-only parameter's cross-class row
+is reported but never blocks either, whatever its verdict. `report_only_params`
+defaults to `herding_weight`, `disposition_ratio` and `anchoring_rho`: the
+latter two are population-tested parameters the default population has too
+few PMs per asset class to trust the population test for, and herding is
+coupled to extrapolation through the trend-built street view.
 
 Four parameters also carry an opportunity-count minimum (`n_min`): exit
 deficiency 7, loss aversion 16, herding 14, anchoring 29 - each the
@@ -395,7 +400,8 @@ and herding on rates and credit for R1 only.
 
 Gate 1 writes two tables: `gate1_pm`, one row per PM/parameter/split keyed on
 `(pm_id, param, split)`, and `gate1_cells`, one row per seed group/asset
-class/parameter/split keyed on `(seed_group, asset_class, param, split)`. Each
+class/parameter/split keyed on `(seed_group, asset_class, param, split)`,
+where a null `asset_class` is the synthetic pool's cross-class row. Each
 `gate1_cells` row records which rule judged it (`test`), the per-PM gap and
 rank checks (`gap_ok`, `rank_ok`), and, for a population-tested parameter,
 the standard-error z (`pop_z`) and whether it and the rank correlation passed
@@ -436,8 +442,12 @@ miscalibration are omitted here too.
 Limitations from the model:
 
 - The pooled synthetic baseline hides seed-level effects: a bias that only
-  shows up on one market seed is averaged away in the pooled `synthetic`
-  cell that blocks the pipeline.
+  shows up on one market seed is averaged away in the cross-class row that
+  blocks the pipeline.
+- Pooling across asset classes hides asset-class-level effects the same way:
+  a bias recoverable in only one direct asset class is averaged away in the
+  cross-class row, and only the per-asset-class `synthetic` cell (report-only)
+  would show it.
 - Herding is measured as agreement with the street's non-neutral view, not
   as a PM crossing its own conflicting signal: a PM who follows the street
   in a conflict ends on the street's side, so the conflict itself cannot be
@@ -454,12 +464,12 @@ Limitations from the model:
   verdict.
 - Every split beyond `all` (by regime, and before/after a drift event) is
   report-only and never gates a verdict.
-- Gate 1 blocks the pipeline at the default configuration: several
-  blocking parameters fail on every asset class, per the verdict pattern
-  above.
-- A report-only parameter's pooled cell can fail or stay insufficient without
-  blocking the pipeline, so a planted bias in `disposition_ratio` or
-  `anchoring_rho` can ship unverified at the default population.
+- Gate 1 blocks the pipeline at the default configuration: several blocking
+  parameters fail their cross-class row, per the verdict pattern above.
+- A report-only parameter's cross-class row can fail or stay insufficient
+  without blocking the pipeline, so a planted bias in `herding_weight`,
+  `disposition_ratio` or `anchoring_rho` can ship unverified at the default
+  population.
 
 ## Development
 

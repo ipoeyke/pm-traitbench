@@ -52,11 +52,15 @@ class PmEstimate:
 
 @dataclass(frozen=True)
 class CellStats:
-    """A neutral-versus-active comparison for one seed group, param and split."""
+    """A neutral-versus-active comparison for one seed group, param and split.
+
+    `asset_class` is null for the synthetic pool's cross-class row, which
+    pools every direct asset class together.
+    """
 
     seed_group: str
     seed_group_kind: SeedGroupKind
-    asset_class: AssetClass
+    asset_class: AssetClass | None
     param: str
     split: Gate1Split
     higher_is_stronger: bool
@@ -149,7 +153,7 @@ def _calibration(param: str, pairs: Sequence[tuple[float, float]]) -> float | No
 def build_cell(
     seed_group: str,
     kind: SeedGroupKind,
-    asset_class: AssetClass,
+    asset_class: AssetClass | None,
     param: str,
     split: Gate1Split,
     higher_is_stronger: bool,

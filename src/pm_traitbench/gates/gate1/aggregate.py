@@ -3,9 +3,11 @@
 `estimate_all` runs every estimator over every PM, bias parameter and split it
 applies to. `aggregate` then pools those per-PM statistics into one cell per
 `(seed group, asset class, parameter, split)`: a synthetic pool over every
-synthetic seed, each synthetic seed alone, and each real seed alone. A cell
-carries the neutral baseline, the active mean and floor, and the rank
-correlation and calibration a verdict check later turns into a pass or fail.
+synthetic seed, each synthetic seed alone, and each real seed alone. For the
+synthetic pool it also emits one cross-class cell per `(parameter, split)`,
+`asset_class` null, pooling every direct asset class together. A cell carries
+the neutral baseline, the active mean and floor, and the rank correlation and
+calibration a verdict check later turns into a pass or fail.
 """
 
 from collections import defaultdict
@@ -70,8 +72,10 @@ def aggregate(
 ) -> list[CellStats]:
     """Pool `estimates` into a synthetic-pool, per-synthetic-seed and per-real-seed cell.
 
-    One cell per `(asset_class, param, split)` that has at least one member.
-    For `ALL`, a drifted PM's estimate is excluded from every group. For
+    One cell per `(asset_class, param, split)` that has at least one member,
+    plus one cross-class cell per `(param, split)` for the synthetic pool,
+    `asset_class` null, over the members of every asset class together. For
+    `ALL`, a drifted PM's estimate is excluded from every group. For
     `BEFORE`/`AFTER`, only drifted PMs have rows (they are the active set), so
     the neutral baseline is pulled in from the same param's non-drifted `ALL`
     rows instead: drift windows differ per PM, so there is no shared date set
@@ -98,6 +102,8 @@ def aggregate(
         return shortfall_cache[key]
 
     cells: list[CellStats] = []
+    pool_by_param_split: dict[tuple[str, Gate1Split], list[PmEstimate]] = defaultdict(list)
+    pool_shortfall_by_param: dict[str, bool] = defaultdict(bool)
     for (asset_class, param, split), key_estimates in by_key.items():
         if split == Gate1Split.ALL:
             members = [e for e in key_estimates if not e.drifted]
@@ -116,6 +122,7 @@ def aggregate(
 
         pool_members = [e for e in members if e.seed in synthetic_seeds]
         if pool_members:
+            shortfall = shortfall_for(asset_class, param)
             cells.append(
                 build_cell(
                     SYNTHETIC_POOL,
@@ -128,9 +135,11 @@ def aggregate(
                     knobs,
                     count_p10=None,
                     count_ok=None,
-                    count_shortfall=shortfall_for(asset_class, param),
+                    count_shortfall=shortfall,
                 )
             )
+            pool_by_param_split[(param, split)].extend(pool_members)
+            pool_shortfall_by_param[param] = pool_shortfall_by_param[param] or shortfall
 
         for seeds, kind in (
             (synthetic_seeds, SeedGroupKind.SYNTHETIC_SEED),
@@ -157,5 +166,31 @@ def aggregate(
                     )
                 )
 
-    cells.sort(key=lambda c: (c.seed_group_kind, c.seed_group, c.asset_class, c.param, c.split))
+    for (param, split), pool_members in pool_by_param_split.items():
+        cells.append(
+            build_cell(
+                SYNTHETIC_POOL,
+                SeedGroupKind.SYNTHETIC_POOL,
+                None,
+                param,
+                split,
+                ESTIMATORS[param].higher_is_stronger,
+                pool_members,
+                knobs,
+                count_p10=None,
+                count_ok=None,
+                count_shortfall=pool_shortfall_by_param[param],
+            )
+        )
+
+    cells.sort(
+        key=lambda c: (
+            c.seed_group_kind,
+            c.seed_group,
+            c.asset_class is not None,
+            c.asset_class,
+            c.param,
+            c.split,
+        )
+    )
     return cells

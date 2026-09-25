@@ -13,7 +13,7 @@ def _cell(
     *,
     seed_group: str = "synthetic",
     seed_group_kind: SeedGroupKind = SeedGroupKind.SYNTHETIC_POOL,
-    asset_class: AssetClass = EQ,
+    asset_class: AssetClass | None = None,  # None: the pooled cross-class row, blocking-eligible
     param: str = "loss_aversion_lambda",  # per-PM by default; not in population_params
     split: Gate1Split = Gate1Split.ALL,
     higher_is_stronger: bool = True,
@@ -209,6 +209,13 @@ def test_regime_split_on_the_pool_is_not_blocking() -> None:
     assert row.blocking is False
 
 
+def test_per_class_pooled_all_row_never_blocks_even_when_the_cross_class_row_would() -> None:
+    cross_class = judge(_cell(asset_class=None), KNOBS)
+    per_class = judge(_cell(asset_class=EQ), KNOBS)
+    assert cross_class.blocking is True
+    assert per_class.blocking is False
+
+
 # --- judge: field copy and count_shortfall ------------------------------------
 
 
@@ -256,8 +263,9 @@ def test_every_other_field_copies_from_stats() -> None:
 
 def test_blocking_failures_lists_only_blocking_non_pass_rows_sorted() -> None:
     rows = [
-        judge(_cell(param="loss_aversion_lambda", rank_corr=0.3), KNOBS),  # per-PM, blocking, fail
-        judge(_cell(param="exit_deficiency"), KNOBS),  # per-PM, blocking, pass
+        # cross-class, blocking, fail
+        judge(_cell(param="loss_aversion_lambda", rank_corr=0.3), KNOBS),
+        judge(_cell(param="exit_deficiency"), KNOBS),  # cross-class, blocking, pass
         judge(
             _cell(
                 param="herding_weight",
@@ -270,15 +278,23 @@ def test_blocking_failures_lists_only_blocking_non_pass_rows_sorted() -> None:
         judge(
             _cell(
                 param="conviction_size_miscalibration",
-                asset_class=AssetClass.COMMODITIES,
+                asset_class=None,
                 rank_corr=None,
             ),
             KNOBS,
         ),  # population, blocking, fail (no rank correlation)
+        judge(
+            _cell(
+                param="conviction_size_miscalibration",
+                asset_class=AssetClass.COMMODITIES,
+                rank_corr=None,
+            ),
+            KNOBS,
+        ),  # per-class pooled row, never blocking even though it fails
     ]
     assert blocking_failures(rows) == [
-        "commodities/conviction_size_miscalibration",
-        "equities/loss_aversion_lambda",
+        "all/conviction_size_miscalibration",
+        "all/loss_aversion_lambda",
     ]
 
 
@@ -288,6 +304,7 @@ def test_count_warnings_lists_only_single_seed_rows_with_count_ok_false_sorted()
             _cell(
                 seed_group_kind=SeedGroupKind.SYNTHETIC_SEED,
                 seed_group="seed_b",
+                asset_class=EQ,
                 param="anchoring_rho",
                 count_ok=False,
             ),
@@ -297,6 +314,7 @@ def test_count_warnings_lists_only_single_seed_rows_with_count_ok_false_sorted()
             _cell(
                 seed_group_kind=SeedGroupKind.REAL_SEED,
                 seed_group="seed_r",
+                asset_class=EQ,
                 param="anchoring_rho",
                 count_ok=False,
             ),

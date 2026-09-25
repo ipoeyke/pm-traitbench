@@ -54,6 +54,38 @@ def gate1_cell_row() -> Gate1CellRow:
 
 
 @pytest.fixture
+def gate1_cell_row_pooled() -> Gate1CellRow:
+    """A cross-class pooled row: `asset_class` null, pooling every direct asset class."""
+    return Gate1CellRow(
+        seed_group="synthetic",
+        seed_group_kind=SeedGroupKind.SYNTHETIC_POOL,
+        asset_class=None,
+        param="loss_aversion_lambda",
+        split=Gate1Split.ALL,
+        n_neutral=36,
+        n_active=18,
+        n_missing=2,
+        neutral_mean=1.1,
+        neutral_sd=0.1,
+        active_mean=1.9,
+        floor=1.3,
+        active_share_past_floor=0.8,
+        rank_corr=0.6,
+        count_p10=None,
+        calibration=None,
+        test=Gate1Test.PER_PM,
+        gap_ok=True,
+        rank_ok=True,
+        pop_z=None,
+        pop_ok=False,
+        count_ok=None,
+        count_shortfall=False,
+        verdict=Gate1Verdict.PASS,
+        blocking=True,
+    )
+
+
+@pytest.fixture
 def gate1_cell_row_population() -> Gate1CellRow:
     """A population-tested cell, to round-trip `test`, `pop_z` and `pop_ok` at non-default
     values."""

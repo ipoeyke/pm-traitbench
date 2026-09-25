@@ -565,10 +565,14 @@ class Gate1Config(BaseModel):
         },
     )
     report_only_params: tuple[str, ...] = Field(
-        ("disposition_ratio", "anchoring_rho"),
+        ("herding_weight", "disposition_ratio", "anchoring_rho"),
         json_schema_extra={
             "basis": "design",
-            "note": "too few PMs per asset class for the population test at the default population",
+            "note": (
+                "disposition_ratio and anchoring_rho have too few PMs per asset class for "
+                "the population test at the default population; herding_weight is coupled "
+                "to extrapolation through the trend-built street view"
+            ),
         },
     )
 

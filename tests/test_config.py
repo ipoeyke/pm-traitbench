@@ -860,7 +860,7 @@ def test_gate1_config_defaults() -> None:
         "disposition_ratio",
         "anchoring_rho",
     )
-    assert config.report_only_params == ("disposition_ratio", "anchoring_rho")
+    assert config.report_only_params == ("herding_weight", "disposition_ratio", "anchoring_rho")
 
 
 def test_gate1_config_has_no_anchor_band_k() -> None:
