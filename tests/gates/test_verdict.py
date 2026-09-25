@@ -224,6 +224,7 @@ def test_every_other_field_copies_from_stats() -> None:
         n_missing=2,
         floor=0.2,
         active_share_past_floor=0.7,
+        pop_z=1.7,
         count_p10=12.0,
         count_ok=True,
         calibration=0.4,
@@ -243,6 +244,7 @@ def test_every_other_field_copies_from_stats() -> None:
     assert row.floor == cell.floor
     assert row.active_share_past_floor == cell.active_share_past_floor
     assert row.rank_corr == cell.rank_corr
+    assert row.pop_z == cell.pop_z
     assert row.count_p10 == cell.count_p10
     assert row.count_ok == cell.count_ok
     assert row.count_shortfall == cell.count_shortfall

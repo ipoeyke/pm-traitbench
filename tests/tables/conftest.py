@@ -51,3 +51,36 @@ def gate1_cell_row() -> Gate1CellRow:
         verdict=Gate1Verdict.PASS,
         blocking=True,
     )
+
+
+@pytest.fixture
+def gate1_cell_row_population() -> Gate1CellRow:
+    """A population-tested cell, to round-trip `test`, `pop_z` and `pop_ok` at non-default
+    values."""
+    return Gate1CellRow(
+        seed_group="pool",
+        seed_group_kind=SeedGroupKind.SYNTHETIC_POOL,
+        asset_class=AssetClass.EQUITIES,
+        param="herding_weight",
+        split=Gate1Split.ALL,
+        n_neutral=20,
+        n_active=10,
+        n_missing=1,
+        neutral_mean=0.2,
+        neutral_sd=0.05,
+        active_mean=0.6,
+        floor=None,
+        active_share_past_floor=0.9,
+        rank_corr=0.3,
+        count_p10=None,
+        calibration=None,
+        test=Gate1Test.POPULATION,
+        gap_ok=False,
+        rank_ok=False,
+        pop_z=4.2,
+        pop_ok=True,
+        count_ok=None,
+        count_shortfall=False,
+        verdict=Gate1Verdict.PASS,
+        blocking=True,
+    )
