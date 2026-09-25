@@ -166,13 +166,40 @@
 
 ---
 
+### Task 6b: Pooled blocking row across asset classes; herding report-only
+
+**Files:**
+- Modify: `src/pm_traitbench/tables/schema.py` (`Gate1CellRow.asset_class`), `src/pm_traitbench/gates/gate1/_cell_stats.py` (`CellStats.asset_class`), `src/pm_traitbench/gates/gate1/aggregate.py`, `src/pm_traitbench/gates/gate1/verdict.py`, `src/pm_traitbench/config.py` (`report_only_params` default), `README.md` ("Gate 1": pooling and blocking text, knob default)
+- Test: `tests/gates/test_aggregate.py`, `tests/gates/test_verdict.py`, `tests/gates/test_stage.py`, `tests/tables/` round trip, `tests/test_config.py`
+
+**Interfaces:**
+- `Gate1CellRow.asset_class: AssetClass | None` and `CellStats.asset_class: AssetClass | None`; None means every direct asset class pooled. Field description says so.
+- `aggregate`: for the synthetic pool group only, additionally emit one cell per `(param, split)` over the members of all asset classes together (same membership rules, same statistics, `pop_z` included), with `asset_class=None`, `seed_group=SYNTHETIC_POOL`, kind `SYNTHETIC_POOL`. Its `count_p10` and `count_ok` are None; its `count_shortfall` is true when any single synthetic seed row of that param (any asset class) has `count_ok` False. Sorting keeps working with None (sort None first).
+- `judge`: `blocking` is true only when `seed_group_kind == SYNTHETIC_POOL`, `split == ALL`, `asset_class is None` and the param is not in `report_only_params`. Per-asset-class rows are judged the same way but never block.
+- `blocking_failures`: entries read `all/{param}` for the pooled row. `count_warnings` unchanged (single-seed rows only).
+- `Gate1Config.report_only_params` default becomes `("herding_weight", "disposition_ratio", "anchoring_rho")`; its note: too few PMs per asset class for the population test at the default population, and herding is coupled to extrapolation through the trend-built street view.
+
+- [ ] **Step 1: Write failing tests**
+  - `aggregate` emits one pooled cross-class row per `(param, split)` for the synthetic pool, whose `n_neutral` and `n_active` are the sums over the per-class pooled rows, and no cross-class rows for single seeds or real seeds.
+  - `judge`: a pooled cross-class `all` row of a blocking param blocks; the per-class pooled `all` row of the same param does not; a report-only param's cross-class row does not.
+  - `blocking_failures` lists `all/{param}`.
+  - Config default for `report_only_params` includes herding.
+  - Round trip of a `Gate1CellRow` with `asset_class=None`.
+  - Stage test: the one-PM-per-class fixture now fails only on the cross-class rows (`all/{param}` for each non-report-only param), and the per-class rows no longer appear in the failure list.
+- [ ] **Step 2: Run** `uv run pytest tests/gates tests/tables tests/test_config.py -q`. Expected: FAIL on the new expectations.
+- [ ] **Step 3: Implement**; README: the blocking verdict per parameter is the pooled row over all direct asset classes; per-class rows are reported; herding is report-only with its reason.
+- [ ] **Step 4: Tests green; full suite + lint green.**
+- [ ] **Step 5: Commit** `feat: block gate 1 on one pooled row per parameter`
+
+---
+
 ### Task 7: Default run, 12-root sweep, README results and dataset plan
 
 **Files:**
 - Modify: `README.md` (default-config results in the "Gate 1" section and the engine limitations), `docs/pm-dataset-plan.md`
 
 - [ ] **Step 1: Rerun the default data**: `uv run pm-traitbench engine --force` then `uv run pm-traitbench gate1 --force`. Record the pooled `all` verdicts, `pop_z` and rank correlation per (parameter, asset class).
-- [ ] **Step 2: Run the 12-root sweep** (roots 20260301-20260312, default config otherwise, each in its own data dir with `data/raw` linked for the R1 seed): sample, market, engine, gate1. Report per (parameter, asset class) the pass count over roots. Expected from the probe: exit deficiency, extrapolation and loss aversion pass on at least 11 of 12 roots per asset class, overconfidence on at least 10, conviction on at least 9, herding on at least 6; disposition and anchoring are report-only. Any lower rate: stop and report (BLOCKED) with the table.
+- [ ] **Step 2: Run the 12-root sweep** (roots 20260301-20260312, default config otherwise, each in its own data dir with `data/raw` linked for the R1 seed): sample, market, engine, gate1. Report per (parameter, asset class) the pass count over roots. Expected: every blocking parameter's pooled cross-class row passes on at least 11 of 12 roots, and at least 10 of 12 roots pass every blocking row (probe: 12 of 12); per-class rows and the report-only parameters (herding, disposition, anchoring) are reported. Any lower rate: stop and report (BLOCKED) with the table.
 - [ ] **Step 3: README**: replace the default-config results and causes with the new results and sweep rates; keep the pre-fix per-PM results as one short paragraph ("before these rule changes ...") with the baseline numbers.
 - [ ] **Step 4: Dataset plan**: section 3.1 rows for extrapolation (entry and side follow the normalised forecast; Gate 1 statistic unchanged), loss aversion (hazard construction, basis "spirit, calibrated", statistic add rate), conviction (mixture sizing and headroom; statistic from the lead leg; population test), anchoring (fixed round-level anchor with probability rho; crossing-day statistic; population test, report-only); the stage 4 paragraph (per-PM and population tests, report-only list, new results and sweep rates, the baseline per-PM results before the change); the anchoring n_min row (opportunity is an anchor crossing). Plain dash, no filler words.
 - [ ] **Step 5: Commit** `docs: record engine bias fixes and population tests in the dataset plan and readme`
