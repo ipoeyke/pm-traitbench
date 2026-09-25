@@ -351,6 +351,10 @@ class Carrier:
     trade_idea_id: str
     date: date
     source: CarrierSource
+    pattern: str | None   # the engine action behind a bias carrier (flag suffix, "acked_no_action"
+                          # for a rule event, "chased_trend" for an extrapolation idea); None for an
+                          # expression-preference carrier. Must be in the stance bank's
+                          # REVEALED_PATTERNS[param] for that bias.
 
 FLAG_PREFIX_PARAM: dict[str, str] = {
     "disposition": "disposition_ratio",
@@ -372,10 +376,10 @@ def carrier_pools(inputs: PlanInputs) -> dict[str, tuple[Carrier, ...]]: ...
 `carrier_pools` rules:
 - Keys: the `trait_id` of every active bias (possibly an empty tuple), plus every preference trait whose value in force on some idea's `entry_date` maps to a non-None form in `engine.adapters.FORM_FOR_PREFERENCE`.
 - Every `<prefix>:<pattern>` flag in a `ledger` or `position_days` `bias_flag` (split on `;`) is a carrier for the bias `FLAG_PREFIX_PARAM[prefix]`, if that bias is active for the PM; an unknown prefix raises `PlanError` (guards against the engine adding a flag this stage does not understand). `HOLD_FLAGS` count only on their first `position_days` date per `(trade_idea_id, flag)`, because they mark every held day.
-- `rule_events` with `response in BREACH_RESPONSES` are carriers for `exit_deficiency` (if active), dated `response_date`.
+- `rule_events` with `response in BREACH_RESPONSES` are carriers for `exit_deficiency` (if active), dated `response_date`, pattern = the response value (`acked_no_action` or `added`). A flag carrier's pattern is the flag suffix after `:`; an extrapolation carrier's pattern is `chased_trend`.
 - Ideas with `chased_trend` true are carriers for `extrapolation_theta` if active, dated `entry_date`, source `IDEA`.
 - An expression preference's carriers are ideas whose `expression` equals the mapped form of the value in force on the idea's `entry_date`, source `IDEA`.
-- Drop carriers whose date is in a dormant window of that trait. Deduplicate on `(trait_id, trade_idea_id, date)`, keeping the first by source order `LEDGER, POSITION_DAY, RULE_EVENT, IDEA`. Sort each pool by `(date, trade_idea_id, source)`.
+- Drop carriers whose date is in a dormant window of that trait. Deduplicate on `(trait_id, trade_idea_id, date, pattern)`, keeping the first by source order `LEDGER, POSITION_DAY, RULE_EVENT, IDEA` (two different actions on one idea and day are two carriers; the same action seen in two tables is one). Sort each pool by `(date, trade_idea_id, source)`.
 
 `tests/signals/conftest.py` (shared; later tasks import from it): re-export `idea_row`, `ledger_row`, `rule_event`, `position_day` from `tests.gates.conftest`; add `bias_trait(param, *, active=True, value=None, trait_id=...)`, `pref_trait(param, value, *, trait_id=...)` using the shipped catalogue's params, `drift_event(trait_id, day, event, from_value=None, to_value=None)`, `persona(asset_class=AssetClass.EQUITIES)`, `plan_inputs(**overrides) -> PlanInputs` (one equities PM, eight neutral inactive biases, no preferences, trading days = 260 weekdays from 2026-01-05), and a `plan_config` fixture returning `Config().plan`.
 
@@ -469,6 +473,7 @@ class PlacedSignal:
     date: date
     trade_idea_id: str | None
     claim_date: date | None            # set only for contradiction
+    carrier: Carrier | None            # the drawn carrier, for carrier signals
 
 @dataclass(frozen=True)
 class PlannedSession:
@@ -547,7 +552,7 @@ def render_skeletons(inputs: PlanInputs, assembly: Assembly, catalogue: Catalogu
 
 Rules:
 - One `Skeleton` per `PlannedSession`, in session order. `forbidden_trait_ids` and `forbidden_pref_params` from `forbidden_sets` on every skeleton (a third-party stance in the session does not lift a trait from the forbidden set: the PM must still not show it).
-- Stances: claims first (entry `CLAIM`, mode `CONTRADICTION`), then signals in placement order with their planned `entry`. Lines come from `catalogue.stances.lines(key, entry, asset_class)` with `key` = the bias param or the preference's `PreferenceGroup` value (look up the group via `catalogue.preferences`), one line chosen by `rng.choice` over the tuple, then `render_stance(line, slots)`.
+- Stances: claims first (entry `CLAIM`, mode `CONTRADICTION`), then signals in placement order with their planned `entry`. A bias `REVEALED` stance (including a contradiction's later stance) uses `catalogue.stances.revealed_lines(param, carrier.pattern, asset_class)`, so the line describes the action the engine actually took that day; `PlacedSignal` therefore also carries the drawn `Carrier` (field `carrier: Carrier | None`). Every other line comes from `catalogue.stances.lines(key, entry, asset_class)` with `key` = the bias param or the preference's `PreferenceGroup` value (look up the group via `catalogue.preferences`), one line chosen by `rng.choice` over the tuple, then `render_stance(line, slots)`.
 - Slots: `instrument`, `entry`, `target`, `stop` from the carrier idea (`instrument_id`, `format_level` of `entry_level`, `target_level`, `stop_level`); `value` = `inputs.value_at(trait_id, session date)` for self preference signals, `third_party_value` for third-party preference signals; `old_value` = the drift event's `from_value` on a preference `DRIFT_UPDATE` note; `who` = `"a colleague"` or `"a client"` from `ownership`. Only the slots the entry's `STANCE_SLOTS` set names are passed.
 - `advisor_violation`: when the session has a `REVEALED_REACTION` stance, render one line of that preference group's `VIOLATION` entry with the same `value`; else `None`.
 - A missing stance entry propagates `PlanError` from `Stances.lines`.
