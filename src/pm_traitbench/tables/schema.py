@@ -592,16 +592,16 @@ class PositionDay(BaseModel):
         description="Semicolon-separated bias:pattern tags detected on this day.",
     )
     anchor_level: float | None = Field(
-        description="Reference level anchoring the PM's view; null unless exit level is set."
+        description="The idea's fixed round-level anchor; null if none qualified at entry."
     )
     effective_exit_level: float | None = Field(
-        description="Effective exit level; set together with anchor_level."
+        description="Effective exit level from this day's discretionary evaluation; null if none."
     )
 
     @model_validator(mode="after")
     def _check_invariants(self) -> "PositionDay":
-        if (self.anchor_level is None) != (self.effective_exit_level is None):
-            raise ValueError("anchor_level and effective_exit_level must be both null or both set")
+        if self.effective_exit_level is None and self.anchor_level is not None:
+            raise ValueError("anchor_level requires effective_exit_level to be set")
         is_flat = abs(self.pnl_z) < 1e-9
         if is_flat != (self.pnl_state == PnlState.FLAT):
             raise ValueError("pnl_state must be 'flat' exactly when abs(pnl_z) < 1e-9")

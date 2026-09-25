@@ -10,15 +10,11 @@ from pm_traitbench.engine.biases import anchoring as anchoring_module
 from pm_traitbench.engine.biases import disposition as disposition_module
 from pm_traitbench.engine.biases import exit_deficiency as exit_deficiency_module
 from pm_traitbench.engine.biases import loss_aversion as loss_aversion_module
-from pm_traitbench.engine.biases.anchoring import evaluate
-from pm_traitbench.engine.biases.anchoring import flag as anchoring_flag
 from pm_traitbench.engine.biases.disposition import draw_sell, sell_hazard
 from pm_traitbench.engine.biases.disposition import flag as disposition_flag
 from pm_traitbench.engine.biases.exit_deficiency import LATE_ROLL_FLAG, Response, respond
 from pm_traitbench.engine.params import EffectiveParams
-from pm_traitbench.engine.series import LegRef, Series
-from pm_traitbench.engine.state import Position
-from pm_traitbench.enums import Expression, PnlState, RuleResponse, Side
+from pm_traitbench.enums import PnlState, RuleResponse
 from pm_traitbench.rng import stream
 
 
@@ -27,39 +23,6 @@ def _params(values: dict[str, float], active: set[str]) -> EffectiveParams:
     return EffectiveParams(
         values={param: values.get(param, 0.5) for param in BIAS_PARAMS},
         active={param: param in active for param in BIAS_PARAMS},
-    )
-
-
-def _position(
-    *, side: Side = Side.BUY, bullish_sign: int = 1, target_level: float = 110.0
-) -> Position:
-    series = Series(
-        legs=(LegRef(instrument_id="EQ-0001", tenor=None, coeff=1.0),),
-        bullish_sign=bullish_sign,
-        unit="pct",
-    )
-    return Position(
-        trade_idea_id="ti_001",
-        expression=Expression.OUTRIGHT,
-        instrument_id="EQ-0001",
-        legs=(),
-        series=series,
-        side=side,
-        entry_t=0,
-        entry_level=100.0,
-        target_level=target_level,
-        stop_level=90.0,
-        sd_h_at_entry=1.0,
-        forecast=105.0,
-        size_pct_book=1.0,
-        original_size_pct_book=1.0,
-        size_at_entry=1.0,
-        conviction=1,
-        size_rank=1,
-        triggers_fired=0,
-        consumed_rule_ids=frozenset(),
-        run_counters=(),
-        size_changed_t=0,
     )
 
 
@@ -233,118 +196,3 @@ def test_disposition_flag_none_cases(
 ) -> None:
     params = _params({"disposition_ratio": 1.5}, {"disposition_ratio"} if active else set())
     assert disposition_flag(pnl_state, progress, sold, params) is None
-
-
-# --- anchoring.evaluate, flag --------------------------------------------------
-
-
-def test_evaluate_rho_zero_effective_equals_target() -> None:
-    params = _params({"anchoring_rho": 0.0}, {"anchoring_rho"})
-    pos = _position(side=Side.BUY, bullish_sign=1, target_level=110.0)
-    result = evaluate(pos, 100.0, [105.0, 108.0], params)
-    assert result.effective_exit_level == pytest.approx(pos.target_level)
-
-
-def test_evaluate_rho_one_effective_equals_anchor() -> None:
-    params = _params({"anchoring_rho": 1.0}, {"anchoring_rho"})
-    pos = _position(side=Side.BUY, bullish_sign=1, target_level=110.0)
-    result = evaluate(pos, 100.0, [105.0, 108.0], params)
-    # Both 105 and 108 sit between entry (100) and target (110); 108 is nearer
-    # the target. Compared against the literal expected anchor, not the
-    # returned anchor_level, so picking the wrong candidate cannot self-pass.
-    assert result.anchor_level == pytest.approx(108.0)
-    assert result.effective_exit_level == pytest.approx(108.0)
-
-
-def test_evaluate_rho_half_reached_before_the_target_for_buy() -> None:
-    # Anchor 105 sits between entry 100 and target 110: effective =
-    # 0.5*110 + 0.5*105 = 107.5, short of the target, so reached can fire
-    # before price ever gets to 110.
-    params = _params({"anchoring_rho": 0.5}, {"anchoring_rho"})
-    pos = _position(side=Side.BUY, bullish_sign=1, target_level=110.0)
-    result = evaluate(pos, 106.0, [105.0], params)
-    assert result.effective_exit_level == pytest.approx(107.5)
-    assert result.reached is False
-
-    reached = evaluate(pos, 108.0, [105.0], params)
-    assert reached.reached is True
-
-
-def test_evaluate_rho_half_reached_before_the_target_for_sell() -> None:
-    # Anchor 95 sits between entry 100 and target 90: effective =
-    # 0.5*90 + 0.5*95 = 92.5, short of the target, so reached can fire
-    # before price ever falls to 90.
-    params = _params({"anchoring_rho": 0.5}, {"anchoring_rho"})
-    pos = _position(side=Side.SELL, bullish_sign=1, target_level=90.0)
-    result = evaluate(pos, 94.0, [95.0], params)
-    assert result.effective_exit_level == pytest.approx(92.5)
-    assert result.reached is False
-
-    reached = evaluate(pos, 92.0, [95.0], params)
-    assert reached.reached is True
-
-
-def test_evaluate_anchor_beyond_target_or_behind_entry_is_ignored() -> None:
-    params = _params({"anchoring_rho": 1.0}, {"anchoring_rho"})
-    pos = _position(side=Side.BUY, bullish_sign=1, target_level=110.0)
-    # 95 is behind entry (100), 115 is beyond target (110): neither qualifies,
-    # leaving 103 (strictly between entry and target) as the only candidate.
-    result = evaluate(pos, 100.0, [95.0, 103.0, 115.0], params)
-    assert result.anchor_level == pytest.approx(103.0)
-
-
-def test_evaluate_no_candidate_between_entry_and_target_falls_back_to_target() -> None:
-    params = _params({"anchoring_rho": 1.0}, {"anchoring_rho"})
-    pos = _position(side=Side.SELL, bullish_sign=1, target_level=90.0)
-    # 105 is behind entry (100), 70 is beyond target (90): neither qualifies.
-    result = evaluate(pos, 95.0, [105.0, 70.0], params)
-    assert result.anchor_level == pytest.approx(pos.target_level)
-    assert result.effective_exit_level == pytest.approx(pos.target_level)
-
-
-def test_evaluate_two_candidates_picks_the_one_nearer_the_target() -> None:
-    params = _params({"anchoring_rho": 1.0}, {"anchoring_rho"})
-    pos = _position(side=Side.BUY, bullish_sign=1, target_level=110.0)
-    # Both 103 and 107 sit between entry (100) and target (110); 107 is nearer.
-    result = evaluate(pos, 100.0, [103.0, 107.0], params)
-    assert result.anchor_level == pytest.approx(107.0)
-
-
-def test_evaluate_bullish_sign_negative_mirrors_the_short_case() -> None:
-    # BUY with bullish_sign=-1 gives adverse_dir=1, the same as a SELL with
-    # bullish_sign=1: the favourable direction is downward, so anchors
-    # between entry (100) and target (90) qualify.
-    params = _params({"anchoring_rho": 1.0}, {"anchoring_rho"})
-    pos = _position(side=Side.BUY, bullish_sign=-1, target_level=90.0)
-    result = evaluate(pos, 95.0, [85.0, 92.0, 70.0], params)
-    assert result.anchor_level == pytest.approx(92.0)
-    assert result.effective_exit_level == pytest.approx(92.0)
-    assert result.reached is False
-
-    at_target = evaluate(pos, 90.0, [], params)
-    assert at_target.reached is True
-
-
-def test_evaluate_reached_respects_direction_for_buy() -> None:
-    params = _params({"anchoring_rho": 0.0}, {"anchoring_rho"})
-    pos = _position(side=Side.BUY, bullish_sign=1, target_level=110.0)
-    below = evaluate(pos, 105.0, [], params)
-    at_or_above = evaluate(pos, 110.0, [], params)
-    assert below.reached is False
-    assert at_or_above.reached is True
-
-
-def test_evaluate_reached_respects_direction_for_sell() -> None:
-    params = _params({"anchoring_rho": 0.0}, {"anchoring_rho"})
-    pos = _position(side=Side.SELL, bullish_sign=1, target_level=90.0)
-    above = evaluate(pos, 95.0, [], params)
-    at_or_below = evaluate(pos, 90.0, [], params)
-    assert above.reached is False
-    assert at_or_below.reached is True
-
-
-def test_anchoring_flag_active_vs_inactive() -> None:
-    active_params = _params({"anchoring_rho": 0.5}, {"anchoring_rho"})
-    inactive_params = _params({"anchoring_rho": 0.5}, set())
-    assert anchoring_flag(active_params) == "anchoring:exit_at_anchor"
-    assert anchoring_flag(inactive_params) is None

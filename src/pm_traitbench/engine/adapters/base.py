@@ -10,7 +10,6 @@ from typing import ClassVar, Protocol
 
 import numpy as np
 
-from pm_traitbench.engine.constants import TRAILING_HIGH_DAYS
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import PmState, Position
@@ -20,7 +19,6 @@ from pm_traitbench.enums import (
     Expression,
     InstrumentKind,
     Op,
-    Regime,
     RuleScope,
     Side,
 )
@@ -76,8 +74,6 @@ class Adapter(Protocol):
     def leg_price(self, leg: LegRef, view: MarketView, t: int) -> float: ...
 
     def instrument_type(self, instrument_id: str, view: MarketView) -> InstrumentKind: ...
-
-    def anchors(self, pos: Position, view: MarketView, t: int) -> tuple[float, ...]: ...
 
     def peer_ids(
         self, instrument_id: str, instruments: Mapping[str, Instrument]
@@ -178,23 +174,3 @@ def excluded_values(rules: Sequence[Rule], field: str) -> frozenset[str]:
         and rule.op == Op.NE
         and rule.field == field
     )
-
-
-def standard_anchors(
-    adapter: Adapter, pos: Position, view: MarketView, t: int
-) -> tuple[float, ...]:
-    """Entry level; the round level in range regime; the trailing extreme on the position's
-    favourable side.
-
-    All three in the position's tracked (pre-roll) frame: `entry_level` is never shifted, so it
-    is used as-is; the round level and trailing extreme read the raw series, so each is re-based
-    by `-rolled_offset` (the round level via `tracked_level` as its input) before being returned.
-    """
-    values = [pos.entry_level]
-    if view.regime(t) == Regime.RANGE:
-        values.append(adapter.round_step(pos.series, tracked_level(pos, view, t)))
-    if pos.adverse_dir < 0:
-        values.append(view.trailing_high(pos.series, t, TRAILING_HIGH_DAYS) - pos.rolled_offset)
-    else:
-        values.append(view.trailing_low(pos.series, t, TRAILING_HIGH_DAYS) - pos.rolled_offset)
-    return tuple(values)

@@ -7,7 +7,6 @@ import pytest
 
 from pm_traitbench.engine.adapters.base import leg_side, pnl_unit, relative_move
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
-from pm_traitbench.engine.constants import TRAILING_HIGH_DAYS
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import PmState, Position
 from pm_traitbench.enums import (
@@ -212,34 +211,6 @@ def test_size_and_risk(fixture_view) -> None:
     size, risk = adapter.size_and_risk(5.0, legs, fixture_view, 0, 1e8)
     assert size == pytest.approx(5.0)
     assert risk == pytest.approx(5e6)
-
-
-def test_anchors_round_level_and_trailing_extreme_by_side(fixture_view) -> None:
-    adapter = EquitiesAdapter("value", _HORIZON)
-    series = adapter.outright_series("EQ-0001")
-    entry_level = fixture_view.level(series, 0)
-    buy = _make_position(series=series, side=Side.BUY, entry_level=entry_level)
-    sell = _make_position(series=series, side=Side.SELL, entry_level=entry_level)
-    t_range, t_risk_off = 10, 45
-
-    buy_range = adapter.anchors(buy, fixture_view, t_range)
-    buy_risk_off = adapter.anchors(buy, fixture_view, t_risk_off)
-    assert len(buy_range) == 3
-    assert len(buy_risk_off) == 2
-
-    level_now = fixture_view.level(series, t_range)
-    expected_round_level = adapter.round_step(series, level_now)
-    assert buy_range[1] == pytest.approx(expected_round_level)
-
-    # buy: target sits above entry (adverse_dir < 0), so the anchor is the trailing high.
-    assert buy_range[2] == pytest.approx(
-        fixture_view.trailing_high(series, t_range, TRAILING_HIGH_DAYS)
-    )
-    # sell: target sits below entry (adverse_dir > 0), so the anchor is the trailing low.
-    sell_range = adapter.anchors(sell, fixture_view, t_range)
-    assert sell_range[2] == pytest.approx(
-        fixture_view.trailing_low(series, t_range, TRAILING_HIGH_DAYS)
-    )
 
 
 def test_relative_move_matches_view_computation_and_is_nonzero(fixture_view) -> None:

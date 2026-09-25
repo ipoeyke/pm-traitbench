@@ -37,13 +37,19 @@ def _rng_for(config: Config, pm_id: str) -> Callable[..., np.random.Generator]:
 
 
 def _params(
-    *, theta: float = 0.0, coverage: float = 0.8, herding_weight: float = 0.0, mis: float = 0.0
+    *,
+    theta: float = 0.0,
+    coverage: float = 0.8,
+    herding_weight: float = 0.0,
+    mis: float = 0.0,
+    rho: float = 0.0,
 ) -> EffectiveParams:
     values = {
         "extrapolation_theta": theta,
         "overconfidence_coverage": coverage,
         "herding_weight": herding_weight,
         "conviction_size_miscalibration": mis,
+        "anchoring_rho": rho,
     }
     return EffectiveParams(values=values, active={k: False for k in values})
 
@@ -946,3 +952,87 @@ def test_theta_one_enters_on_the_side_of_the_trailing_move(
         assert new_idea.idea.side == expected_side
         checked += 1
     assert checked > 0
+
+
+# --- attempt_entry: anchoring draws once at entry ---------------------------
+
+
+def test_rho_one_anchors_every_idea_with_a_valid_anchor(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+    monkeypatch.setattr(ideas_module.anchoring, "entry_anchor", lambda *a, **kw: 1.0)
+    _, new_idea = attempt_entry(
+        setup["state"],
+        _T,
+        setup["view"],
+        setup["adapter"],
+        _params(rho=1.0),
+        setup["persona"],
+        setup["rules"],
+        setup["traits"],
+        setup["universe"],
+        setup["config"],
+        setup["catalogue"],
+        _rng_for(setup["config"], _PM_ID),
+        attempt=0,
+    )
+    assert new_idea is not None
+    assert new_idea.position.anchor_level == pytest.approx(1.0)
+    assert new_idea.position.anchored is True
+
+
+def test_rho_zero_never_anchors_even_with_a_valid_anchor(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+    monkeypatch.setattr(ideas_module.anchoring, "entry_anchor", lambda *a, **kw: 1.0)
+    _, new_idea = attempt_entry(
+        setup["state"],
+        _T,
+        setup["view"],
+        setup["adapter"],
+        _params(rho=0.0),
+        setup["persona"],
+        setup["rules"],
+        setup["traits"],
+        setup["universe"],
+        setup["config"],
+        setup["catalogue"],
+        _rng_for(setup["config"], _PM_ID),
+        attempt=0,
+    )
+    assert new_idea is not None
+    assert new_idea.position.anchor_level == pytest.approx(1.0)
+    assert new_idea.position.anchored is False
+
+
+def test_no_anchor_never_anchors_regardless_of_rho(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+    monkeypatch.setattr(ideas_module.anchoring, "entry_anchor", lambda *a, **kw: None)
+    _, new_idea = attempt_entry(
+        setup["state"],
+        _T,
+        setup["view"],
+        setup["adapter"],
+        _params(rho=1.0),
+        setup["persona"],
+        setup["rules"],
+        setup["traits"],
+        setup["universe"],
+        setup["config"],
+        setup["catalogue"],
+        _rng_for(setup["config"], _PM_ID),
+        attempt=0,
+    )
+    assert new_idea is not None
+    assert new_idea.position.anchor_level is None
+    assert new_idea.position.anchored is False

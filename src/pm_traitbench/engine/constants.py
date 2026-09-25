@@ -32,8 +32,9 @@ MIN_SD_DAYS = 5
 SD_FLOOR = 1e-6
 # Consecutive sessions a level signpost must hold before it fires.
 LEVEL_WINDOW_CHOICES = (3, 4, 5)
-# Lookback for the prior-high anchor used by the anchoring bias.
-TRAILING_HIGH_DAYS = 60
+# The salient round-level anchor sits 40% of the way from entry to target, where
+# most ideas that do not stop out reach it.
+ANCHOR_FRACTION = 0.4
 
 # DV01 per $1mm notional by sovereign tenor, in local currency.
 DV01_PER_MILLION: dict[Tenor, float] = {

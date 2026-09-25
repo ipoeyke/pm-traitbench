@@ -11,7 +11,6 @@ from pm_traitbench.engine.adapters.base import (
     common_fields,
     excluded_values,
     relative_move,
-    standard_anchors,
     target_reached,
     tracked_level,
 )
@@ -159,9 +158,6 @@ class EquitiesAdapter:
         price = math.exp(level / 100.0)
         step = log_grid_step(price)
         return 100.0 * math.log(nearest_level(price, step))
-
-    def anchors(self, pos: Position, view: MarketView, t: int) -> tuple[float, ...]:
-        return standard_anchors(self, pos, view, t)
 
     def peer_ids(
         self, instrument_id: str, instruments: Mapping[str, Instrument]

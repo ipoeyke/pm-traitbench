@@ -8,7 +8,7 @@ import pytest
 
 from pm_traitbench.engine.adapters.base import leg_side, pnl_unit, relative_move
 from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
-from pm_traitbench.engine.constants import CALENDAR_BACK_TENORS, TRAILING_HIGH_DAYS
+from pm_traitbench.engine.constants import CALENDAR_BACK_TENORS
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import PmState, Position
@@ -325,44 +325,6 @@ def test_round_step_matches_equities_semantics(fixture_view) -> None:
     price = math.exp(level / 100.0)
     expected = 100.0 * math.log(nearest_level(price, log_grid_step(price)))
     assert rounded == pytest.approx(expected)
-
-
-def test_anchors_in_range_regime_include_rounded_m1_price(fixture_view) -> None:
-    adapter = CommoditiesAdapter("commodity_futures_directional", _HORIZON)
-    series = adapter.outright_series("CM-CRD")
-    leg = Leg(instrument_id="CM-CRD", tenor=Tenor.M1, side=Side.BUY, weight=1.0)
-    entry_level = fixture_view.level(series, 0)
-    t_range = 10
-    assert fixture_view.regime(t_range).value == "range"
-
-    pos = _make_position(series=series, legs=(leg,), side=Side.BUY, entry_level=entry_level)
-    anchors = adapter.anchors(pos, fixture_view, t_range)
-    assert len(anchors) == 3
-    level_now = fixture_view.level(series, t_range)
-    price = math.exp(level_now / 100.0)
-    expected_round = 100.0 * math.log(nearest_level(price, log_grid_step(price)))
-    assert anchors[1] == pytest.approx(expected_round)
-    if pos.adverse_dir < 0:
-        assert anchors[2] == pytest.approx(
-            fixture_view.trailing_high(series, t_range, TRAILING_HIGH_DAYS)
-        )
-    else:
-        assert anchors[2] == pytest.approx(
-            fixture_view.trailing_low(series, t_range, TRAILING_HIGH_DAYS)
-        )
-
-
-def test_anchors_outside_range_has_no_round_level(fixture_view) -> None:
-    adapter = CommoditiesAdapter("commodity_futures_directional", _HORIZON)
-    series = adapter.outright_series("CM-CRD")
-    leg = Leg(instrument_id="CM-CRD", tenor=Tenor.M1, side=Side.BUY, weight=1.0)
-    entry_level = fixture_view.level(series, 0)
-    t_risk_off = 45
-    assert fixture_view.regime(t_risk_off).value == "risk_off"
-
-    pos = _make_position(series=series, legs=(leg,), side=Side.BUY, entry_level=entry_level)
-    anchors = adapter.anchors(pos, fixture_view, t_risk_off)
-    assert len(anchors) == 2
 
 
 def test_peer_ids_same_commodity_group_includes_self(fixture_view) -> None:

@@ -259,8 +259,10 @@ trades off realism for a model whose biases are each one legible formula:
   is allowed, adds with probability `min(0.5, 0.1 * max(lambda - 1, 0))`,
   else holds, so lambda above 1 raises the add hazard and lowers the cut
   hazard; disposition is a daily sell hazard scaled by `sqrt(D)` at
-  a gain and `1/sqrt(D)` at a loss; anchoring blends the exit level
-  `(1-rho)*target + rho*anchor`; extrapolation blends the forecast
+  a gain and `1/sqrt(D)` at a loss; anchoring fixes one round-level anchor
+  per idea, 40% of the way from entry to target, and exits there instead of
+  at target with probability rho, drawn once at entry; extrapolation blends
+  the forecast
   `(1-theta)*thesis_move + theta*trailing_move`, and entry and side follow
   the same theta-blend of the own signal and the trailing move, in z-units
   normalised to unit variance; herding follows the

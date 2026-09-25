@@ -19,6 +19,7 @@ from pm_traitbench.config import Config
 from pm_traitbench.engine.adapters import preferred_form
 from pm_traitbench.engine.adapters.base import Adapter, leg_side
 from pm_traitbench.engine.biases import (
+    anchoring,
     conviction,
     extrapolation,
     herding,
@@ -308,6 +309,11 @@ def attempt_entry(
     stop_level = entry_level + adverse_dir * stop_distance
     target_level = entry_level - adverse_dir * rr * stop_distance
 
+    anchor_level = anchoring.entry_anchor(adapter, series, entry_level, target_level)
+    anchored = anchor_level is not None and (
+        rng_for("anchor", t, attempt).uniform() < params.value("anchoring_rho")
+    )
+
     price_quoted = (
         form == Expression.OUTRIGHT and adapter.asset_class in _PRICE_QUOTED_OUTRIGHT_CLASSES
     )
@@ -455,6 +461,8 @@ def attempt_entry(
         consumed_rule_ids=frozenset(),
         run_counters=(),
         size_changed_t=t,
+        anchor_level=anchor_level,
+        anchored=anchored,
     )
     ledger = ledger_rows(
         position,

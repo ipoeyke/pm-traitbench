@@ -10,7 +10,6 @@ from pm_traitbench.engine.adapters.base import (
     common_fields,
     excluded_values,
     relative_move,
-    standard_anchors,
     target_reached,
     tracked_level,
 )
@@ -201,9 +200,6 @@ class RatesCreditAdapter:
         if leg.tenor is not None:
             return float(nearest_level(level / 100.0, YIELD_STEP_PCT) * 100.0)
         return float(nearest_level(level, SPREAD_STEP_BP))
-
-    def anchors(self, pos: Position, view: MarketView, t: int) -> tuple[float, ...]:
-        return standard_anchors(self, pos, view, t)
 
     def peer_ids(
         self, instrument_id: str, instruments: Mapping[str, Instrument]

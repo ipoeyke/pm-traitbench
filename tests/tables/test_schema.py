@@ -1198,9 +1198,11 @@ def test_position_day_rejects_anchor_level_set_alone() -> None:
         _position_day(anchor_level=100.0, effective_exit_level=None)
 
 
-def test_position_day_rejects_effective_exit_level_set_alone() -> None:
-    with pytest.raises(ValidationError):
-        _position_day(anchor_level=None, effective_exit_level=95.0)
+def test_position_day_accepts_effective_exit_level_set_alone() -> None:
+    # An unanchored idea targets as usual: no anchor, but still an effective exit level.
+    day = _position_day(anchor_level=None, effective_exit_level=95.0)
+    assert day.anchor_level is None
+    assert day.effective_exit_level == 95.0
 
 
 def test_position_day_accepts_anchor_and_exit_level_together() -> None:
