@@ -117,6 +117,56 @@ def test_two_carriers_and_six_signals_places_two_and_warns_four_times():
 # --- contradiction claims ------------------------------------------------------------------
 
 
+def test_contradiction_carrier_filter_respects_claim_lead_days_floor():
+    """A carrier inside the window but too close to the horizon start cannot back a
+    contradiction (no room left for its claim), even though the very same carrier is
+    eligible for a plain revealed signal.
+    """
+    inputs = plan_inputs()
+    trait_id = "t_01"
+    knobs = Config().plan
+    early_date = TRADING_DAYS[2]  # trading-day index 2 < claim_lead_days[0] (10)
+    carrier = Carrier(trait_id, "ti_001", early_date, CarrierSource.LEDGER, "add")
+    pools = {trait_id: (carrier,)}
+    window = DateWindow(TRADING_DAYS[0], TRADING_DAYS[-1])
+
+    contradiction_only = [_revealed(trait_id, window, mode=SignalMode.CONTRADICTION)]
+    dropped = assemble(inputs, contradiction_only, pools, knobs, _rng(32))
+    assert not any(row.trait_id == trait_id for row in dropped.signals)
+    assert any("dropped, no carrier" in w for w in dropped.warnings)
+
+    revealed_only = [_revealed(trait_id, window, mode=SignalMode.REVEALED)]
+    placed_assembly = assemble(inputs, revealed_only, pools, knobs, _rng(33))
+    placed = [row for row in placed_assembly.signals if row.trait_id == trait_id]
+    assert len(placed) == 1
+    assert placed[0].date == early_date
+
+
+def test_contradiction_dropped_for_no_claim_day_leaves_carrier_unused():
+    """Every trading day in the carrier's whole claim window is dormant for the trait, so no
+    claim day qualifies even though the carrier itself clears the `claim_lead_days[0]` floor.
+    """
+    trait_id = "t_01"
+    inputs = plan_inputs(
+        drift_events=(drift_event(trait_id, TRADING_DAYS[0], DriftEventType.DORMANT),)
+    )
+    knobs = Config().plan
+    carrier_date = TRADING_DAYS[15]
+    carrier = Carrier(trait_id, "ti_001", carrier_date, CarrierSource.LEDGER, "add")
+    pools = {trait_id: (carrier,)}
+    window = DateWindow(TRADING_DAYS[0], TRADING_DAYS[-1])
+    planned = [_revealed(trait_id, window, mode=SignalMode.CONTRADICTION)]
+    assembly = assemble(inputs, planned, pools, knobs, _rng(30))
+
+    assert not any(row.trait_id == trait_id for row in assembly.signals)
+    assert any(
+        "contradiction signal dropped, no claim day available" in w for w in assembly.warnings
+    )
+    # a session created only to hold the dropped contradiction's stance is removed, so the
+    # carrier's own date is left with no session at all: the carrier was never consumed.
+    assert not any(s.date == carrier_date for s in assembly.sessions)
+
+
 def test_contradiction_claim_precedes_carrier_by_10_to_40_trading_days():
     inputs = plan_inputs()
     trait_id = "t_01"
@@ -194,6 +244,30 @@ def test_packable_signals_avoid_dormant_windows_and_stay_in_window():
 
 
 # --- drift notes -------------------------------------------------------------------------
+
+
+def test_drift_note_opens_new_session_when_none_has_room():
+    inputs = plan_inputs()
+    knobs = Config().plan.model_copy(update={"max_signals_per_session": 1})
+    drift_date = TRADING_DAYS[30]
+    other = _stated("t_02", DateWindow(drift_date, drift_date))
+    note = PlannedSignal(
+        trait_id="t_01",
+        mode=SignalMode.STATED,
+        valence=Valence.CONFIRM,
+        ownership=Ownership.SELF,
+        entry=StanceEntry.DRIFT_UPDATE,
+        window=DateWindow(drift_date, TRADING_DAYS[-1]),
+        needs_carrier=False,
+        drift_date=drift_date,
+    )
+    assembly = assemble(inputs, [other, note], {}, knobs, _rng(31))
+
+    note_row = next(r for r in assembly.signals if r.trait_id == "t_01")
+    other_row = next(r for r in assembly.signals if r.trait_id == "t_02")
+    assert note_row.date == drift_date
+    assert note_row.session_id != other_row.session_id
+    assert len([s for s in assembly.sessions if s.date == drift_date]) >= 2
 
 
 def test_drift_note_joins_earliest_existing_session_on_or_after_its_date():
@@ -292,6 +366,51 @@ def test_session_id_past_z_raises_plan_error():
     with pytest.raises(PlanError):
         session_id("pm_001", TRADING_DAYS[0], 26)
     assert session_id("pm_001", TRADING_DAYS[0], 0).endswith("_a")
+
+
+# --- counts ------------------------------------------------------------------------------
+
+
+def test_counts_are_internally_consistent():
+    days = TRADING_DAYS[:200]
+    ledger_rows = tuple(
+        ledger_row(
+            date=d,
+            trade_idea_id=f"ti_{i:03d}",
+            bias_flag="loss_aversion:add",
+            risk_amount=float(i),
+        )
+        for i, d in enumerate(days, start=1)
+    )
+    update_date = days[100]
+    inputs = plan_inputs(
+        traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
+        drift_events=(
+            drift_event("t_01", update_date, DriftEventType.UPDATE, from_value=0.7, to_value=1.2),
+        ),
+        ledger=ledger_rows,
+        trading_days=days,
+    )
+    pools = carrier_pools(inputs)
+    knobs = Config().plan
+    catalogue = load_catalogue()
+    planned = plan_quotas(inputs, pools, catalogue, knobs, _rng(20))
+    assembly = assemble(inputs, planned, pools, knobs, _rng(21))
+    counts = assembly.counts
+
+    assert list(counts.keys()) == sorted(counts.keys())
+
+    assert sum(counts["sessions_by_kind"].values()) == len(assembly.sessions)
+
+    signal_sessions = sum(1 for s in assembly.sessions if s.signals or s.claims)
+    assert counts["signal_session_share"] == round(signal_sessions / len(assembly.sessions), 4)
+
+    assert counts["revealed_planned"]
+    for trait_id, placed in counts["revealed_placed"].items():
+        assert placed <= counts["revealed_planned"][trait_id]
+
+    assert "t_01" in counts["segments"]
+    assert len(counts["segments"]["t_01"]) == 2
 
 
 # --- validity and determinism -------------------------------------------------------------

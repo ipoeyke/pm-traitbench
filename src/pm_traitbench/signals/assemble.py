@@ -286,7 +286,12 @@ def assemble(
             None,
         )
         if session is None:
-            day = next(d for d in inputs.trading_days if d >= s.drift_date)
+            day = next((d for d in inputs.trading_days if d >= s.drift_date), None)
+            if day is None:
+                raise PlanError(
+                    f"PM '{pm_id}': trait '{s.trait_id}' has a drift event on {s.drift_date} "
+                    "after the PM's last trading day"
+                )
             session = new_session(day)
         record = _Record(planned=s)
         record.main_order = place(session, s.trait_id, s.entry, record)
@@ -461,7 +466,7 @@ def _counts(
     for trait_id in sorted(windows_by_trait):
         by_window = windows_by_trait[trait_id]
         if len(by_window) > 1:
-            ordered_windows = sorted(by_window, key=lambda w: w.first)
+            ordered_windows = sorted(by_window, key=lambda w: (w.first, w.last))
             segments[trait_id] = [by_window[w] for w in ordered_windows]
 
     sessions_by_kind: dict[str, int] = {}
@@ -473,11 +478,15 @@ def _counts(
     total_session_count = len(sessions_out)
     share = round(signal_session_count / total_session_count, 4) if total_session_count else 0.0
 
-    return {
-        "signals_by_trait_mode": signals_by_trait_mode,
-        "revealed_planned": revealed_planned,
-        "revealed_placed": revealed_placed,
-        "segments": segments,
-        "sessions_by_kind": sessions_by_kind,
-        "signal_session_share": share,
-    }
+    return dict(
+        sorted(
+            {
+                "signals_by_trait_mode": signals_by_trait_mode,
+                "revealed_planned": revealed_planned,
+                "revealed_placed": revealed_placed,
+                "segments": segments,
+                "sessions_by_kind": sessions_by_kind,
+                "signal_session_share": share,
+            }.items()
+        )
+    )
