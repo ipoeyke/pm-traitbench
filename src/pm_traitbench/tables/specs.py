@@ -20,6 +20,8 @@ from pm_traitbench.tables.schema import (
     RegimeSpan,
     Rule,
     RuleEvent,
+    Signal,
+    Skeleton,
     Trait,
 )
 
@@ -73,6 +75,10 @@ GATE1_CELLS = TableSpec(
 )
 GATE1_TABLES: tuple[TableSpec, ...] = (GATE1_PM, GATE1_CELLS)
 
+SIGNALS = TableSpec("signals", Signal, ("pm_id", "signal_id"))
+SKELETONS = TableSpec("skeletons", Skeleton, ("pm_id", "session_id"))
+PLAN_TABLES: tuple[TableSpec, ...] = (SIGNALS, SKELETONS)
+
 HIDDEN_COLUMNS: dict[str, tuple[str, ...]] = {
     "ledger": ("bias_flag", "rule_id"),
     "ideas": (
@@ -90,12 +96,13 @@ HIDDEN_COLUMNS: dict[str, tuple[str, ...]] = {
     "position_days": tuple(
         name for name in PositionDay.model_fields if name not in set(POSITION_DAYS.key)
     ),
+    "skeletons": tuple(name for name in Skeleton.model_fields if name not in set(SKELETONS.key)),
 }
 
 
 def _check_hidden_columns() -> None:
     """Fail at import time if a hidden column no longer exists on its model."""
-    models_by_table = {spec.name: spec.model for spec in ENGINE_TABLES}
+    models_by_table = {spec.name: spec.model for spec in (*ENGINE_TABLES, *PLAN_TABLES)}
     for table_name, hidden in HIDDEN_COLUMNS.items():
         model = models_by_table[table_name]
         for column in hidden:

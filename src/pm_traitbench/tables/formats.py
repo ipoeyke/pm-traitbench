@@ -74,6 +74,8 @@ def _pyarrow_type(col: ColumnInfo) -> pa.DataType:
         return pa.date32()
     if col.kind == "list_struct":
         return pa.list_(pa.struct(_pyarrow_fields(columns(col.struct))))
+    if col.kind == "list_str":
+        return pa.list_(pa.string())
     return pa.struct(_pyarrow_fields(columns(col.struct)))
 
 

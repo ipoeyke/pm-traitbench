@@ -10,7 +10,9 @@ from typing import Any, Literal, get_args, get_origin
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-ColumnKind = Literal["str", "int", "float", "bool", "date", "mixed", "struct", "list_struct"]
+ColumnKind = Literal[
+    "str", "int", "float", "bool", "date", "mixed", "struct", "list_struct", "list_str"
+]
 
 _UNION_ORIGINS = (typing.Union, types.UnionType)
 
@@ -59,9 +61,11 @@ def _kind_of(
     annotation = _unwrap_annotated(annotation)
     origin = get_origin(annotation)
     if origin in (tuple, list):
-        element = _list_struct_element(origin, get_args(annotation))
-        if element is not None:
+        element = _homogeneous_element(origin, get_args(annotation))
+        if isinstance(element, type) and issubclass(element, BaseModel):
             return "list_struct", element
+        if element is str:
+            return "list_str", None
         raise TypeError(f"unsupported annotation for {model.__name__}.{field_name}")
     if isinstance(annotation, type):
         if annotation is bool:
@@ -81,20 +85,17 @@ def _kind_of(
     raise TypeError(f"unsupported annotation for {model.__name__}.{field_name}")
 
 
-def _list_struct_element(origin: Any, args: tuple[Any, ...]) -> type[BaseModel] | None:
-    # A homogeneous tuple[Model, ...] or list[Model] is a nested row list; any
-    # other tuple or list shape (fixed-length, non-model element) is unsupported.
+def _homogeneous_element(origin: Any, args: tuple[Any, ...]) -> Any:
+    # A homogeneous tuple[T, ...] or list[T] is a nested list column, either of
+    # rows (T a BaseModel) or of plain scalars (T str); any other tuple or list
+    # shape (fixed-length, unsupported element type) is rejected by the caller.
     if origin is tuple:
         if len(args) != 2 or args[1] is not Ellipsis:
             return None
-        element = args[0]
-    else:
-        if len(args) != 1:
-            return None
-        element = args[0]
-    if isinstance(element, type) and issubclass(element, BaseModel):
-        return element
-    return None
+        return args[0]
+    if len(args) != 1:
+        return None
+    return args[0]
 
 
 def _unwrap_annotated(annotation: Any) -> Any:

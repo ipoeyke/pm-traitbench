@@ -4,6 +4,7 @@ Re-exports pm_traitbench.enums so table code has a single import path.
 """
 
 import datetime
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -26,6 +27,7 @@ from pm_traitbench.enums import (
     InstrumentKind,
     Kind,
     Op,
+    Ownership,
     PnlState,
     PositionAction,
     Positioning,
@@ -35,11 +37,15 @@ from pm_traitbench.enums import (
     RuleScope,
     RuleSource,
     SeedGroupKind,
+    SessionKind,
     Side,
+    SignalMode,
     Split,
+    StanceEntry,
     StreetView,
     Tenor,
     Typicality,
+    Valence,
 )
 
 __all__ = [
@@ -70,6 +76,11 @@ __all__ = [
     "Gate1Verdict",
     "Gate1Split",
     "SeedGroupKind",
+    "SignalMode",
+    "Valence",
+    "Ownership",
+    "SessionKind",
+    "StanceEntry",
     "Mandate",
     "StatedProfile",
     "Persona",
@@ -89,6 +100,9 @@ __all__ = [
     "PositionDay",
     "Gate1PmRow",
     "Gate1CellRow",
+    "Signal",
+    "Stance",
+    "Skeleton",
     "to_record",
     "multiplier_field",
 ]
@@ -711,6 +725,170 @@ class Gate1CellRow(BaseModel):
             "report-only parameter."
         )
     )
+
+
+_SIGNAL_ID_PATTERN = r"^sg_\d{3,}$"
+_SESSION_ID_PATTERN = r"^s_pm\d{3,}_\d{4}-\d{2}-\d{2}_[a-z]$"
+_IDEA_ID_RE = re.compile(_IDEA_ID_PATTERN)
+
+
+def _session_prefix(pm_id: str, date: datetime.date) -> str:
+    return f"s_{pm_id.replace('_', '')}_{date.isoformat()}_"
+
+
+def _session_date(session_id: str) -> datetime.date:
+    """Parse the YYYY-MM-DD segment out of a session id."""
+    return datetime.date.fromisoformat(session_id.split("_")[2])
+
+
+class Signal(BaseModel):
+    """A single trait signal planted on a dated session for a later narrator."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    signal_id: str = Field(
+        pattern=_SIGNAL_ID_PATTERN, description="Unique identifier for the signal."
+    )
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM the signal belongs to."
+    )
+    session_id: str = Field(pattern=_SESSION_ID_PATTERN, description="Session the signal sits on.")
+    date: datetime.date = Field(description="Date of the session the signal sits on.")
+    trait_id: str = Field(pattern=_TRAIT_ID_PATTERN, description="Trait the signal expresses.")
+    mode: SignalMode = Field(description="How the signal expresses its trait.")
+    trade_idea_id: str | None = Field(
+        pattern=_IDEA_ID_PATTERN,
+        description="Trade idea the signal points at; required for a contradiction.",
+    )
+    valence: Valence = Field(description="Whether the signal confirms or retracts its trait.")
+    ownership: Ownership = Field(description="Who the signal is attributed to.")
+    third_party_value: str | None = Field(
+        description="The third party's stated value; set only when ownership is not 'self'."
+    )
+    claim_session_id: str | None = Field(
+        pattern=_SESSION_ID_PATTERN,
+        description="Earlier session a contradiction claims against; null otherwise.",
+    )
+
+    @model_validator(mode="after")
+    def _check_session(self) -> "Signal":
+        if not self.session_id.startswith(_session_prefix(self.pm_id, self.date)):
+            raise ValueError("session_id must sit on the signal's own pm and date")
+        return self
+
+    @model_validator(mode="after")
+    def _check_claim(self) -> "Signal":
+        has_claim = self.claim_session_id is not None
+        if has_claim != (self.mode == SignalMode.CONTRADICTION):
+            raise ValueError("claim_session_id must be set exactly when mode is 'contradiction'")
+        if has_claim:
+            claim_prefix = f"s_{self.pm_id.replace('_', '')}_"
+            if not self.claim_session_id.startswith(claim_prefix):
+                raise ValueError("claim_session_id must belong to the signal's own pm")
+            if _session_date(self.claim_session_id) >= self.date:
+                raise ValueError("claim_session_id must be dated earlier than date")
+        return self
+
+    @model_validator(mode="after")
+    def _check_trade_idea(self) -> "Signal":
+        if self.mode == SignalMode.CONTRADICTION and self.trade_idea_id is None:
+            raise ValueError("mode 'contradiction' requires trade_idea_id to be set")
+        return self
+
+    @model_validator(mode="after")
+    def _check_ownership(self) -> "Signal":
+        if self.ownership != Ownership.SELF and (
+            self.mode != SignalMode.STATED or self.valence != Valence.CONFIRM
+        ):
+            raise ValueError(
+                "ownership other than 'self' requires mode 'stated' and valence 'confirm'"
+            )
+        if self.third_party_value is not None and self.ownership == Ownership.SELF:
+            raise ValueError("third_party_value requires ownership other than 'self'")
+        return self
+
+
+class Stance(BaseModel):
+    """A single rendered stance line making up part of a session's skeleton."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    signal_id: str = Field(pattern=_SIGNAL_ID_PATTERN, description="Signal this stance renders.")
+    trait_id: str = Field(pattern=_TRAIT_ID_PATTERN, description="Trait the stance expresses.")
+    mode: SignalMode = Field(description="How the stance expresses its trait.")
+    entry: StanceEntry = Field(description="Kind of stance entry.")
+    stance: str = Field(min_length=1, description="Free-text rendering of the stance.")
+
+
+class Skeleton(BaseModel):
+    """The planted shape of a single PM session: its stances and the ideas it raises."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    session_id: str = Field(
+        pattern=_SESSION_ID_PATTERN, description="Unique identifier for the session."
+    )
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM the session belongs to."
+    )
+    date: datetime.date = Field(description="Date of the session.")
+    kind: SessionKind = Field(description="Kind of session.")
+    trade_idea_ids: tuple[str, ...] = Field(
+        description="Trade ideas raised in the session, sorted and unique."
+    )
+    stances: tuple[Stance, ...] = Field(description="Stances rendered in the session.")
+    advisor_violation: str | None = Field(
+        description="Free-text advisor violation; set exactly when a stance reveals one."
+    )
+    forbidden_trait_ids: tuple[str, ...] = Field(
+        description="Traits the session must not surface a stance for."
+    )
+    forbidden_pref_params: tuple[str, ...] = Field(
+        description="Preference params the session must not surface a stance for."
+    )
+
+    @model_validator(mode="after")
+    def _check_session(self) -> "Skeleton":
+        if not self.session_id.startswith(_session_prefix(self.pm_id, self.date)):
+            raise ValueError("session_id must sit on the session's own pm and date")
+        return self
+
+    @model_validator(mode="after")
+    def _check_silence(self) -> "Skeleton":
+        if self.kind == SessionKind.SILENCE and (
+            self.stances != () or self.trade_idea_ids != () or self.advisor_violation is not None
+        ):
+            raise ValueError(
+                "kind 'silence' requires no stances, trade_idea_ids or advisor_violation"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_stance_traits_unique(self) -> "Skeleton":
+        trait_ids = [stance.trait_id for stance in self.stances]
+        if len(trait_ids) != len(set(trait_ids)):
+            raise ValueError("stance trait_ids must be unique within a session")
+        return self
+
+    @model_validator(mode="after")
+    def _check_advisor_violation(self) -> "Skeleton":
+        has_reaction = any(stance.entry == StanceEntry.REVEALED_REACTION for stance in self.stances)
+        if has_reaction != (self.advisor_violation is not None):
+            raise ValueError(
+                "advisor_violation must be set exactly when a stance has entry 'revealed_reaction'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_trade_idea_ids(self) -> "Skeleton":
+        for trade_idea_id in self.trade_idea_ids:
+            if not _IDEA_ID_RE.fullmatch(trade_idea_id):
+                raise ValueError(
+                    f"trade_idea_ids must match {_IDEA_ID_PATTERN!r}, got '{trade_idea_id}'"
+                )
+        if list(self.trade_idea_ids) != sorted(set(self.trade_idea_ids)):
+            raise ValueError("trade_idea_ids must be sorted and unique")
+        return self
 
 
 def to_record(row: BaseModel) -> dict[str, Any]:

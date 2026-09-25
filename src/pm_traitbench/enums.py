@@ -240,3 +240,46 @@ IG_BANDS: frozenset[RatingBand] = frozenset(RatingBand) - HY_BANDS
 MULTI_LEG_FORMS: frozenset[Expression] = frozenset(
     {Expression.PAIR, Expression.CURVE, Expression.CALENDAR_SPREAD}
 )
+
+
+class SignalMode(StrEnum):
+    STATED = "stated"
+    REVEALED = "revealed"
+    CONTRADICTION = "contradiction"
+
+
+class Valence(StrEnum):
+    CONFIRM = "confirm"
+    RETRACTED = "retracted"
+
+
+class Ownership(StrEnum):
+    SELF = "self"
+    COLLEAGUE = "colleague"
+    CLIENT = "client"
+
+
+class SessionKind(StrEnum):
+    DECISION = "decision"
+    CHECK_IN = "check_in"
+    SILENCE = "silence"
+
+
+class StanceEntry(StrEnum):
+    REVEALED = "revealed"
+    STATED = "stated"
+    CLAIM = "claim"
+    RETRACT = "retract"
+    THIRD_PARTY = "third_party"
+    DRIFT_UPDATE = "drift_update"
+    DRIFT_DORMANT = "drift_dormant"
+    DRIFT_REVIVE = "drift_revive"
+    REVEALED_REACTION = "revealed_reaction"
+    VIOLATION = "violation"
+
+
+class CarrierSource(StrEnum):
+    LEDGER = "ledger"
+    POSITION_DAY = "position_day"
+    RULE_EVENT = "rule_event"
+    IDEA = "idea"
