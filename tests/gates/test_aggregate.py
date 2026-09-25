@@ -99,7 +99,7 @@ def test_pooled_group_mixes_synthetic_seeds_and_real_seed_never_joins_it() -> No
         _pm("pm_002", "seed_b", param, Gate1Split.ALL, 0.2, 10, 0.3, False),
         _pm("pm_003", "seed_r", param, Gate1Split.ALL, 0.15, 10, 0.3, False, is_real_seed=True),
     ]
-    cells = aggregate(estimates, {}, {"seed_a", "seed_b"}, {"seed_r"}, Gate1Config())
+    cells = aggregate(estimates, {"seed_a", "seed_b"}, {"seed_r"}, Gate1Config())
 
     pool = next(c for c in cells if c.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL)
     assert pool.seed_group == "synthetic"
@@ -121,7 +121,7 @@ def test_drifted_pm_excluded_from_all_but_present_in_before() -> None:
         _pm("pm_001", "seed_a", param, Gate1Split.BEFORE, 0.1, 10, 0.3, False, drifted=True),
         _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.2, 10, 0.3, False),
     ]
-    cells = aggregate(estimates, {}, {"seed_a"}, set(), Gate1Config())
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
 
     all_cell = next(c for c in cells if c.split == Gate1Split.ALL)
     assert all_cell.n_neutral == 1  # only pm_002, pm_001 is drifted
@@ -132,7 +132,7 @@ def test_drifted_pm_excluded_from_all_but_present_in_before() -> None:
 
 def test_no_member_group_is_not_emitted() -> None:
     estimates = [_pm("pm_001", "seed_a", "disposition_ratio", Gate1Split.ALL, 0.1, 10, 0.3, False)]
-    cells = aggregate(estimates, {}, {"seed_a", "seed_b"}, {"seed_r"}, Gate1Config())
+    cells = aggregate(estimates, {"seed_a", "seed_b"}, {"seed_r"}, Gate1Config())
     assert not any(c.seed_group in ("seed_b", "seed_r") for c in cells)
 
 
@@ -144,7 +144,7 @@ def test_none_values_dropped_and_counted_in_n_missing() -> None:
         _pm("pm_001", "seed_a", "disposition_ratio", Gate1Split.ALL, None, 0, 0.3, False),
         _pm("pm_002", "seed_a", "disposition_ratio", Gate1Split.ALL, 1.2, 10, 0.3, False),
     ]
-    cells = aggregate(estimates, {}, {"seed_a"}, set(), Gate1Config())
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
     cell = next(c for c in cells if c.seed_group == "seed_a")
     assert cell.n_missing == 1
     assert cell.n_neutral == 1
@@ -160,7 +160,7 @@ def test_floor_and_active_share_for_a_lower_is_stronger_param() -> None:
         _pm("pm_010", "seed_a", param, Gate1Split.ALL, 0.50, 10, 0.9, True),  # below floor
         _pm("pm_011", "seed_a", param, Gate1Split.ALL, 0.95, 10, 0.9, True),  # above floor
     ]
-    cells = aggregate(estimates, {}, {"seed_a"}, set(), Gate1Config())
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
     cell = next(c for c in cells if c.seed_group == "seed_a")
 
     assert cell.floor < cell.neutral_mean
@@ -176,7 +176,7 @@ def test_rank_corr_has_no_sign_adjustment_for_a_lower_is_stronger_param() -> Non
         _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.6, 10, 0.5, True),
         _pm("pm_003", "seed_a", param, Gate1Split.ALL, 0.3, 10, 0.8, True),
     ]
-    cells = aggregate(estimates, {}, {"seed_a"}, set(), Gate1Config())
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
     cell = next(c for c in cells if c.seed_group == "seed_a")
     # value falls as planted rises: raw (unflipped) spearman correlation is negative.
     assert cell.rank_corr == pytest.approx(-1.0)
@@ -191,7 +191,7 @@ def test_rank_corr_is_positive_when_coverage_moves_with_its_planted_value() -> N
         _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.65, 10, 0.7, True),
         _pm("pm_003", "seed_a", param, Gate1Split.ALL, 0.85, 10, 0.9, True),
     ]
-    cells = aggregate(estimates, {}, {"seed_a"}, set(), Gate1Config())
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
     cell = next(c for c in cells if c.seed_group == "seed_a")
     assert cell.rank_corr == pytest.approx(1.0)
 
@@ -202,7 +202,7 @@ def test_rank_corr_none_below_three_pms_and_for_a_constant_statistic() -> None:
         _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.9, 10, 0.2, False),
         _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.6, 10, 0.5, True),
     ]
-    cells = aggregate(two_pm, {}, {"seed_a"}, set(), Gate1Config())
+    cells = aggregate(two_pm, {"seed_a"}, set(), Gate1Config())
     assert next(c for c in cells if c.seed_group == "seed_a").rank_corr is None
 
     constant_stat = [
@@ -210,7 +210,7 @@ def test_rank_corr_none_below_three_pms_and_for_a_constant_statistic() -> None:
         _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.5, 10, 0.5, True),
         _pm("pm_003", "seed_a", param, Gate1Split.ALL, 0.5, 10, 0.8, True),
     ]
-    cells = aggregate(constant_stat, {}, {"seed_a"}, set(), Gate1Config())
+    cells = aggregate(constant_stat, {"seed_a"}, set(), Gate1Config())
     assert next(c for c in cells if c.seed_group == "seed_a").rank_corr is None
 
 
@@ -218,20 +218,14 @@ def test_rank_corr_none_below_three_pms_and_for_a_constant_statistic() -> None:
 
 
 def test_count_p10_matches_percentile_and_shortfall_propagates_to_pooled_row() -> None:
-    param = "exit_deficiency"  # N_MIN: ("triggers_fired", 7)
+    param = "exit_deficiency"  # N_MIN: 7
     estimates = [
-        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False),
-        _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.2, 10, 0.3, False),
-        _pm("pm_003", "seed_b", param, Gate1Split.ALL, 0.15, 10, 0.3, False),
-        _pm("pm_004", "seed_b", param, Gate1Split.ALL, 0.25, 10, 0.3, False),
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 5, 0.3, False),
+        _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.2, 20, 0.3, False),
+        _pm("pm_003", "seed_b", param, Gate1Split.ALL, 0.15, 50, 0.3, False),
+        _pm("pm_004", "seed_b", param, Gate1Split.ALL, 0.25, 60, 0.3, False),
     ]
-    engine_counts = {
-        "pm_001": {"triggers_fired": 5},
-        "pm_002": {"triggers_fired": 20},
-        "pm_003": {"triggers_fired": 50},
-        "pm_004": {"triggers_fired": 60},
-    }
-    cells = aggregate(estimates, engine_counts, {"seed_a", "seed_b"}, set(), Gate1Config())
+    cells = aggregate(estimates, {"seed_a", "seed_b"}, set(), Gate1Config())
 
     seed_a = next(c for c in cells if c.seed_group == "seed_a")
     seed_b = next(c for c in cells if c.seed_group == "seed_b")
@@ -249,7 +243,7 @@ def test_count_p10_matches_percentile_and_shortfall_propagates_to_pooled_row() -
 
 def test_count_ok_none_for_a_param_with_no_n_min() -> None:
     estimates = [_pm("pm_001", "seed_a", "disposition_ratio", Gate1Split.ALL, 1.0, 5, 0.3, False)]
-    cells = aggregate(estimates, {"pm_001": {}}, {"seed_a"}, set(), Gate1Config())
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
     cell = cells[0]
     assert cell.count_p10 is None
     assert cell.count_ok is None
@@ -259,39 +253,24 @@ def test_count_ok_none_for_a_param_with_no_n_min() -> None:
 def test_count_ok_none_for_a_non_all_split() -> None:
     param = "exit_deficiency"
     estimates = [
-        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False, drifted=True),
-        _pm("pm_001", "seed_a", param, Gate1Split.BEFORE, 0.1, 10, 0.3, False, drifted=True),
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 20, 0.3, False, drifted=True),
+        _pm("pm_001", "seed_a", param, Gate1Split.BEFORE, 0.1, 20, 0.3, False, drifted=True),
     ]
-    engine_counts = {"pm_001": {"triggers_fired": 20}}
-    cells = aggregate(estimates, engine_counts, {"seed_a"}, set(), Gate1Config())
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
     before_cell = next(c for c in cells if c.split == Gate1Split.BEFORE)
     assert before_cell.count_p10 is None
     assert before_cell.count_ok is None
 
 
-def test_count_p10_none_when_no_pm_is_present_in_engine_counts() -> None:
-    param = "exit_deficiency"
-    estimates = [_pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False)]
-    cells = aggregate(estimates, {}, {"seed_a"}, set(), Gate1Config())
-    cell = next(c for c in cells if c.seed_group == "seed_a")
-    assert cell.count_p10 is None
-    assert cell.count_ok is None
-    assert cell.count_shortfall is False
-
-
 def test_pool_shortfall_ignores_a_seed_whose_every_pm_drifted() -> None:
-    param = "exit_deficiency"  # N_MIN: ("triggers_fired", 7)
+    param = "exit_deficiency"  # N_MIN: 7
     estimates = [
         # seed_a's only PM drifted, so it has no ALL-split row for this param.
-        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False, drifted=True),
-        _pm("pm_001", "seed_a", param, Gate1Split.BEFORE, 0.1, 10, 0.3, False, drifted=True),
-        _pm("pm_002", "seed_b", param, Gate1Split.ALL, 0.2, 10, 0.3, False),
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 1, 0.3, False, drifted=True),
+        _pm("pm_001", "seed_a", param, Gate1Split.BEFORE, 0.1, 1, 0.3, False, drifted=True),
+        _pm("pm_002", "seed_b", param, Gate1Split.ALL, 0.2, 20, 0.3, False),
     ]
-    engine_counts = {
-        "pm_001": {"triggers_fired": 1},  # would fail n_min if seed_a were considered
-        "pm_002": {"triggers_fired": 20},
-    }
-    cells = aggregate(estimates, engine_counts, {"seed_a", "seed_b"}, set(), Gate1Config())
+    cells = aggregate(estimates, {"seed_a", "seed_b"}, set(), Gate1Config())
 
     assert not any(c.seed_group == "seed_a" and c.split == Gate1Split.ALL for c in cells)
 
@@ -314,7 +293,7 @@ def test_calibration_matches_pearsonr_on_pooled_pairs_and_is_none_for_other_para
         _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.3, 2, 0.3, False, pairs=pairs_a),
         _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.4, 1, 0.3, False, pairs=pairs_b),
     ]
-    cells = aggregate(estimates, {}, {"seed_a"}, set(), Gate1Config())
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
     cell = next(c for c in cells if c.seed_group == "seed_a")
 
     all_pairs = pairs_a + pairs_b
@@ -326,5 +305,5 @@ def test_calibration_matches_pearsonr_on_pooled_pairs_and_is_none_for_other_para
     other = [
         _pm("pm_001", "seed_a", other_param, Gate1Split.ALL, 0.3, 2, 0.3, False, pairs=pairs_a),
     ]
-    other_cells = aggregate(other, {}, {"seed_a"}, set(), Gate1Config())
+    other_cells = aggregate(other, {"seed_a"}, set(), Gate1Config())
     assert next(c for c in other_cells if c.seed_group == "seed_a").calibration is None

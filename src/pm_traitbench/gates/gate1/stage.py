@@ -76,7 +76,6 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
     estimates = estimate_all(inputs, config.gate1)
     cells = aggregate(
         estimates,
-        engine_counts=meta["opportunities"],
         synthetic_seeds=set(config.market.seeds),
         real_seeds=set(config.market.real.seeds),
         knobs=config.gate1,

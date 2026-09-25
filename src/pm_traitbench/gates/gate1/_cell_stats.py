@@ -1,13 +1,12 @@
 """Cell-level statistics: neutral/active baselines, floor, rank correlation and calibration.
 
-Private to `aggregate.py`, which owns the grouping (seed pool, per-seed, per
-split) and calls `build_cell` once per group with that group's member rows.
-Kept separate so `aggregate.py` stays focused on the grouping itself.
+Holds `PmEstimate`, `CellStats` and the per-cell helpers `aggregate.py` calls
+once per group with that group's member rows; `verdict.py` also imports
+`CellStats` to score a cell into a verdict.
 """
 
 import math
-from collections import defaultdict
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -174,58 +173,37 @@ def build_cell(
     )
 
 
-def pm_ids_by_seed_asset(
-    estimates: Sequence[PmEstimate],
-) -> dict[tuple[str, AssetClass], set[str]]:
-    """Unique PM ids per `(seed, asset_class)`, over every estimate regardless of param or split."""
-    by_seed_asset: dict[tuple[str, AssetClass], set[str]] = defaultdict(set)
-    for e in estimates:
-        by_seed_asset[(e.seed, e.asset_class)].add(e.pm_id)
-    return by_seed_asset
-
-
-def seed_counts(
-    seed: str,
-    asset_class: AssetClass,
-    param: str,
-    split: Gate1Split,
-    pm_ids: Mapping[tuple[str, AssetClass], set[str]],
-    engine_counts: Mapping[str, Mapping[str, int]],
+def count_stats(
+    param: str, split: Gate1Split, members: Sequence[PmEstimate]
 ) -> tuple[float | None, bool | None]:
-    """`count_p10`/`count_ok` for `seed`'s PM set at `asset_class`.
+    """`count_p10`/`count_ok` for a single-seed group's own `Estimate.n` values.
 
-    Only PMs present in `engine_counts` are counted; `None, None` outside the
-    `ALL` split, for a param with no `N_MIN` entry, or when that PM set (once
-    restricted to `engine_counts`) is empty.
+    The 10th percentile runs over every member's `Estimate.n`, including
+    members whose value is None. `None, None` outside the `ALL` split, for a
+    param with no `N_MIN` entry, or when `members` is empty.
     """
-    if split != Gate1Split.ALL or param not in N_MIN:
+    if split != Gate1Split.ALL or param not in N_MIN or not members:
         return None, None
-    count_name, n_min = N_MIN[param]
-    seed_pms = sorted(pm for pm in pm_ids.get((seed, asset_class), set()) if pm in engine_counts)
-    if not seed_pms:
-        return None, None
-    counts = [engine_counts[pm][count_name] for pm in seed_pms]
-    p10 = float(np.percentile(counts, 10))
+    n_min = N_MIN[param]
+    p10 = float(np.percentile([e.estimate.n for e in members], 10))
     return p10, p10 >= n_min
 
 
 def pool_shortfall(
-    asset_class: AssetClass,
-    param: str,
-    all_split_seeds: Collection[str],
-    pm_ids: Mapping[tuple[str, AssetClass], set[str]],
-    engine_counts: Mapping[str, Mapping[str, int]],
+    param: str, seeds: Collection[str], all_split_members: Sequence[PmEstimate]
 ) -> bool:
-    """Whether any of `all_split_seeds`' `ALL`-split count for `(asset_class, param)` fell short.
+    """Whether any of `seeds`' `ALL`-split count for `param` fell short.
 
-    `all_split_seeds` is the synthetic seeds that actually have a single-seed
-    `ALL`-split row for this `(asset_class, param)` (a seed whose every PM
-    drifted has none, and is not considered). False when `param` has no
-    `N_MIN` entry, since `count_ok` is never computed for it.
+    `all_split_members` is the non-drifted `ALL`-split estimates for this
+    `(asset_class, param)`; `seeds` is the synthetic seeds with a member among
+    them (a seed whose every PM drifted has none, and is not considered).
+    False when `param` has no `N_MIN` entry, since `count_ok` is never
+    computed for it.
     """
     if param not in N_MIN:
         return False
     return any(
-        seed_counts(seed, asset_class, param, Gate1Split.ALL, pm_ids, engine_counts)[1] is False
-        for seed in all_split_seeds
+        count_stats(param, Gate1Split.ALL, [e for e in all_split_members if e.seed == seed])[1]
+        is False
+        for seed in seeds
     )

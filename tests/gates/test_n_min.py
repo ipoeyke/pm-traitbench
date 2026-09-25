@@ -16,8 +16,7 @@ _PAIRS = (
 def test_n_min_values_are_the_ceiling_of_the_standard_error_formula() -> None:
     for param, p0, p1 in _PAIRS:
         expected = math.ceil(16 * p0 * (1 - p0) / (p1 - p0) ** 2)
-        _, n_min = N_MIN[param]
-        assert n_min == expected
+        assert N_MIN[param] == expected
 
 
 def test_n_min_keys_match_the_four_params_with_a_minimum() -> None:

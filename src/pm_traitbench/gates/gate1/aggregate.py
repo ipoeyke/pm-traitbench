@@ -9,7 +9,7 @@ correlation and calibration a verdict check later turns into a pass or fail.
 """
 
 from collections import defaultdict
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Sequence
 
 from pm_traitbench.config import BIAS_PARAMS, Gate1Config
 from pm_traitbench.enums import AssetClass, Gate1Split, SeedGroupKind
@@ -17,9 +17,8 @@ from pm_traitbench.gates.gate1._cell_stats import (
     CellStats,
     PmEstimate,
     build_cell,
-    pm_ids_by_seed_asset,
+    count_stats,
     pool_shortfall,
-    seed_counts,
 )
 from pm_traitbench.gates.gate1.estimators import ESTIMATORS
 from pm_traitbench.gates.gate1.inputs import PmInputs
@@ -64,7 +63,6 @@ def estimate_all(inputs: Sequence[PmInputs], knobs: Gate1Config) -> list[PmEstim
 
 def aggregate(
     estimates: Sequence[PmEstimate],
-    engine_counts: Mapping[str, Mapping[str, int]],
     synthetic_seeds: Collection[str],
     real_seeds: Collection[str],
     knobs: Gate1Config,
@@ -78,7 +76,6 @@ def aggregate(
     """
     synthetic_seeds = set(synthetic_seeds)
     real_seeds = set(real_seeds)
-    pm_ids = pm_ids_by_seed_asset(estimates)
 
     by_key: dict[tuple[AssetClass, str, Gate1Split], list[PmEstimate]] = defaultdict(list)
     for e in estimates:
@@ -89,9 +86,11 @@ def aggregate(
     def shortfall_for(asset_class: AssetClass, param: str) -> bool:
         key = (asset_class, param)
         if key not in shortfall_cache:
-            all_split_members = by_key.get((asset_class, param, Gate1Split.ALL), [])
-            seeds = synthetic_seeds & {e.seed for e in all_split_members if not e.drifted}
-            shortfall_cache[key] = pool_shortfall(asset_class, param, seeds, pm_ids, engine_counts)
+            all_split_members = [
+                e for e in by_key.get((asset_class, param, Gate1Split.ALL), []) if not e.drifted
+            ]
+            seeds = synthetic_seeds & {e.seed for e in all_split_members}
+            shortfall_cache[key] = pool_shortfall(param, seeds, all_split_members)
         return shortfall_cache[key]
 
     cells: list[CellStats] = []
@@ -131,9 +130,7 @@ def aggregate(
                 seed_members = [e for e in members if e.seed == seed]
                 if not seed_members:
                     continue
-                count_p10, count_ok = seed_counts(
-                    seed, asset_class, param, split, pm_ids, engine_counts
-                )
+                count_p10, count_ok = count_stats(param, split, seed_members)
                 cells.append(
                     build_cell(
                         seed,
