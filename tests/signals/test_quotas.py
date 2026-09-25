@@ -62,7 +62,6 @@ def test_largest_remainder_ties_go_to_earlier_item():
     weights = [("a", 1.0), ("b", 1.0), ("c", 1.0)]
     result = largest_remainder(10, weights)
     assert sum(result.values()) == 10
-    # floors are 3,3,3 with remainder 1 and equal fracs (.333...) for all three: earliest wins
     assert result["a"] == 4
     assert result["b"] == 3
     assert result["c"] == 3
@@ -269,8 +268,8 @@ def test_third_party_never_held_value_excludes_drift_from_and_to():
                 "t_90",
                 TRADING_DAYS[50],
                 DriftEventType.UPDATE,
-                from_value="steepeners over outright duration",
-                to_value="outright duration over curve trades",
+                from_value="outright duration over curve trades",
+                to_value="steepeners over outright duration",
             ),
         ),
     )
