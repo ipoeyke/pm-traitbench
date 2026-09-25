@@ -261,7 +261,9 @@ trades off realism for a model whose biases are each one legible formula:
   at entry; disposition is a daily sell hazard scaled by `sqrt(D)` at
   a gain and `1/sqrt(D)` at a loss; anchoring blends the exit level
   `(1-rho)*target + rho*anchor`; extrapolation blends the forecast
-  `(1-theta)*thesis_move + theta*trailing_move`; herding follows the
+  `(1-theta)*thesis_move + theta*trailing_move`, and entry and side follow
+  the same theta-blend of the own signal and the trailing move, in z-units
+  normalised to unit variance; herding follows the
   street with probability `herding_weight` when it conflicts with the
   PM's own side; overconfidence narrows the stated interval and inflates
   entry size by the same z-score ratio, `z(0.8) / z(coverage)`; conviction

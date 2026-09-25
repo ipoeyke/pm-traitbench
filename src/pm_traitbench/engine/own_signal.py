@@ -22,7 +22,6 @@ from pm_traitbench.engine.constants import CONVICTION_CUTS
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.params import EffectiveParams
 from pm_traitbench.engine.series import Series
-from pm_traitbench.enums import Side
 
 _MAX_CONVICTION = 5
 
@@ -90,8 +89,3 @@ def draw_signal(
         interval_hi=centre + half_width,
         conviction=conviction_bucket(own_signal),
     )
-
-
-def signal_sign(draw: SignalDraw) -> Side:
-    """The trade direction implied by the sign of the own signal."""
-    return Side.BUY if draw.own_signal > 0 else Side.SELL

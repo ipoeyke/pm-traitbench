@@ -14,7 +14,7 @@ from pm_traitbench.engine.adapters.rates_credit import RatesCreditAdapter
 from pm_traitbench.engine.biases import herding, overconfidence
 from pm_traitbench.engine.biases.herding import HerdingDecision
 from pm_traitbench.engine.constants import NO_ENTRY_LAST_SESSIONS
-from pm_traitbench.engine.ideas import attempt_entry, entries_for_day
+from pm_traitbench.engine.ideas import attempt_entry, entries_for_day, forecast_z
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.own_signal import SignalDraw
 from pm_traitbench.engine.params import EffectiveParams
@@ -781,3 +781,102 @@ def test_herding_follow_thesis_move_points_the_way_of_the_side(
     assert captured["move"] < 0
     assert captured["unit"] == "pct"
     assert captured["price_quoted"] is True
+
+
+# --- forecast_z -----------------------------------------------------------
+
+
+def test_forecast_z_at_theta_zero_is_the_own_signal() -> None:
+    assert forecast_z(0.7, -3.0, 0.0) == pytest.approx(0.7)
+
+
+def test_forecast_z_at_theta_one_is_the_trail_z() -> None:
+    assert forecast_z(0.7, -3.0, 1.0) == pytest.approx(-3.0)
+
+
+def test_forecast_z_at_theta_half_with_unit_inputs() -> None:
+    assert forecast_z(1.0, 1.0, 0.5) == pytest.approx(math.sqrt(2))
+
+
+def test_forecast_z_has_unit_variance_over_normal_draws() -> None:
+    # SE of the sample std at n=20,000 is about 0.005; 0.03 is a 6-sd band.
+    n = 20_000
+    own = stream(1, "forecast_z_own").normal(size=n)
+    trail = stream(1, "forecast_z_trail").normal(size=n)
+    assert np.std(forecast_z(own, trail, 0.5)) == pytest.approx(1.0, abs=0.03)
+
+
+# --- attempt_entry: extrapolation gates entry and side ---------------------
+
+
+def test_theta_zero_enters_on_the_side_of_the_own_signal(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    _force_no_conflict(monkeypatch)
+    params = _params(theta=0.0)
+    real_draw_signal = ideas_module.draw_signal
+    captured: dict[str, SignalDraw] = {}
+
+    def _capture(*args, **kwargs):
+        draw = real_draw_signal(*args, **kwargs)
+        captured["draw"] = draw
+        return draw
+
+    monkeypatch.setattr(ideas_module, "draw_signal", _capture)
+    checked = 0
+    for attempt in range(60):
+        _, new_idea = attempt_entry(
+            setup["state"],
+            _T,
+            setup["view"],
+            setup["adapter"],
+            params,
+            setup["persona"],
+            setup["rules"],
+            setup["traits"],
+            setup["universe"],
+            setup["config"],
+            setup["catalogue"],
+            _rng_for(setup["config"], _PM_ID),
+            attempt=attempt,
+        )
+        if new_idea is None:
+            continue
+        expected_side = Side.BUY if captured["draw"].own_signal > 0 else Side.SELL
+        assert new_idea.idea.side == expected_side
+        checked += 1
+    assert checked > 0
+
+
+def test_theta_one_enters_on_the_side_of_the_trailing_move(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    _force_no_conflict(monkeypatch)
+    params = _params(theta=1.0)
+    checked = 0
+    for attempt in range(60):
+        _, new_idea = attempt_entry(
+            setup["state"],
+            _T,
+            setup["view"],
+            setup["adapter"],
+            params,
+            setup["persona"],
+            setup["rules"],
+            setup["traits"],
+            setup["universe"],
+            setup["config"],
+            setup["catalogue"],
+            _rng_for(setup["config"], _PM_ID),
+            attempt=attempt,
+        )
+        if new_idea is None:
+            continue
+        series = new_idea.position.series
+        trailing_move = setup["view"].trailing_move(series, _T, setup["config"].engine.horizon_days)
+        expected_side = Side.BUY if series.bullish_sign * trailing_move > 0 else Side.SELL
+        assert new_idea.idea.side == expected_side
+        checked += 1
+    assert checked > 0

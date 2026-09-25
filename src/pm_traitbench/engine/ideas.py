@@ -1,12 +1,14 @@
 """Idea generation: turns a PM's daily entry attempts into new trade ideas.
 
-Composes the own-signal draw with herding, overconfidence and conviction
-biases, an adapter's leg construction and sizing, and catalogue-driven thesis
-and signpost text, into one new position (plus its idea, rule and ledger
-rows) per attempt. `attempt_entry` and `entries_for_day` are pure: neither
-mutates its `state` argument, both return a new one.
+Composes the own-signal draw, extrapolation-blended with the trailing move
+for entry and side, with herding, overconfidence and conviction biases, an
+adapter's leg construction and sizing, and catalogue-driven thesis and
+signpost text, into one new position (plus its idea, rule and ledger rows)
+per attempt. `attempt_entry` and `entries_for_day` are pure: neither mutates
+its `state` argument, both return a new one.
 """
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 
@@ -31,7 +33,7 @@ from pm_traitbench.engine.constants import (
     SIGNPOSTS_PER_IDEA,
 )
 from pm_traitbench.engine.market_view import MarketView
-from pm_traitbench.engine.own_signal import draw_signal, signal_sign
+from pm_traitbench.engine.own_signal import draw_signal
 from pm_traitbench.engine.params import EffectiveParams
 from pm_traitbench.engine.series import Series
 from pm_traitbench.engine.state import PmState, Position, idea_id, rule_id
@@ -219,6 +221,15 @@ def _build_signposts(
     return tuple(rows)
 
 
+def forecast_z(own_signal: float, trail_z: float, theta: float) -> float:
+    """Theta-blend of the own signal and the trailing move, in unit-variance z-units.
+
+    Both inputs already carry unit variance, so dividing by
+    `sqrt((1-theta)**2 + theta**2)` keeps the blend at unit variance for any theta.
+    """
+    return ((1 - theta) * own_signal + theta * trail_z) / math.sqrt((1 - theta) ** 2 + theta**2)
+
+
 def attempt_entry(
     state: PmState,
     t: int,
@@ -259,10 +270,15 @@ def attempt_entry(
 
     series = adapter.series(form, legs)
     draw = draw_signal(view, series, t, params, config, rng_for("signal", t, attempt))
-    if abs(draw.own_signal) < ENTRY_THRESHOLD:
+    trailing_move = view.trailing_move(series, t, config.engine.horizon_days)
+    # Extrapolation bias: entry and side follow the theta-blend of the own signal
+    # with the trailing move (read in bullish units, scaled to the same z-units).
+    trail_z = series.bullish_sign * trailing_move / draw.sd_h
+    fz = forecast_z(draw.own_signal, trail_z, params.value("extrapolation_theta"))
+    if abs(fz) < ENTRY_THRESHOLD:
         return state, None
 
-    own_side = signal_sign(draw)
+    own_side = Side.BUY if fz > 0 else Side.SELL
     street = view.street_view(candidate, t)
     decision = herding.decide(own_side, street, params, rng_for("herding", t, attempt))
     side = decision.side
@@ -452,7 +468,6 @@ def attempt_entry(
         rule_id=None,
     )
 
-    trailing_move = view.trailing_move(series, t, config.engine.horizon_days)
     entered_after_run = extrapolation.entered_after_run(
         trailing_move, draw.sd_h, side_sign, series.bullish_sign
     )
