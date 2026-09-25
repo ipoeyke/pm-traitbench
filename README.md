@@ -37,8 +37,10 @@ driving rule on `ledger`. Hidden data is generator provenance for checking
 the engine itself and is never shown to a system under test. The `gate1`
 stage recovers each direct-asset PM's eight planted biases from the engine's
 ledger and pools them per asset class, writing `gate1_pm` and `gate1_cells`;
-it exits 1 when a synthetic recovery test fails, leaving both tables and its
-run metadata on disk either way. Pass `--force` to overwrite a table that
+it exits 1 when a blocking row fails - one row per non-report-only parameter,
+pooled over every direct asset class of the synthetic seeds. Per-class and
+report-only rows are judged but never block. Both tables and its run
+metadata land on disk either way. Pass `--force` to overwrite a table that
 already exists. Run `uv run pm-traitbench --help` for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
@@ -395,10 +397,10 @@ derived for the conflict-follow rate, not the agreement statistic gate 1
 estimates, and its minimum is applied to the latter as an approximation). The
 `count_shortfall` warning compares each seed's 10th-percentile PM on the
 estimator's own opportunity count (`Estimate.n`) against `n_min`, rather than
-an engine counter. On the default run anchoring falls short on every seed and
-asset class (the 10th-percentile PM has 2-9 discretionary exits away from the
-target against 29), exit deficiency on rates and credit for seeds A and R1,
-and herding on rates and credit for R1 only.
+an engine counter. The anchoring opportunity is an anchor crossing; on the
+default run anchoring falls short of its minimum on every seed and asset
+class, and exit deficiency and herding both fall short on rates and credit
+for the real seed R1.
 
 Gate 1 writes two tables: `gate1_pm`, one row per PM/parameter/split keyed on
 `(pm_id, param, split)`, and `gate1_cells`, one row per seed group/asset
@@ -450,11 +452,21 @@ Limitations from the model:
 - Disposition's realised share counts any sell-day cut, trim or exit,
   rule-triggered or discretionary alike, not only a PM's own voluntary
   realisation.
-- Anchoring's recovered rate is hits over crossings, not rho alone: the
-  background sell hazard exits some crossings even at rho zero, so the
-  statistic is an upper bound on rho.
-- The pass-rule thresholds were probed against one run of the default
-  population, not validated across many.
+- The size headroom of 2.5 matches the overconfidence size factor at the
+  active prior's centre (coverage about 0.4); PMs planted with lower coverage
+  still hit the cap on their top size ranks (on the default run about half of
+  active overconfident PMs have rank 5 clipped and 8.4% of all entries sit at
+  the cap), which ties conviction ranks for those PMs and blocks their
+  loss-aversion adds (recorded as holds).
+- Anchoring's recovered rate is hits over crossings, not rho alone: a
+  crossing inside the minimum holding period, or on a day a rule exit acts,
+  counts as an opportunity without a hit, so the statistic sits below rho
+  plus the background sell hazard.
+- Rounding the anchor to the nearest round level can place it close to entry
+  (10th percentile about 0.1-0.26 of the way to target by asset class), so
+  some anchored ideas exit soon after entry.
+- The pass-rule thresholds were checked on the default root and 12 further
+  roots, not a wider sweep or other configs.
 - `active_share_past_floor` is reported for every cell but never gates a
   verdict.
 - Every split beyond `all` (by regime, and before/after a drift event) is
