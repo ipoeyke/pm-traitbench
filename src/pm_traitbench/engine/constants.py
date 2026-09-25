@@ -2,10 +2,10 @@
 
 from pm_traitbench.enums import Tenor
 
-# Entry requires the own signal to reach one sd of view.
+# Entry requires the blended forecast to reach one sd of view.
 ENTRY_THRESHOLD = 1.0
-# Lower edges of conviction buckets 1-5: quintiles of a standard normal's absolute value
-# given it exceeds the entry threshold of 1, so every rank is equally likely at entry.
+# Lower edges of conviction buckets 1-5: quintiles of the own signal's absolute value given
+# it exceeds 1, a bucketing floor on stated conviction, separate from the forecast-based entry gate.
 CONVICTION_CUTS = (1.0, 1.14, 1.31, 1.53, 1.86)
 # Each idea carries two or three signposts to track toward its target.
 SIGNPOSTS_PER_IDEA = (2, 3)

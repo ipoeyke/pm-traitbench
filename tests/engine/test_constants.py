@@ -24,7 +24,7 @@ def test_dv01_per_million_covers_sovereign_tenors() -> None:
     assert set(DV01_PER_MILLION) == set(SOVEREIGN_TENORS)
 
 
-def test_conviction_cuts_ascending_starting_at_entry_threshold() -> None:
+def test_conviction_cuts_ascending_with_first_cut_at_the_bucketing_floor() -> None:
     assert CONVICTION_CUTS[0] == ENTRY_THRESHOLD
     assert list(CONVICTION_CUTS) == sorted(CONVICTION_CUTS)
     assert len(set(CONVICTION_CUTS)) == len(CONVICTION_CUTS)

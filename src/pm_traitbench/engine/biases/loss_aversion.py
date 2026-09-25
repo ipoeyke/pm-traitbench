@@ -45,3 +45,14 @@ def choose(params: EffectiveParams, rng: np.random.Generator, add_allowed: bool)
     active = params.is_active("loss_aversion_lambda")
     flag = _FLAG_BY_ACTION[action] if active else None
     return LossSideChoice(action, flag)
+
+
+def hold_flag(params: EffectiveParams) -> str | None:
+    """The hold flag when active, else None.
+
+    Reused when a drawn add is blocked at the mandate cap, so that day still
+    carries the same flag a drawn hold would.
+    """
+    return (
+        _FLAG_BY_ACTION[PositionAction.HOLD] if params.is_active("loss_aversion_lambda") else None
+    )

@@ -3,6 +3,7 @@
 import math
 import re
 from collections.abc import Callable
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -1066,4 +1067,41 @@ def test_stored_anchor_level_matches_a_direct_entry_anchor_recomputation(
         new_idea.idea.entry_level,
         new_idea.idea.target_level,
     )
+    assert expected is not None
     assert new_idea.position.anchor_level == expected
+
+
+def test_anchoring_rho_perturbs_only_the_anchored_flag(
+    equities_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = equities_setup
+    monkeypatch.setattr(ideas_module, "draw_signal", lambda *a, **kw: _strong_signal(2.0))
+    _force_no_conflict(monkeypatch)
+
+    def _attempt(rho: float) -> ideas_module.NewIdea:
+        _, new_idea = attempt_entry(
+            setup["state"],
+            _T,
+            setup["view"],
+            setup["adapter"],
+            _params(rho=rho),
+            setup["persona"],
+            setup["rules"],
+            setup["traits"],
+            setup["universe"],
+            setup["config"],
+            setup["catalogue"],
+            _rng_for(setup["config"], _PM_ID),
+            attempt=0,
+        )
+        assert new_idea is not None
+        return new_idea
+
+    no_rho = _attempt(0.0)
+    full_rho = _attempt(1.0)
+
+    assert no_rho.position.anchor_level is not None
+    assert no_rho.position.anchored is False
+    assert full_rho.position.anchored is True
+    assert no_rho.idea == full_rho.idea
+    assert replace(no_rho.position, anchored=False) == replace(full_rho.position, anchored=False)

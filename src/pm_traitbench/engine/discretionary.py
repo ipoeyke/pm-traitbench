@@ -34,8 +34,6 @@ class DiscretionaryOutcome:
     ledger_rows: tuple[LedgerRow, ...]
     action: PositionAction
     bias_flag: str | None
-    anchor_level: float | None
-    effective_exit_level: float | None
     closed: tuple[str, date, str] | None
     sold: bool
 
@@ -56,8 +54,6 @@ def handle_discretionary(
     can_exit = (t - position.entry_t) >= min_holding
 
     anchored = anchoring.evaluate(position, level_now)
-    anchor_level = anchored.anchor_level
-    effective_exit_level = anchored.effective_exit_level
 
     if anchored.reached and can_exit:
         rows = exit_rows(position, ctx, view, t, None, None)
@@ -67,8 +63,6 @@ def handle_discretionary(
             ledger_rows=rows,
             action=PositionAction.EXIT,
             bias_flag=anchoring.flag(params),
-            anchor_level=anchor_level,
-            effective_exit_level=effective_exit_level,
             closed=closed,
             sold=True,
         )
@@ -107,7 +101,6 @@ def handle_discretionary(
                 action = PositionAction.CUT
                 sold = True
         elif choice.action == PositionAction.ADD:
-            b_acted = True
             if no_add_rule is not None and position.triggers_fired == 0 and breach:
                 bias_flag_add: str | None = "loss_aversion:add_before_trigger"
                 rule_id_add: str | None = no_add_rule.rule_id
@@ -117,9 +110,15 @@ def handle_discretionary(
             cap = mandate_cap(ctx.pm_rules)
             result, rows = apply_add(result, cap, ctx, view, t, bias_flag_add, rule_id_add)
             if rows:
+                b_acted = True
                 ledger_rows.extend(rows)
                 flags.append(bias_flag_add)
                 action = PositionAction.ADD
+            else:
+                # Blocked at the mandate cap: no add happened, so today is a hold
+                # like any other, and the disposition hazard still gets to act.
+                action = PositionAction.HOLD
+                flags.append(loss_aversion.hold_flag(params))
         else:
             action = PositionAction.HOLD
             flags.append(choice.flag)
@@ -143,8 +142,6 @@ def handle_discretionary(
         ledger_rows=tuple(ledger_rows),
         action=action,
         bias_flag=join_flags(flags),
-        anchor_level=anchor_level,
-        effective_exit_level=effective_exit_level,
         closed=closed,
         sold=sold,
     )

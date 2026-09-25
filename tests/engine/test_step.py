@@ -12,6 +12,7 @@ from pm_traitbench.config import Config
 from pm_traitbench.engine.adapters.commodities import CommoditiesAdapter
 from pm_traitbench.engine.adapters.equities import EquitiesAdapter
 from pm_traitbench.engine.adapters.rates_credit import RatesCreditAdapter
+from pm_traitbench.engine.biases import anchoring
 from pm_traitbench.engine.biases import disposition as disposition_module
 from pm_traitbench.engine.biases import loss_aversion as loss_aversion_module
 from pm_traitbench.engine.biases.exit_deficiency import LATE_ROLL_FLAG
@@ -1029,11 +1030,13 @@ def test_unanchored_idea_never_exits_at_a_level_and_targets_effective_exit(cm_pa
     ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
     params = ctx.schedule.for_day(view.dates[t], view.regime(t))
 
+    anchored = anchoring.evaluate(pos, 100.0)
+    assert anchored.anchor_level is None
+    assert anchored.effective_exit_level == pytest.approx(200.0)
+
     result = handle_discretionary(pos, view, t, ctx, params, 100.0, PnlState.LOSS, -1.0)
 
     assert result.position is not None
-    assert result.anchor_level is None
-    assert result.effective_exit_level == pytest.approx(200.0)
     assert result.bias_flag is None or "anchoring:exit_at_anchor" not in result.bias_flag
 
 
@@ -1061,11 +1064,14 @@ def test_anchored_idea_reaches_the_anchor_in_the_tracked_frame_mid_roll(cm_parts
     ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
     params = ctx.schedule.for_day(view.dates[t], view.regime(t))
 
+    anchored = anchoring.evaluate(pos, 100.0)
+    assert anchored.anchor_level == pytest.approx(100.0)
+    assert anchored.effective_exit_level == pytest.approx(100.0)
+    assert anchored.reached
+
     result = handle_discretionary(pos, view, t, ctx, params, 100.0, PnlState.GAIN, 10.0 / 15.0)
 
     assert result.position is None
-    assert result.anchor_level == pytest.approx(100.0)
-    assert result.effective_exit_level == pytest.approx(100.0)
     assert result.bias_flag == "anchoring:exit_at_anchor"
 
 
@@ -1279,6 +1285,45 @@ def test_discretionary_add_without_a_breach(eq_parts, monkeypatch: pytest.Monkey
     assert row.bias_flag == "loss_aversion:add"
     new_pos = new_state.position("ti_001")
     assert new_pos.size_pct_book == pytest.approx(7.5)
+
+
+def test_add_blocked_at_the_cap_is_a_hold_and_disposition_still_runs(
+    eq_parts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    persona, traits, pm_rules, adapter, catalogue, config = eq_parts
+    view = _view([0.0] + [-15.0] * 7, instrument_id="EQ-A")
+    cap = float(next(r for r in pm_rules if r.param == "max_risk_pct").level)
+    pos = _position(
+        "ti_001",
+        "EQ-A",
+        entry_t=0,
+        entry_level=0.0,
+        target_level=100.0,
+        stop_level=-100.0,
+        size_pct_book=cap,
+        # Already past a trigger, so the no-add rule's guard never applies.
+        triggers_fired=1,
+    )
+    state = PmState(pm_id=persona.pm_id, positions=(pos,), next_idea=2, next_rule=100)
+    idea_rules = _idea_rules_for(pos, persona.pm_id)
+    traits = _traits_with(
+        traits, {"exit_deficiency": (0.0, False), "loss_aversion_lambda": (2.0, True)}
+    )
+    ctx = _ctx(persona, traits, pm_rules, adapter, ["EQ-A"], catalogue, config)
+    monkeypatch.setattr(
+        loss_aversion_module,
+        "choose",
+        lambda *a, **kw: LossSideChoice(PositionAction.ADD, "loss_aversion:add"),
+    )
+    monkeypatch.setattr(disposition_module, "draw_sell", lambda *a, **kw: True)
+
+    new_state, out = step(state, 6, view, ctx, idea_rules)
+
+    assert new_state.n_positions == 0
+    assert len(out.closed) == 1
+    position_day = out.position_days[0]
+    assert position_day.action == PositionAction.EXIT
+    assert position_day.bias_flag == "loss_aversion:hold"
 
 
 # --- Position-day rows and close-out -------------------------------------------
