@@ -19,34 +19,51 @@ def _with_drift(inputs, param: str, dates: tuple[date, ...]):
     return replace(inputs, drift_dates={**inputs.drift_dates, param: dates})
 
 
-def test_splits_for_regime_multiplier_adds_only_that_regime(make_inputs) -> None:
+def _with_active(inputs, param: str, active: bool):
+    trait = inputs.traits[param].model_copy(update={"active": active})
+    return replace(inputs, traits={**inputs.traits, param: trait})
+
+
+def test_splits_for_neutral_trait_gets_all_three_regime_splits(make_inputs) -> None:
     param = BIAS_PARAMS[0]
-    inputs = _with_multiplier(make_inputs(), param, mult_risk_off=1.15)
+    inputs = make_inputs()  # neutral (active=False), no drift, by default
+    assert splits_for(inputs, param) == (
+        Gate1Split.ALL,
+        Gate1Split.REGIME_RANGE,
+        Gate1Split.REGIME_RISK_OFF,
+        Gate1Split.REGIME_RISK_ON,
+    )
+
+
+def test_splits_for_active_trait_regime_multiplier_adds_only_that_regime(make_inputs) -> None:
+    param = BIAS_PARAMS[0]
+    inputs = _with_active(_with_multiplier(make_inputs(), param, mult_risk_off=1.15), param, True)
     assert splits_for(inputs, param) == (Gate1Split.ALL, Gate1Split.REGIME_RISK_OFF)
 
 
-def test_splits_for_multiplier_at_or_below_one_adds_nothing(make_inputs) -> None:
+def test_splits_for_active_trait_multiplier_at_or_below_one_adds_nothing(make_inputs) -> None:
     param = BIAS_PARAMS[0]
     inputs = _with_multiplier(make_inputs(), param, mult_risk_off=1.0, mult_range=0.5)
+    inputs = _with_active(inputs, param, True)
     assert splits_for(inputs, param) == (Gate1Split.ALL,)
 
 
-def test_splits_for_drift_event_adds_before_and_after(make_inputs) -> None:
+def test_splits_for_drift_event_adds_before_and_after_only(make_inputs) -> None:
     param = BIAS_PARAMS[0]
-    inputs = _with_drift(make_inputs(), param, (date(2026, 2, 2),))
+    inputs = _with_multiplier(make_inputs(), param, mult_risk_off=1.2)
+    inputs = _with_active(inputs, param, True)
+    inputs = _with_drift(inputs, param, (date(2026, 2, 2),))
     assert splits_for(inputs, param) == (Gate1Split.ALL, Gate1Split.BEFORE, Gate1Split.AFTER)
 
 
-def test_splits_for_order_is_all_then_regimes_then_before_after(make_inputs) -> None:
+def test_splits_for_active_trait_order_is_all_then_regimes_in_enum_order(make_inputs) -> None:
     param = BIAS_PARAMS[0]
     inputs = _with_multiplier(make_inputs(), param, mult_range=1.2, mult_risk_on=1.3)
-    inputs = _with_drift(inputs, param, (date(2026, 2, 2),))
+    inputs = _with_active(inputs, param, True)
     assert splits_for(inputs, param) == (
         Gate1Split.ALL,
         Gate1Split.REGIME_RANGE,
         Gate1Split.REGIME_RISK_ON,
-        Gate1Split.BEFORE,
-        Gate1Split.AFTER,
     )
 
 

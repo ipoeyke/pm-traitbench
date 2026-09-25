@@ -117,17 +117,18 @@ def test_pooled_group_mixes_synthetic_seeds_and_real_seed_never_joins_it() -> No
 def test_drifted_pm_excluded_from_all_but_present_in_before() -> None:
     param = "disposition_ratio"
     estimates = [
-        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False, drifted=True),
-        _pm("pm_001", "seed_a", param, Gate1Split.BEFORE, 0.1, 10, 0.3, False, drifted=True),
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.7, 10, 0.3, True, drifted=True),
+        _pm("pm_001", "seed_a", param, Gate1Split.BEFORE, 0.7, 10, 0.3, True, drifted=True),
         _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.2, 10, 0.3, False),
     ]
     cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
 
     all_cell = next(c for c in cells if c.split == Gate1Split.ALL)
     assert all_cell.n_neutral == 1  # only pm_002, pm_001 is drifted
+    assert all_cell.n_active == 0
 
     before_cell = next(c for c in cells if c.split == Gate1Split.BEFORE)
-    assert before_cell.n_neutral == 1  # pm_001's before row is present
+    assert before_cell.n_active == 1  # pm_001's before row is present, as the active set
 
 
 def test_no_member_group_is_not_emitted() -> None:
@@ -280,6 +281,42 @@ def test_pool_shortfall_ignores_a_seed_whose_every_pm_drifted() -> None:
         if c.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL and c.split == Gate1Split.ALL
     )
     assert pool.count_shortfall is False
+
+
+# --- aggregate: split baselines -----------------------------------------------
+
+
+def test_regime_cell_neutral_set_comes_from_neutral_pms_regime_rows() -> None:
+    param = "disposition_ratio"
+    regime = Gate1Split.REGIME_RANGE
+    estimates = [
+        _pm("pm_001", "seed_a", param, regime, 0.2, 10, 0.3, False),  # neutral regime row
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.9, 10, 0.3, False),  # not this split
+        _pm("pm_002", "seed_a", param, regime, 0.6, 10, 0.3, True),  # active boosted regime row
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+    cell = next(c for c in cells if c.seed_group == "seed_a" and c.split == regime)
+    assert cell.n_neutral == 1
+    assert cell.neutral_mean == pytest.approx(0.2)
+    assert cell.n_active == 1
+    assert cell.active_mean == pytest.approx(0.6)
+
+
+def test_before_cell_neutral_set_is_the_neutral_all_rows() -> None:
+    param = "disposition_ratio"
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.BEFORE, 0.7, 10, 0.3, True, drifted=True),
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.7, 10, 0.3, True, drifted=True),
+        _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.25, 10, 0.3, False),  # neutral baseline
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+    before_cell = next(
+        c for c in cells if c.seed_group == "seed_a" and c.split == Gate1Split.BEFORE
+    )
+    assert before_cell.n_active == 1
+    assert before_cell.active_mean == pytest.approx(0.7)
+    assert before_cell.n_neutral == 1
+    assert before_cell.neutral_mean == pytest.approx(0.25)
 
 
 # --- aggregate: calibration ----------------------------------------------------

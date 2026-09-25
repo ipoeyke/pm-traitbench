@@ -1,8 +1,10 @@
 """Date splits: the horizon windows a bias parameter is estimated over.
 
-Beyond the full horizon, a bias parameter is also split by any regime its trait
-is boosted in, and by before/after its drift event, so a bias that only shows
-up in a regime or after it drifts is not diluted by the rest of the horizon.
+Beyond the full horizon, an active trait is also split by any regime it is
+boosted in, and by before/after its drift event, so a bias that only shows up
+in a regime or after it drifts is not diluted by the rest of the horizon. A
+neutral trait is split by every regime too, so it can serve as each regime
+split's baseline.
 """
 
 from datetime import date
@@ -22,19 +24,27 @@ _SPLIT_REGIME: dict[Gate1Split, Regime] = {split: regime for regime, split in _R
 def splits_for(inputs: PmInputs, param: str) -> tuple[Gate1Split, ...]:
     """Splits worth computing for `param`.
 
-    Always `ALL`, plus a split per regime the trait is boosted in (a multiplier
-    above 1.0, missing counts as 1.0), then `BEFORE` and `AFTER` when the trait
-    drifted. Order: `ALL`, regimes in enum order, `BEFORE`, `AFTER`.
+    A drifted trait gets `ALL`, `BEFORE` and `AFTER` only: mixing regime dates
+    with a mid-run value change would dilute both. A neutral (inactive), non-
+    drifted trait gets `ALL` plus all three regimes, so it is estimated over
+    every regime's dates and can serve as each regime cell's baseline. An
+    active, non-drifted trait gets `ALL` plus a split per regime it is boosted
+    in (a multiplier above 1.0, missing counts as 1.0). Order: `ALL`, regimes
+    in enum order, `BEFORE`, `AFTER`.
     """
     trait = inputs.traits[param]
     splits = [Gate1Split.ALL]
+    if inputs.drift_dates[param]:
+        splits.append(Gate1Split.BEFORE)
+        splits.append(Gate1Split.AFTER)
+        return tuple(splits)
+    if not trait.active:
+        splits.extend(_REGIME_SPLIT.values())
+        return tuple(splits)
     for regime, split in _REGIME_SPLIT.items():
         mult = getattr(trait, multiplier_field(regime))
         if mult is not None and mult > 1.0:
             splits.append(split)
-    if inputs.drift_dates[param]:
-        splits.append(Gate1Split.BEFORE)
-        splits.append(Gate1Split.AFTER)
     return tuple(splits)
 
 

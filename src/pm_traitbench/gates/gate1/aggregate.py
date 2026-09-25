@@ -10,6 +10,7 @@ correlation and calibration a verdict check later turns into a pass or fail.
 
 from collections import defaultdict
 from collections.abc import Collection, Sequence
+from dataclasses import replace
 
 from pm_traitbench.config import BIAS_PARAMS, Gate1Config
 from pm_traitbench.enums import AssetClass, Gate1Split, SeedGroupKind
@@ -69,10 +70,13 @@ def aggregate(
 ) -> list[CellStats]:
     """Pool `estimates` into a synthetic-pool, per-synthetic-seed and per-real-seed cell.
 
-    One cell per `(asset_class, param, split)` that has at least one member: for
-    `ALL`, a drifted PM's estimate is excluded from every group; other splits
-    already hold only the PMs that split applies to. A cell with no member is
-    not emitted.
+    One cell per `(asset_class, param, split)` that has at least one member.
+    For `ALL`, a drifted PM's estimate is excluded from every group. For
+    `BEFORE`/`AFTER`, only drifted PMs have rows (they are the active set), so
+    the neutral baseline is pulled in from the same param's non-drifted `ALL`
+    rows instead: drift windows differ per PM, so there is no shared date set
+    to compare against. Other splits already hold only the PMs that split
+    applies to. A cell with no member is not emitted.
     """
     synthetic_seeds = set(synthetic_seeds)
     real_seeds = set(real_seeds)
@@ -95,11 +99,17 @@ def aggregate(
 
     cells: list[CellStats] = []
     for (asset_class, param, split), key_estimates in by_key.items():
-        members = (
-            [e for e in key_estimates if not e.drifted]
-            if split == Gate1Split.ALL
-            else key_estimates
-        )
+        if split == Gate1Split.ALL:
+            members = [e for e in key_estimates if not e.drifted]
+        elif split in (Gate1Split.BEFORE, Gate1Split.AFTER):
+            # Only drifted PMs reach this split, so they are always the active
+            # set here, whatever their trait's own active flag says.
+            all_split = by_key.get((asset_class, param, Gate1Split.ALL), [])
+            neutral_baseline = [e for e in all_split if not e.active and not e.drifted]
+            active_rows = [replace(e, active=True) for e in key_estimates]
+            members = active_rows + neutral_baseline
+        else:
+            members = list(key_estimates)
         if not members:
             continue
         higher_is_stronger = ESTIMATORS[param].higher_is_stronger
