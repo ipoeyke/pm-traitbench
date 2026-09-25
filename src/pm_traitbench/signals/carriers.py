@@ -82,7 +82,11 @@ def carrier_pools(inputs: PlanInputs) -> dict[str, tuple[Carrier, ...]]:
         pools.setdefault(trait.trait_id, [])
 
     def emit(
-        trait: Trait | None, trade_idea_id: str, day: date, source: CarrierSource, pattern
+        trait: Trait | None,
+        trade_idea_id: str,
+        day: date,
+        source: CarrierSource,
+        pattern: str | None,
     ) -> None:
         if trait is not None:
             carrier = Carrier(trait.trait_id, trade_idea_id, day, source, pattern)
@@ -106,7 +110,7 @@ def carrier_pools(inputs: PlanInputs) -> dict[str, tuple[Carrier, ...]]:
                     raise PlanError(
                         f"PM '{pm_id}': flag '{flag}' pattern is not a known '{param}' pattern"
                     )
-                if flag in HOLD_FLAGS:
+                if flag in HOLD_FLAGS and source is CarrierSource.POSITION_DAY:
                     hold_key = (row.trade_idea_id, flag)
                     if hold_key in hold_seen:
                         continue

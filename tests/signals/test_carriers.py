@@ -121,6 +121,18 @@ def test_acked_no_action_and_added_are_exit_deficiency_carriers():
     assert set(BREACH_RESPONSES) == {RuleResponse.ACKED_NO_ACTION, RuleResponse.ADDED}
 
 
+def test_added_rule_event_is_an_exit_deficiency_carrier():
+    inputs = plan_inputs(
+        traits=(bias_trait("exit_deficiency", trait_id="t_01"),),
+        ideas={"ti_001": idea_row()},
+        rule_events=(rule_event(response=RuleResponse.ADDED, response_date=date(2026, 1, 12)),),
+    )
+    pools = carrier_pools(inputs)
+    assert pools["t_01"] == (
+        Carrier("t_01", "ti_001", date(2026, 1, 12), CarrierSource.RULE_EVENT, "added"),
+    )
+
+
 def test_acted_and_overridden_are_not_carriers():
     inputs = plan_inputs(
         traits=(bias_trait("exit_deficiency", trait_id="t_01"),),
@@ -236,23 +248,49 @@ def test_every_active_bias_key_exists_even_with_empty_pool():
     assert pools == {"t_01": ()}
 
 
+def test_ledger_hold_flag_does_not_suppress_position_day_first_day():
+    """The hold-flag first-day rule is per `position_days`; a ledger row never claims it."""
+    inputs = plan_inputs(
+        traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
+        ideas={"ti_001": idea_row()},
+        ledger=(ledger_row(date=date(2026, 1, 6), bias_flag="loss_aversion:hold"),),
+        position_days=(
+            position_day(date=date(2026, 1, 5), bias_flag="loss_aversion:hold"),
+            position_day(date=date(2026, 1, 6), bias_flag="loss_aversion:hold"),
+        ),
+    )
+    pools = carrier_pools(inputs)
+    assert pools["t_01"] == (
+        Carrier("t_01", "ti_001", date(2026, 1, 5), CarrierSource.POSITION_DAY, "hold"),
+        Carrier("t_01", "ti_001", date(2026, 1, 6), CarrierSource.LEDGER, "hold"),
+    )
+
+
 def test_carrier_patterns_are_all_known_revealed_patterns():
-    """Build a carrier from every flag and rule-event pattern and check it's in the bank."""
+    """Build a carrier from every flag, hold flag, rule-event and chased_trend pattern and
+    check each lands in the bank for its bias, with the exact count built for it.
+    """
     traits = tuple(
         bias_trait(param, trait_id=f"t_{i:02d}") for i, param in enumerate(BIAS_PARAMS, start=1)
     )
-    trait_by_param = {trait.param: trait for trait in traits}
-    ideas: dict[str, object] = {}
+    trait_id_for = {trait.param: trait.trait_id for trait in traits}
+
+    ideas = {}
     ledger_rows = []
+    position_day_rows = []
+    expected_counts: dict[str, int] = {}
     idea_n = 100
     for prefix, param in sorted(FLAG_PREFIX_PARAM.items()):
         for pattern in REVEALED_PATTERNS[param]:
-            if f"{prefix}:{pattern}" in HOLD_FLAGS:
-                continue
+            flag = f"{prefix}:{pattern}"
             idea_id = f"ti_{idea_n}"
             idea_n += 1
             ideas[idea_id] = idea_row(trade_idea_id=idea_id, entry_date=DEFAULT_DATE)
-            ledger_rows.append(ledger_row(trade_idea_id=idea_id, bias_flag=f"{prefix}:{pattern}"))
+            if flag in HOLD_FLAGS:
+                position_day_rows.append(position_day(trade_idea_id=idea_id, bias_flag=flag))
+            else:
+                ledger_rows.append(ledger_row(trade_idea_id=idea_id, bias_flag=flag))
+        expected_counts[param] = len(REVEALED_PATTERNS[param])
 
     ideas["ti_201"] = idea_row(trade_idea_id="ti_201")
     ideas["ti_202"] = idea_row(trade_idea_id="ti_202")
@@ -260,18 +298,22 @@ def test_carrier_patterns_are_all_known_revealed_patterns():
         rule_event(trade_idea_id="ti_201", response=RuleResponse.ACKED_NO_ACTION),
         rule_event(trade_idea_id="ti_202", response=RuleResponse.ADDED),
     )
-    chased_idea = idea_row(trade_idea_id="ti_300", chased_trend=True)
-    ideas["ti_300"] = chased_idea
+    expected_counts["exit_deficiency"] += len(rule_events)
 
-    traits = (*traits,)
+    ideas["ti_300"] = idea_row(trade_idea_id="ti_300", chased_trend=True)
+    expected_counts["extrapolation_theta"] = 1
+
     inputs = plan_inputs(
         traits=traits,
         ideas=ideas,
         ledger=tuple(ledger_rows),
+        position_days=tuple(position_day_rows),
         rule_events=rule_events,
     )
     pools = carrier_pools(inputs)
-    for param, trait in trait_by_param.items():
-        for carrier in pools[trait.trait_id]:
+
+    for param, tid in trait_id_for.items():
+        assert len(pools[tid]) == expected_counts.get(param, 0), param
+        for carrier in pools[tid]:
             if carrier.pattern is not None:
                 assert carrier.pattern in REVEALED_PATTERNS[param]

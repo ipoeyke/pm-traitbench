@@ -95,7 +95,7 @@ def test_build_inputs_raises_on_unknown_drift_trait():
     personas = [persona_for("pm_001")]
     traits = [bias_trait("loss_aversion_lambda", trait_id="t_01")]
     drift_events = [drift_event("t_99", date(2026, 1, 5), DriftEventType.DORMANT)]
-    with pytest.raises(PlanError, match="pm_001"):
+    with pytest.raises(PlanError, match="pm_001.*t_99"):
         build_inputs(
             personas, traits, drift_events, [], [], [], [], (date(2026, 1, 5),), skipped=set()
         )
@@ -105,14 +105,14 @@ def test_build_inputs_raises_on_unknown_ledger_idea():
     personas = [persona_for("pm_001")]
     ideas = [idea_row(pm_id="pm_001", trade_idea_id="ti_001")]
     ledger = [ledger_row(pm_id="pm_001", trade_idea_id="ti_999")]
-    with pytest.raises(PlanError, match="pm_001"):
+    with pytest.raises(PlanError, match="pm_001.*ti_999"):
         build_inputs(personas, [], [], ideas, ledger, [], [], (date(2026, 1, 5),), skipped=set())
 
 
 def test_build_inputs_raises_on_unknown_rule_event_and_position_day_idea():
     personas = [persona_for("pm_001")]
     ideas = [idea_row(pm_id="pm_001", trade_idea_id="ti_001")]
-    with pytest.raises(PlanError, match="pm_001"):
+    with pytest.raises(PlanError, match="pm_001.*ti_999"):
         build_inputs(
             personas,
             [],
@@ -124,7 +124,7 @@ def test_build_inputs_raises_on_unknown_rule_event_and_position_day_idea():
             (date(2026, 1, 5),),
             skipped=set(),
         )
-    with pytest.raises(PlanError, match="pm_001"):
+    with pytest.raises(PlanError, match="pm_001.*ti_999"):
         build_inputs(
             personas,
             [],
