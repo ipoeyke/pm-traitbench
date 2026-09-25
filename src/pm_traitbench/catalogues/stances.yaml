@@ -1,46 +1,59 @@
 biases:
   loss_aversion_lambda:
     revealed:
-      all:
-      - add to {instrument} below your entry at {entry} instead of cutting it
-      - hold {instrument} through the stop at {stop} rather than closing it
-      - average down into {instrument} as it falls past {entry}
+      add:
+        all:
+        - add to {instrument} while it already sits below your entry at {entry}
+        - average down into {instrument} under {entry}
+      add_before_trigger:
+        all:
+        - add to {instrument} below {entry} before any signpost has fired
+        - buy more {instrument} under {entry}, ahead of any trigger firing
+      hold:
+        all:
+        - keep {instrument} below {entry} rather than lock in the loss
+        - stay in {instrument} under {entry} to avoid taking the loss
     stated:
       all:
-      - say a loss feels far worse to you than an equivalent gain
-      - tell the advisor you find it much harder to sell at a loss than to take a profit
-      - describe how losses sting more than gains ever feel good
+      - say a loss stings far more than an equal gain feels good
+      - tell the advisor you would rather avoid a loss than lock in an equal gain
+      - describe how you keep pushing to get back to even after a loss
     claim:
       all:
-      - tell the advisor gains and losses feel exactly the same to you
-      - say a dollar lost affects you no more than a dollar gained
-      - tell the advisor losing and winning trades never feel different
+      - tell the advisor a loss and an equal gain feel the same to you
+      - say you take a loss as soon as it is confirmed, with no urge to get back to even
+      - tell the advisor you never chase a loss trying to recover it
     retract:
       all:
-      - 'say losses hit you harder than gains, then correct yourself: they feel about the same'
-      - 'tell the advisor you struggle to cut a loss, then walk it back: it is no harder than taking profit'
+      - 'say a loss stings more than a gain feels good, then correct yourself: they feel the same'
+      - 'tell the advisor you chase losses to get back to even, then take it back: you take them as they
+        come'
     third_party:
       all:
-      - tell the advisor {who} feels losses far more than gains
-      - say {who} finds it much harder to sell a loser than to take a profit
+      - tell the advisor {who} feels a loss far more than an equal gain
+      - say {who} keeps pushing to get back to even after a loss
     drift_update:
       all:
-      - tell the advisor you have been working on treating gains and losses the same way
-      - say you have started cutting losers as fast as you take profits
+      - tell the advisor you have been working on taking a loss without chasing it back to even
+      - say you have started accepting a loss instead of doubling down to recover it
     drift_dormant:
       all:
-      - tell the advisor you have stopped holding losers longer than winners
-      - say the gap between how a loss and a gain feel has faded for you
+      - tell the advisor a loss no longer stings more than an equal gain
+      - say you have stopped chasing losses to get back to even
     drift_revive:
       all:
-      - tell the advisor losses have started stinging more than gains again
-      - say you have slipped back into holding losers longer than winners
+      - tell the advisor a loss is stinging more than a gain again
+      - say you have slipped back into chasing losses to get back to even
   disposition_ratio:
     revealed:
-      all:
-      - trim {instrument} well before it reaches the target at {target}
-      - sell {instrument} for a quick gain instead of letting it run toward {target}
-      - hold {instrument} through the stop at {stop} instead of closing the loss
+      realise_gain_early:
+        all:
+        - sell part of {instrument} well before the target at {target}, with nothing else changed
+        - take profit on {instrument} early, well short of {target}, with the setup unchanged
+      hold_loser:
+        all:
+        - keep {instrument} in the book long after it slipped under your entry at {entry}
+        - hold {instrument} months after it fell below {entry}
     stated:
       all:
       - say you take profits quickly but let losing positions sit
@@ -74,10 +87,10 @@ biases:
       - say you are riding losers again, hoping for a rebound
   anchoring_rho:
     revealed:
-      all:
-      - close {instrument} exactly at your entry price of {entry}
-      - exit {instrument} the moment it returns to a round number near {entry}
-      - flatten {instrument} right where you first bought it at {entry}
+      exit_at_anchor:
+        all:
+        - exit {instrument} right at a round number, with no news to justify the timing
+        - close {instrument} back at your entry of {entry}, as if that price were a signal
     stated:
       all:
       - say your target always stays tied to the price you first paid
@@ -110,46 +123,47 @@ biases:
       - say you have slipped back into judging a position against where you bought it
   extrapolation_theta:
     revealed:
-      all:
-      - add to {instrument} after a strong run higher, chasing the move
-      - cut {instrument} after a sharp drop, selling into the fall
-      - buy more {instrument} simply because it just ran hard
+      chased_trend:
+        all:
+        - enter {instrument} long right after a strong run higher, chasing the move
+        - go short {instrument} right after a sharp drop, because of the move
     stated:
       all:
-      - say a strong recent run makes you expect the move to continue
-      - tell the advisor a short winning streak shifts your whole forecast
-      - describe how a run of good sessions raises your outlook
+      - say a strong recent move in a name makes you expect it to keep going
+      - tell the advisor a sharp run in a price shifts your whole forecast for it
+      - describe how a name's recent trend raises your expectations for where it goes next
     claim:
       all:
-      - tell the advisor a recent run never changes your forecast
-      - say you treat any short winning or losing streak as pure noise
-      - tell the advisor your forecast ignores the last few sessions
+      - tell the advisor a name's recent move never changes your forecast for it
+      - say you treat any short run or drop in a price as pure noise
+      - tell the advisor your forecast ignores a name's last few sessions
     retract:
       all:
-      - 'say a strong run raises your forecast, then correct yourself: the move changes nothing'
-      - 'tell the advisor a winning streak shifts your outlook, then take it back: you treat it as noise'
+      - 'say a strong move raises your forecast for a name, then correct yourself: the move changes nothing'
+      - 'tell the advisor a recent run shifts your outlook on a name, then take it back: you treat it
+        as noise'
     third_party:
       all:
-      - say {who} expects more of a move after a strong recent run
-      - tell the advisor a short streak shifts {who}'s whole forecast
+      - say {who} expects more of a move after a name runs hard
+      - tell the advisor a name's recent trend shifts {who}'s whole forecast for it
     drift_update:
       all:
-      - tell the advisor you have been working on ignoring recent streaks
-      - say you have started treating a strong run as noise, not a signal
+      - tell the advisor you have been working on ignoring a name's recent run
+      - say you have started treating a sharp move as noise, not a signal
     drift_dormant:
       all:
-      - tell the advisor a recent run no longer moves your forecast
-      - say short streaks have stopped shifting your outlook
+      - tell the advisor a name's recent run no longer moves your forecast for it
+      - say a sharp move in a price has stopped shifting your outlook
     drift_revive:
       all:
-      - tell the advisor a strong run is shifting your forecast again
-      - say a short streak has started moving your outlook once more
+      - tell the advisor a name's recent run is shifting your forecast again
+      - say a sharp move has started moving your outlook once more
   herding_weight:
     revealed:
-      all:
-      - enter {instrument} on the street's view even though your own read points the other way
-      - size into {instrument} to match consensus positioning, not your own call
-      - put on {instrument} because the desk is already there, against your own read
+      followed_street:
+        all:
+        - enter {instrument} on the street's side even though your own read pointed the other way
+        - put on {instrument} to match the street's view, against your own call
     stated:
       all:
       - say you feel safer holding a name once other desks are in it
@@ -184,10 +198,10 @@ biases:
       - say other desks' positioning has crept back into your sizing
   overconfidence_coverage:
     revealed:
-      all:
-      - size {instrument} large while keeping the target-to-stop range narrow
-      - put on a big position in {instrument} with only a thin band between {target} and {stop}
-      - run {instrument} at full size on a range too tight to be safe
+      oversized:
+        all:
+        - size {instrument} large while telling the desk you see only one likely outcome
+        - put on a big position in {instrument} while describing almost no chance you are wrong
     stated:
       all:
       - say your price targets carry a narrow range because you trust your read
@@ -220,10 +234,10 @@ biases:
       - say you are trusting your read too much once more
   conviction_size_miscalibration:
     revealed:
-      all:
-      - size {instrument} far below the conviction you stated for it
-      - put your largest size on {instrument}, a name you rank as low conviction
-      - size {instrument} well above what your own conviction ranking supports
+      mis_sized:
+        all:
+        - size {instrument} far below the conviction you stated for it
+        - put your largest size on {instrument}, a name you call low conviction
     stated:
       all:
       - say your biggest positions are not always your best ideas
@@ -254,13 +268,21 @@ biases:
     drift_revive:
       all:
       - tell the advisor your size and conviction have drifted apart again
-      - say your biggest position is no longer your best idea again
+      - say the gap between your size and your conviction has reopened
   exit_deficiency:
     revealed:
-      all:
-      - let the stop at {stop} on {instrument} fire and stay in the position anyway
-      - add to {instrument} after its signpost has already fired
-      - roll {instrument} well past the point your own rule called for
+      acked_no_action:
+        all:
+        - acknowledge the stop on {instrument} has fired and keep the position anyway
+        - note that a signpost on {instrument} has triggered, then hold on regardless
+      added:
+        all:
+        - add to {instrument} right after one of its own exit conditions has fired
+        - buy more {instrument} moments after its stop or signpost triggers
+      late_roll:
+        all:
+        - roll {instrument} well past the date your own roll rule sets
+        - roll {instrument} long after your roll rule called for it
     stated:
       all:
       - say closing a position once decided takes you longer than it should
@@ -301,12 +323,13 @@ preferences:
       - 'say plainly: {value}'
     revealed_reaction:
       all:
-      - push back the moment a reply drifts from {value}
-      - cut a reply short when it ignores {value}
+      - say the last answer ignored your preference for {value}
+      - push back that the reply went against {value}
     violation:
       all:
-      - answer in full even though the pm prefers {value}
-      - give a longer reply even though the pm prefers {value}
+      - answer in a way that goes against the PM's stated preference for {value}
+      - respond without regard to the PM's preference for {value}
+      - break from the PM's stated rule of {value} in this reply
     retract:
       all:
       - 'state your rule as {value}, then correct yourself: that is not it'
@@ -327,12 +350,13 @@ preferences:
       - 'say outright: {value}'
     revealed_reaction:
       all:
-      - push back when an answer skips {value}
-      - flag it when a reply does not follow {value}
+      - say the last answer ignored your preference for {value}
+      - push back that the reply left out {value}, going against it
     violation:
       all:
-      - leave out the detail even though the pm prefers {value}
-      - answer without following the rule even though the pm prefers {value}
+      - answer in a way that goes against the PM's stated preference for {value}
+      - leave the PM's rule of {value} out of this reply, going against it
+      - respond without following the PM's preference for {value}
     retract:
       all:
       - 'say your rule is {value}, then correct yourself: it is not'
@@ -353,12 +377,13 @@ preferences:
       - 'say plainly what you want: {value}'
     revealed_reaction:
       all:
-      - push back when the session skips {value}
-      - call out a step that ignores {value}
+      - say the last step ignored your preference for {value}
+      - push back that the session went against {value}
     violation:
       all:
-      - skip the step even though the pm prefers {value}
-      - run the session differently even though the pm prefers {value}
+      - run the session in a way that goes against the PM's stated preference for {value}
+      - skip past the PM's preference for {value} in this step
+      - handle the step without following the PM's rule of {value}
     retract:
       all:
       - 'state your rule as {value}, then correct yourself: that is wrong'
@@ -384,12 +409,13 @@ preferences:
       - 'say outright: {value}'
     revealed_reaction:
       all:
-      - push back when a build ignores {value}
-      - flag an idea shaped against {value}
+      - say the last idea ignored your preference for {value}
+      - push back that the trade went against {value}
     violation:
       all:
-      - build the idea a different way even though the pm prefers {value}
-      - shape the trade against the rule even though the pm prefers {value}
+      - shape the idea in a way that goes against the PM's stated preference for {value}
+      - build the trade without following the PM's rule of {value}
+      - go against the PM's preference for {value} when you shape this idea
     retract:
       all:
       - 'state your rule as {value}, then correct yourself: that is not it'

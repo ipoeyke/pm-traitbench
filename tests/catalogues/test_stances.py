@@ -3,7 +3,7 @@
 import pytest
 
 from pm_traitbench.catalogues.loader import (
-    BANNED_STANCE_WORDS,
+    REVEALED_PATTERNS,
     STANCE_SLOTS,
     check_catalogue,
     check_stances,
@@ -24,6 +24,26 @@ from pm_traitbench.errors import CatalogueError, PlanError
 
 _N_PREFERENCES_MAX = 8
 
+# The exact slot table the brief specifies: which parts of a planted event a stance
+# line for a given (kind of trait, kind of evidence) pair may quote.
+_EXPECTED_STANCE_SLOTS: dict[tuple[Kind, StanceEntry], frozenset[str]] = {
+    (Kind.BIAS, StanceEntry.REVEALED): frozenset({"instrument", "entry", "target", "stop"}),
+    (Kind.BIAS, StanceEntry.STATED): frozenset(),
+    (Kind.BIAS, StanceEntry.CLAIM): frozenset(),
+    (Kind.BIAS, StanceEntry.RETRACT): frozenset(),
+    (Kind.BIAS, StanceEntry.THIRD_PARTY): frozenset({"who"}),
+    (Kind.BIAS, StanceEntry.DRIFT_UPDATE): frozenset(),
+    (Kind.BIAS, StanceEntry.DRIFT_DORMANT): frozenset(),
+    (Kind.BIAS, StanceEntry.DRIFT_REVIVE): frozenset(),
+    (Kind.PREFERENCE, StanceEntry.STATED): frozenset({"value"}),
+    (Kind.PREFERENCE, StanceEntry.REVEALED): frozenset({"value", "instrument"}),
+    (Kind.PREFERENCE, StanceEntry.REVEALED_REACTION): frozenset({"value"}),
+    (Kind.PREFERENCE, StanceEntry.VIOLATION): frozenset({"value"}),
+    (Kind.PREFERENCE, StanceEntry.RETRACT): frozenset({"value"}),
+    (Kind.PREFERENCE, StanceEntry.THIRD_PARTY): frozenset({"value", "who"}),
+    (Kind.PREFERENCE, StanceEntry.DRIFT_UPDATE): frozenset({"value", "old_value"}),
+}
+
 
 def _check(catalogue: Catalogue) -> None:
     check_catalogue(catalogue, list(AssetClass), n_preferences_max=_N_PREFERENCES_MAX)
@@ -33,12 +53,20 @@ def _lines(*values: str) -> StanceLines:
     return {"all": tuple(values)}
 
 
-def _bias_stances() -> BiasStances:
+def _revealed_lines_for(patterns: tuple[str, ...]) -> dict[str, StanceLines]:
+    """A minimal, generic "all" bank for each of a bias's engine action patterns."""
+    return {
+        pattern: _lines(
+            "act on {instrument} near {entry}",
+            "act on {instrument} at {target}",
+        )
+        for pattern in patterns
+    }
+
+
+def _bias_stances(param: str) -> BiasStances:
     return BiasStances(
-        revealed=_lines(
-            "add to {instrument} below your entry at {entry}",
-            "trim {instrument} well before the target at {target}",
-        ),
+        revealed=_revealed_lines_for(REVEALED_PATTERNS[param]),
         stated=_lines("say something about the habit", "tell the advisor about the habit"),
         claim=_lines("claim the opposite habit outright", "tell the advisor it never happens"),
         retract=_lines(
@@ -69,8 +97,8 @@ def _pref_stances(revealed: StanceLines | None = None) -> PreferenceStances:
         stated=_lines("tell the advisor: {value}", "say plainly: {value}"),
         revealed_reaction=_lines("push back when a reply drifts from {value}", "flag {value}"),
         violation=_lines(
-            "answer anyway even though the pm prefers {value}",
-            "ignore the rule even though the pm prefers {value}",
+            "answer anyway even though the PM prefers {value}",
+            "ignore the rule even though the PM prefers {value}",
         ),
         retract=_lines(
             "state {value} as your rule, then correct yourself",
@@ -89,7 +117,7 @@ def _pref_stances(revealed: StanceLines | None = None) -> PreferenceStances:
 
 
 def _minimal_stances() -> Stances:
-    biases = {param: _bias_stances() for param in BIAS_PARAMS}
+    biases = {param: _bias_stances(param) for param in BIAS_PARAMS}
     preferences: dict[PreferenceGroup, PreferenceStances] = {}
     for group in PreferenceGroup:
         if group == PreferenceGroup.EXPRESSION:
@@ -115,8 +143,15 @@ def test_packaged_stance_bank_loads_and_passes_checks(catalogue: Catalogue) -> N
     check_stances(catalogue)
 
 
-def test_check_catalogue_calls_check_stances(catalogue: Catalogue) -> None:
-    _check(catalogue)
+def test_check_catalogue_raises_for_a_bad_stance_bank(catalogue: Catalogue) -> None:
+    # Proves check_catalogue actually calls check_stances: nothing else it runs would
+    # notice a stance bank missing a whole bias key, so removing that call breaks this.
+    stances = _minimal_stances()
+    biases = dict(stances.biases)
+    del biases["exit_deficiency"]
+    stances = stances.model_copy(update={"biases": biases})
+    with pytest.raises(CatalogueError, match="exit_deficiency"):
+        _check(_catalogue_with(catalogue, stances))
 
 
 # --- Stances.lines ---
@@ -154,9 +189,9 @@ def test_lines_prefers_asset_class_lines_over_all() -> None:
     )
 
 
-def test_lines_raises_planerror_for_unknown_key() -> None:
+def test_lines_raises_planerror_naming_key_and_entry_for_unknown_key() -> None:
     stances = _minimal_stances()
-    with pytest.raises(PlanError, match="not_a_real_key"):
+    with pytest.raises(PlanError, match="not_a_real_key.*stated"):
         stances.lines("not_a_real_key", StanceEntry.STATED, AssetClass.EQUITIES)
 
 
@@ -180,6 +215,54 @@ def test_lines_resolves_preference_group_by_string_value() -> None:
         PreferenceGroup.EXPRESSION.value, StanceEntry.REVEALED, AssetClass.EQUITIES
     )
     assert len(result) >= 2
+
+
+def test_lines_on_a_bias_revealed_entry_tells_caller_to_use_revealed_lines() -> None:
+    stances = _minimal_stances()
+    with pytest.raises(PlanError, match="revealed_lines"):
+        stances.lines("loss_aversion_lambda", StanceEntry.REVEALED, AssetClass.EQUITIES)
+
+
+# --- Stances.revealed_lines ---
+
+
+def test_revealed_lines_returns_lines_for_a_known_pattern() -> None:
+    stances = _minimal_stances()
+    result = stances.revealed_lines("loss_aversion_lambda", "hold", AssetClass.EQUITIES)
+    assert len(result) >= 2
+
+
+def test_revealed_lines_prefers_asset_class_lines_over_all() -> None:
+    stances = _minimal_stances()
+    bank = stances.biases["loss_aversion_lambda"]
+    overridden_pattern = {
+        "all": ("generic hold line one", "generic hold line two"),
+        "equities": ("equities hold line one", "equities hold line two"),
+    }
+    overridden = bank.model_copy(update={"revealed": {**bank.revealed, "hold": overridden_pattern}})
+    stances = stances.model_copy(
+        update={"biases": {**stances.biases, "loss_aversion_lambda": overridden}}
+    )
+    assert stances.revealed_lines("loss_aversion_lambda", "hold", AssetClass.EQUITIES) == (
+        "equities hold line one",
+        "equities hold line two",
+    )
+    assert stances.revealed_lines("loss_aversion_lambda", "hold", AssetClass.COMMODITIES) == (
+        "generic hold line one",
+        "generic hold line two",
+    )
+
+
+def test_revealed_lines_raises_planerror_for_unknown_param() -> None:
+    stances = _minimal_stances()
+    with pytest.raises(PlanError, match="not_a_real_param"):
+        stances.revealed_lines("not_a_real_param", "hold", AssetClass.EQUITIES)
+
+
+def test_revealed_lines_raises_planerror_for_unknown_pattern() -> None:
+    stances = _minimal_stances()
+    with pytest.raises(PlanError, match="loss_aversion_lambda.*bogus_pattern"):
+        stances.revealed_lines("loss_aversion_lambda", "bogus_pattern", AssetClass.EQUITIES)
 
 
 # --- check_stances: one test per rule ---
@@ -209,6 +292,32 @@ def test_check_stances_missing_preference_group_raises(catalogue: Catalogue) -> 
     del preferences[PreferenceGroup.WORKFLOW]
     stances = stances.model_copy(update={"preferences": preferences})
     with pytest.raises(CatalogueError, match="workflow"):
+        check_stances(_catalogue_with(catalogue, stances))
+
+
+def test_check_stances_missing_revealed_pattern_key_raises(catalogue: Catalogue) -> None:
+    stances = _minimal_stances()
+    bank = stances.biases["loss_aversion_lambda"]
+    revealed = dict(bank.revealed)
+    del revealed["hold"]
+    overridden = bank.model_copy(update={"revealed": revealed})
+    stances = stances.model_copy(
+        update={"biases": {**stances.biases, "loss_aversion_lambda": overridden}}
+    )
+    with pytest.raises(CatalogueError, match="missing.*hold"):
+        check_stances(_catalogue_with(catalogue, stances))
+
+
+def test_check_stances_extra_revealed_pattern_key_raises(catalogue: Catalogue) -> None:
+    stances = _minimal_stances()
+    bank = stances.biases["loss_aversion_lambda"]
+    revealed = dict(bank.revealed)
+    revealed["not_a_real_pattern"] = revealed["hold"]
+    overridden = bank.model_copy(update={"revealed": revealed})
+    stances = stances.model_copy(
+        update={"biases": {**stances.biases, "loss_aversion_lambda": overridden}}
+    )
+    with pytest.raises(CatalogueError, match="extra.*not_a_real_pattern"):
         check_stances(_catalogue_with(catalogue, stances))
 
 
@@ -319,19 +428,15 @@ def test_check_stances_banned_word_raises(catalogue: Catalogue) -> None:
         check_stances(_catalogue_with(catalogue, stances))
 
 
-def test_stance_slots_covers_every_kind_and_entry_pair() -> None:
-    assert STANCE_SLOTS[(Kind.PREFERENCE, StanceEntry.DRIFT_UPDATE)] == {"value", "old_value"}
-    assert STANCE_SLOTS[(Kind.BIAS, StanceEntry.REVEALED)] == {
-        "instrument",
-        "entry",
-        "target",
-        "stop",
-    }
+def test_stance_slots_matches_the_specified_table() -> None:
+    assert STANCE_SLOTS == _EXPECTED_STANCE_SLOTS
+    assert len(STANCE_SLOTS) == 15
 
 
-def test_banned_stance_words_name_a_bias_but_allow_conviction() -> None:
-    assert "bias" in BANNED_STANCE_WORDS
-    assert "conviction" not in BANNED_STANCE_WORDS
+def test_revealed_patterns_covers_every_bias_param() -> None:
+    assert set(REVEALED_PATTERNS) == set(BIAS_PARAMS)
+    for patterns in REVEALED_PATTERNS.values():
+        assert len(patterns) >= 1
 
 
 # --- render_stance ---
@@ -345,6 +450,16 @@ def test_render_stance_fills_slots() -> None:
 def test_render_stance_raises_catalogue_error_on_missing_slot() -> None:
     with pytest.raises(CatalogueError, match="instrument"):
         render_stance("add to {instrument}", {})
+
+
+def test_render_stance_raises_catalogue_error_on_positional_placeholder() -> None:
+    with pytest.raises(CatalogueError, match="add to"):
+        render_stance("add to {}", {"instrument": "x"})
+
+
+def test_render_stance_raises_catalogue_error_on_malformed_line() -> None:
+    with pytest.raises(CatalogueError, match="add to"):
+        render_stance("add to {instrument!r", {"instrument": "x"})
 
 
 def test_load_catalogue_stances_pass_check_catalogue() -> None:

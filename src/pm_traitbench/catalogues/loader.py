@@ -72,6 +72,20 @@ BANNED_STANCE_WORDS: tuple[str, ...] = (
     "exit deficiency",
     "bias",
 )
+# Each bias's `revealed` stance is keyed by the engine's flag suffix (`<bias>:<pattern>`)
+# for that action, plus "acked_no_action" (a fired rule acknowledged without acting, from
+# rule events) and "chased_trend" (an entry that chased a trailing move), so the line drawn
+# always matches the specific action the engine logged that day, not just the trait behind it.
+REVEALED_PATTERNS: dict[str, tuple[str, ...]] = {
+    "loss_aversion_lambda": ("add", "add_before_trigger", "hold"),
+    "disposition_ratio": ("realise_gain_early", "hold_loser"),
+    "anchoring_rho": ("exit_at_anchor",),
+    "extrapolation_theta": ("chased_trend",),
+    "herding_weight": ("followed_street",),
+    "overconfidence_coverage": ("oversized",),
+    "conviction_size_miscalibration": ("mis_sized",),
+    "exit_deficiency": ("acked_no_action", "added", "late_roll"),
+}
 
 # A signpost's {level} slot arrives rendered with its own unit (or as a bare price).
 _SIGNPOST_SLOTS: dict[str, frozenset[str]] = {
@@ -236,8 +250,8 @@ def render_stance(line: str, slots: Mapping[str, str]) -> str:
     """Render a stance line, filling its slots from a mapping of slot name to value."""
     try:
         return line.format(**slots)
-    except KeyError as e:
-        raise CatalogueError(f"stance line '{line}' is missing slot {e}") from e
+    except (KeyError, IndexError, ValueError) as e:
+        raise CatalogueError(f"stance line '{line}' failed to render: {e}") from e
 
 
 def _check_preference_group_coverage(
@@ -447,12 +461,10 @@ def _check_engine_templates(catalogue: Catalogue) -> None:
 
 
 def _check_stance_lines(
-    kind: Kind, key: str, entry: StanceEntry, stance_lines: StanceLines
+    context: str, allowed_slots: frozenset[str], stance_lines: StanceLines
 ) -> None:
-    context = f"stances: {kind} '{key}' entry '{entry.value}'"
     if "all" not in stance_lines:
         raise CatalogueError(f"{context} has no 'all' key")
-    allowed_slots = STANCE_SLOTS[(kind, entry)]
     asset_class_values = {asset_class.value for asset_class in AssetClass}
     for lines_key, lines in stance_lines.items():
         if lines_key != "all" and lines_key not in asset_class_values:
@@ -502,21 +514,46 @@ def check_stances(catalogue: Catalogue) -> None:
 
     for param, bank in stances.biases.items():
         for field_name in type(bank).model_fields:
+            if field_name == "revealed":
+                continue
             entry = StanceEntry(field_name)
-            _check_stance_lines(Kind.BIAS, param, entry, getattr(bank, field_name))
+            context = f"stances: bias '{param}' entry '{entry.value}'"
+            _check_stance_lines(
+                context, STANCE_SLOTS[(Kind.BIAS, entry)], getattr(bank, field_name)
+            )
+
+        expected_patterns = set(REVEALED_PATTERNS[param])
+        actual_patterns = set(bank.revealed)
+        if actual_patterns != expected_patterns:
+            missing = sorted(expected_patterns - actual_patterns)
+            extra = sorted(actual_patterns - expected_patterns)
+            raise CatalogueError(
+                f"stances: bias '{param}' entry 'revealed' pattern keys must equal "
+                f"{sorted(expected_patterns)}; missing {missing}, extra {extra}"
+            )
+        revealed_slots = STANCE_SLOTS[(Kind.BIAS, StanceEntry.REVEALED)]
+        for pattern, pattern_lines in bank.revealed.items():
+            context = f"stances: bias '{param}' entry 'revealed' pattern '{pattern}'"
+            _check_stance_lines(context, revealed_slots, pattern_lines)
 
     for group, bank in stances.preferences.items():
         for field_name in type(bank).model_fields:
             if field_name == "revealed":
                 continue
             entry = StanceEntry(field_name)
-            _check_stance_lines(Kind.PREFERENCE, group.value, entry, getattr(bank, field_name))
+            context = f"stances: preference '{group.value}' entry '{entry.value}'"
+            _check_stance_lines(
+                context, STANCE_SLOTS[(Kind.PREFERENCE, entry)], getattr(bank, field_name)
+            )
         if group == PreferenceGroup.EXPRESSION:
             if not bank.revealed:
                 raise CatalogueError(
                     f"stances: preference '{group.value}' entry 'revealed' must not be empty"
                 )
-            _check_stance_lines(Kind.PREFERENCE, group.value, StanceEntry.REVEALED, bank.revealed)
+            context = f"stances: preference '{group.value}' entry 'revealed'"
+            _check_stance_lines(
+                context, STANCE_SLOTS[(Kind.PREFERENCE, StanceEntry.REVEALED)], bank.revealed
+            )
         elif bank.revealed:
             raise CatalogueError(
                 f"stances: preference '{group.value}' entry 'revealed' must be empty"

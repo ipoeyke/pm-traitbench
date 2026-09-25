@@ -256,6 +256,34 @@ def test_self_description_phrasings_are_lowercase_no_period_3_to_8_words() -> No
             assert 3 <= word_count <= 8, (param, fragment, word_count)
 
 
+def _iter_stance_line_lists(value: Any) -> list[list[str]]:
+    """Collect every list of stance lines in a loaded stance bank.
+
+    A leaf maps "all" or an asset-class key to a list of line strings; anything else
+    (a bias's `revealed`, keyed one level deeper by engine action pattern) is a dict of
+    further dicts, so the recursion stops exactly at the line lists themselves.
+    """
+    if not isinstance(value, dict):
+        return []
+    if value and all(isinstance(v, list) for v in value.values()):
+        return list(value.values())
+    collected: list[list[str]] = []
+    for v in value.values():
+        collected.extend(_iter_stance_line_lists(v))
+    return collected
+
+
+def test_stance_bank_lines_are_lowercase_no_period_and_2_to_4_per_key() -> None:
+    data = _load_shipped_yaml("stances.yaml")
+    for lines in _iter_stance_line_lists(data):
+        assert 2 <= len(lines) <= 4, lines
+        for line in lines:
+            assert not line.endswith("."), line
+            first_char = line[0]
+            if first_char != "{":
+                assert first_char == first_char.lower(), line
+
+
 @pytest.mark.parametrize(
     "name",
     [

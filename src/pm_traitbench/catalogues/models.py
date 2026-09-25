@@ -196,11 +196,16 @@ StanceLines = dict[str, tuple[str, ...]]
 
 
 class BiasStances(BaseModel):
-    """One bias parameter's stance lines, by the kind of evidence they carry."""
+    """One bias parameter's stance lines, by the kind of evidence they carry.
+
+    ``revealed`` is keyed by the engine's flagged action pattern rather than by asset
+    class directly, since the line drawn must describe the specific action the engine
+    took that day, not just the trait behind it.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    revealed: StanceLines
+    revealed: dict[str, StanceLines]
     stated: StanceLines
     claim: StanceLines
     retract: StanceLines
@@ -240,15 +245,39 @@ class Stances(BaseModel):
         """Asset-class lines if present, else the "all" lines.
 
         `key` is a bias param name or a `PreferenceGroup` value. Raises `PlanError`
-        naming key and entry when the bank has no such entry.
+        naming key and entry when the bank has no such entry. A bias's `revealed`
+        entry is keyed by engine action pattern instead, so `revealed_lines` serves it.
         """
-        bank = self.biases.get(key, self.preferences.get(key))
-        if bank is None:
-            raise PlanError(f"stance bank has no entry for key '{key}'")
+        if key in self.biases:
+            if entry == StanceEntry.REVEALED:
+                raise PlanError(
+                    f"stance bank key '{key}' entry 'revealed' is keyed by engine "
+                    "action; use revealed_lines instead"
+                )
+            bank: BiasStances | PreferenceStances = self.biases[key]
+        elif key in self.preferences:
+            bank = self.preferences[key]
+        else:
+            raise PlanError(f"stance bank has no entry for key '{key}' entry '{entry.value}'")
         stance_lines = getattr(bank, entry.value, None)
         if not stance_lines:
             raise PlanError(f"stance bank key '{key}' has no lines for entry '{entry.value}'")
         return stance_lines.get(asset_class.value, stance_lines.get("all", ()))
+
+    def revealed_lines(self, param: str, pattern: str, asset_class: AssetClass) -> tuple[str, ...]:
+        """Asset-class lines for one bias's engine-flagged action pattern, else "all".
+
+        Raises `PlanError` naming `param` and `pattern` when the bank has no such pattern.
+        """
+        bank = self.biases.get(param)
+        if bank is None:
+            raise PlanError(f"stance bank has no bias entry for param '{param}'")
+        pattern_lines = bank.revealed.get(pattern)
+        if not pattern_lines:
+            raise PlanError(
+                f"stance bank param '{param}' has no revealed lines for pattern '{pattern}'"
+            )
+        return pattern_lines.get(asset_class.value, pattern_lines.get("all", ()))
 
 
 class Catalogue(BaseModel):
