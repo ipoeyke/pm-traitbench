@@ -853,6 +853,14 @@ def test_gate1_config_defaults() -> None:
     assert config.gap_fraction == 0.5
     assert config.min_rank_corr == 0.5
     assert config.min_pms == 5
+    assert config.min_pop_z == 3.0
+    assert config.population_params == (
+        "herding_weight",
+        "conviction_size_miscalibration",
+        "disposition_ratio",
+        "anchoring_rho",
+    )
+    assert config.report_only_params == ("disposition_ratio", "anchoring_rho")
 
 
 def test_gate1_config_has_no_anchor_band_k() -> None:
@@ -887,6 +895,33 @@ def test_gate1_min_rank_corr_at_zero_is_accepted() -> None:
 def test_gate1_min_pms_at_three_is_accepted() -> None:
     config = Config.model_validate({"gate1": {"min_pms": 3}})
     assert config.gate1.min_pms == 3
+
+
+def test_gate1_min_pop_z_at_zero_raises() -> None:
+    with pytest.raises(ValidationError, match="min_pop_z"):
+        Config.model_validate({"gate1": {"min_pop_z": 0}})
+
+
+def test_gate1_population_params_unknown_name_raises() -> None:
+    with pytest.raises(ValidationError, match="unknown bias parameter"):
+        Config.model_validate({"gate1": {"population_params": ["not_a_param"]}})
+
+
+def test_gate1_population_params_repeat_raises() -> None:
+    with pytest.raises(ValidationError, match="repeat"):
+        Config.model_validate(
+            {"gate1": {"population_params": ["herding_weight", "herding_weight"]}}
+        )
+
+
+def test_gate1_report_only_params_unknown_name_raises() -> None:
+    with pytest.raises(ValidationError, match="unknown bias parameter"):
+        Config.model_validate({"gate1": {"report_only_params": ["nope"]}})
+
+
+def test_gate1_report_only_params_may_include_a_per_pm_parameter() -> None:
+    config = Config.model_validate({"gate1": {"report_only_params": ["loss_aversion_lambda"]}})
+    assert config.gate1.report_only_params == ("loss_aversion_lambda",)
 
 
 def test_dump_with_basis_covers_every_gate1_leaf() -> None:

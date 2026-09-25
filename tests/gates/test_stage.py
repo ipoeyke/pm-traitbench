@@ -70,9 +70,37 @@ def test_gate1_stage_writes_both_tables_and_raises_on_the_insufficient_default_t
     assert message.startswith("gate 1 failed for: ")
     entries = message.removeprefix("gate 1 failed for: ").split(", ")
     assert entries == metadata["failed"]
+    # disposition_ratio and anchoring_rho are report-only by default: insufficient
+    # like every other parameter here, but never blocking.
+    blocking_params = set(BIAS_PARAMS) - set(config.gate1.report_only_params)
     assert set(entries) == {
-        f"{asset_class}/{param}" for asset_class in _DIRECT_ASSET_CLASSES for param in BIAS_PARAMS
+        f"{asset_class}/{param}"
+        for asset_class in _DIRECT_ASSET_CLASSES
+        for param in blocking_params
     }
+
+
+def test_gate1_stage_with_every_param_report_only_does_not_raise_on_insufficient_cells(
+    tmp_path, fixture_market, neutral_pm
+) -> None:
+    config = stage_config()
+    config = config.model_copy(
+        update={"gate1": config.gate1.model_copy(update={"report_only_params": BIAS_PARAMS})}
+    )
+    store = DataStore(tmp_path, config.output)
+    write_stage_inputs(store, fixture_market, neutral_pm)
+    run_stage(ENGINE_STAGE, config, store)
+
+    run_stage(GATE1_STAGE, config, store)  # every cell is insufficient, but none blocks
+
+    pooled_all_rows = [
+        row
+        for row in store.read(GATE1_CELLS)
+        if row.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL and row.split == Gate1Split.ALL
+    ]
+    assert pooled_all_rows
+    assert all(row.verdict == Gate1Verdict.INSUFFICIENT for row in pooled_all_rows)
+    assert all(row.blocking is False for row in pooled_all_rows)
 
 
 def test_forced_second_run_gives_byte_identical_gate1_tables(

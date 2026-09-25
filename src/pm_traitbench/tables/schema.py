@@ -21,6 +21,7 @@ from pm_traitbench.enums import (
     Expression,
     Family,
     Gate1Split,
+    Gate1Test,
     Gate1Verdict,
     InstrumentKind,
     Kind,
@@ -671,8 +672,19 @@ class Gate1CellRow(BaseModel):
             "sds; extrapolation only, null for every other parameter."
         )
     )
+    test: Gate1Test = Field(description="Which rule judged the cell: per-PM or population.")
     gap_ok: bool = Field(description="Whether the neutral-to-active gap check passed.")
     rank_ok: bool = Field(description="Whether the rank correlation check passed.")
+    pop_z: float | None = Field(
+        description=(
+            "Standard errors of the difference by which the active mean exceeds the neutral "
+            "mean, in the parameter's own direction; null when either set has fewer than 2 "
+            "values or the standard error is 0."
+        )
+    )
+    pop_ok: bool = Field(
+        description="Whether the population check (pop_z and a positive rank correlation) passed."
+    )
     count_ok: bool | None = Field(
         description="Whether the observation count check passed; null when not evaluated."
     )
@@ -683,7 +695,12 @@ class Gate1CellRow(BaseModel):
         )
     )
     verdict: Gate1Verdict = Field(description="The cell's recovery verdict.")
-    blocking: bool = Field(description="Whether a failing verdict on this cell blocks the gate.")
+    blocking: bool = Field(
+        description=(
+            "Whether a failing verdict on this cell blocks the gate; always false for a "
+            "report-only parameter."
+        )
+    )
 
 
 def to_record(row: BaseModel) -> dict[str, Any]:

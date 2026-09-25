@@ -544,6 +544,43 @@ class Gate1Config(BaseModel):
             "note": "smallest neutral or active set with a usable standard deviation",
         },
     )
+    min_pop_z: float = Field(
+        3.0,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": "about a 0.1% one-sided false pass per test",
+        },
+    )
+    population_params: tuple[str, ...] = Field(
+        (
+            "herding_weight",
+            "conviction_size_miscalibration",
+            "disposition_ratio",
+            "anchoring_rho",
+        ),
+        json_schema_extra={
+            "basis": "design",
+            "note": "parameters limited by how many decisions one PM makes a year",
+        },
+    )
+    report_only_params: tuple[str, ...] = Field(
+        ("disposition_ratio", "anchoring_rho"),
+        json_schema_extra={
+            "basis": "design",
+            "note": "too few PMs per asset class for the population test at the default population",
+        },
+    )
+
+    @field_validator("population_params", "report_only_params")
+    @classmethod
+    def _check_param_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        unknown = set(value) - set(BIAS_PARAMS)
+        if unknown:
+            raise ValueError(f"unknown bias parameter(s): {sorted(unknown)}")
+        if len(set(value)) != len(value):
+            raise ValueError(f"must not repeat an entry: {list(value)}")
+        return value
 
 
 class OutputConfig(BaseModel):

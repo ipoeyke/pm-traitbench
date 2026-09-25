@@ -2,7 +2,7 @@
 
 import pytest
 
-from pm_traitbench.enums import AssetClass, Gate1Split, Gate1Verdict, SeedGroupKind
+from pm_traitbench.enums import AssetClass, Gate1Split, Gate1Test, Gate1Verdict, SeedGroupKind
 from pm_traitbench.tables.schema import Gate1CellRow, Gate1PmRow
 
 
@@ -41,8 +41,11 @@ def gate1_cell_row() -> Gate1CellRow:
         rank_corr=None,
         count_p10=8.0,
         calibration=None,
+        test=Gate1Test.PER_PM,
         gap_ok=True,
         rank_ok=False,
+        pop_z=None,
+        pop_ok=False,
         count_ok=None,
         count_shortfall=False,
         verdict=Gate1Verdict.PASS,

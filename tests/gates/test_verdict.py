@@ -1,7 +1,7 @@
 """Tests for gate 1 verdict rules: pass, fail or insufficient per cell."""
 
 from pm_traitbench.config import Config
-from pm_traitbench.enums import AssetClass, Gate1Split, Gate1Verdict, SeedGroupKind
+from pm_traitbench.enums import AssetClass, Gate1Split, Gate1Test, Gate1Verdict, SeedGroupKind
 from pm_traitbench.gates.gate1._cell_stats import CellStats
 from pm_traitbench.gates.gate1.verdict import blocking_failures, count_warnings, judge
 
@@ -14,7 +14,7 @@ def _cell(
     seed_group: str = "synthetic",
     seed_group_kind: SeedGroupKind = SeedGroupKind.SYNTHETIC_POOL,
     asset_class: AssetClass = EQ,
-    param: str = "disposition_ratio",
+    param: str = "loss_aversion_lambda",  # per-PM by default; not in population_params
     split: Gate1Split = Gate1Split.ALL,
     higher_is_stronger: bool = True,
     n_neutral: int = 20,
@@ -26,6 +26,7 @@ def _cell(
     floor: float | None = None,
     active_share_past_floor: float | None = None,
     rank_corr: float | None = 1.0,
+    pop_z: float | None = None,
     count_p10: float | None = None,
     count_ok: bool | None = None,
     count_shortfall: bool = False,
@@ -47,6 +48,7 @@ def _cell(
         floor=floor,
         active_share_past_floor=active_share_past_floor,
         rank_corr=rank_corr,
+        pop_z=pop_z,
         count_p10=count_p10,
         count_ok=count_ok,
         count_shortfall=count_shortfall,
@@ -140,6 +142,55 @@ def test_threshold_boundaries_all_pass() -> None:
     assert row.verdict == Gate1Verdict.PASS
 
 
+# --- judge: population rule -----------------------------------------------------
+
+
+def test_population_param_passes_on_pop_z_and_positive_rank_corr_despite_failing_gap() -> None:
+    # gap 0.04, sd 0.03: gap_ok is False, but herding_weight is population-tested.
+    cell = _cell(
+        param="herding_weight", active_mean=0.14, neutral_sd=0.03, pop_z=3.5, rank_corr=0.2
+    )
+    row = judge(cell, KNOBS)
+    assert row.test == Gate1Test.POPULATION
+    assert row.gap_ok is False
+    assert row.pop_ok is True
+    assert row.verdict == Gate1Verdict.PASS
+
+
+def test_population_param_fails_below_min_pop_z() -> None:
+    cell = _cell(param="herding_weight", pop_z=2.5, rank_corr=0.2)
+    row = judge(cell, KNOBS)
+    assert row.pop_ok is False
+    assert row.verdict == Gate1Verdict.FAIL
+
+
+def test_population_param_fails_with_negative_rank_corr() -> None:
+    cell = _cell(param="herding_weight", pop_z=3.5, rank_corr=-0.1)
+    row = judge(cell, KNOBS)
+    assert row.pop_ok is False
+    assert row.verdict == Gate1Verdict.FAIL
+
+
+def test_per_pm_param_never_uses_the_population_rule() -> None:
+    cell = _cell(param="loss_aversion_lambda", pop_z=10.0, rank_corr=0.9, active_mean=0.14)
+    row = judge(cell, KNOBS)
+    assert row.test == Gate1Test.PER_PM
+    assert row.verdict == Gate1Verdict.FAIL  # gap_ok is False; pop_z is ignored
+
+
+# --- judge: report-only never blocks --------------------------------------------
+
+
+def test_report_only_param_pooled_all_row_never_blocks_whatever_its_verdict() -> None:
+    passing = judge(_cell(param="disposition_ratio", pop_z=5.0, rank_corr=0.9), KNOBS)
+    failing = judge(_cell(param="disposition_ratio", pop_z=1.0, rank_corr=0.9), KNOBS)
+    assert passing.verdict == Gate1Verdict.PASS
+    assert failing.verdict == Gate1Verdict.FAIL
+    assert passing.blocking is False
+    assert failing.blocking is False
+    assert blocking_failures([passing, failing]) == []
+
+
 # --- judge: blocking -----------------------------------------------------------
 
 
@@ -203,8 +254,8 @@ def test_every_other_field_copies_from_stats() -> None:
 
 def test_blocking_failures_lists_only_blocking_non_pass_rows_sorted() -> None:
     rows = [
-        judge(_cell(param="loss_aversion_lambda", rank_corr=0.3), KNOBS),  # blocking, fail
-        judge(_cell(param="disposition_ratio"), KNOBS),  # blocking, pass
+        judge(_cell(param="loss_aversion_lambda", rank_corr=0.3), KNOBS),  # per-PM, blocking, fail
+        judge(_cell(param="exit_deficiency"), KNOBS),  # per-PM, blocking, pass
         judge(
             _cell(
                 param="herding_weight",
@@ -213,13 +264,18 @@ def test_blocking_failures_lists_only_blocking_non_pass_rows_sorted() -> None:
                 rank_corr=0.3,
             ),
             KNOBS,
-        ),  # not blocking, fail
+        ),  # population, not blocking (single seed), fail
         judge(
-            _cell(param="anchoring_rho", asset_class=AssetClass.COMMODITIES, rank_corr=None), KNOBS
-        ),  # blocking, fail
+            _cell(
+                param="conviction_size_miscalibration",
+                asset_class=AssetClass.COMMODITIES,
+                rank_corr=None,
+            ),
+            KNOBS,
+        ),  # population, blocking, fail (no rank correlation)
     ]
     assert blocking_failures(rows) == [
-        "commodities/anchoring_rho",
+        "commodities/conviction_size_miscalibration",
         "equities/loss_aversion_lambda",
     ]
 

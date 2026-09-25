@@ -350,18 +350,35 @@ rows for that window with the neutral PMs' full-horizon (`all`-split) rows
 instead of a regime-style shared date set, since a drift window differs per
 PM. Every split beyond `all` is report-only, the same as the per-seed rows.
 
-A cell passes when the active mean sits on the stronger side of the neutral
-mean (per the parameter's own direction) with the neutral standard deviation
-no more than half the gap between them (`gap_fraction`, default 0.5), and
-the planted-versus-recovered rank correlation clears `min_rank_corr` (default
-0.5); a cell with fewer than `min_pms` (default 5) neutral or active PMs is
-`insufficient` rather than judged. `floor_se` (default 2.0, standard
-deviations above or below the neutral mean) and the `active_share_past_floor`
-it produces are reported for re-centring the marginals, not part of the pass
-rule. Only the pooled `synthetic`/`all` cell (seed group `synthetic`, kind
-`synthetic_pool`) blocks the pipeline: every per-seed cell, synthetic or
-real, is reported but never blocks, and every split beyond `all` is
-report-only for the same reason.
+A cell is judged by one of two pass rules, chosen by whether its parameter is
+in `population_params`. The default, per-PM rule passes when the active mean
+sits on the stronger side of the neutral mean (per the parameter's own
+direction) with the neutral standard deviation no more than half the gap
+between them (`gap_fraction`, default 0.5), and the planted-versus-recovered
+rank correlation clears `min_rank_corr` (default 0.5). The population rule
+passes when the active mean exceeds the neutral mean, in the parameter's own
+direction, by at least `min_pop_z` (default 3.0) standard errors of the
+difference (each side's own sample standard deviation), with a positive rank
+correlation; it suits a parameter whose per-PM opportunity count is limited
+by how many decisions one PM makes in a year, so a single PM's own estimate
+is too noisy to judge even though the pooled population carries a signal.
+`population_params` (default `herding_weight`, `conviction_size_miscalibration`,
+`disposition_ratio`, `anchoring_rho`) names the parameters judged this way;
+every other parameter keeps the per-PM rule. A cell with fewer than `min_pms`
+(default 5) neutral or active PMs is `insufficient` rather than judged,
+whichever rule applies. `floor_se` (default 2.0, standard deviations above or
+below the neutral mean) and the `active_share_past_floor` it produces are
+reported for re-centring the marginals, not part of either pass rule.
+
+Only the pooled `synthetic`/`all` cell (seed group `synthetic`, kind
+`synthetic_pool`) of a parameter not in `report_only_params` blocks the
+pipeline: every per-seed cell, synthetic or real, is reported but never
+blocks, every split beyond `all` is report-only for the same reason, and a
+report-only parameter's pooled `all` cell is reported but never blocks
+either, whatever its verdict. `report_only_params` defaults to
+`disposition_ratio` and `anchoring_rho`: population-tested parameters the
+default population has too few PMs per asset class to trust the population
+test for.
 
 Four parameters also carry an opportunity-count minimum (`n_min`): exit
 deficiency 7, loss aversion 16, herding 14, anchoring 29 - each the
@@ -378,11 +395,18 @@ and herding on rates and credit for R1 only.
 
 Gate 1 writes two tables: `gate1_pm`, one row per PM/parameter/split keyed on
 `(pm_id, param, split)`, and `gate1_cells`, one row per seed group/asset
-class/parameter/split keyed on `(seed_group, asset_class, param, split)`.
+class/parameter/split keyed on `(seed_group, asset_class, param, split)`. Each
+`gate1_cells` row records which rule judged it (`test`), the per-PM gap and
+rank checks (`gap_ok`, `rank_ok`), and, for a population-tested parameter,
+the standard-error z (`pop_z`) and whether it and the rank correlation passed
+(`pop_ok`).
 
 On the default root, exit deficiency and overconfidence pass on all three
-asset classes, herding passes on rates/credit and commodities but fails on
-equities, and the other five parameters fail on all three:
+asset classes; loss aversion, disposition, anchoring and extrapolation fail
+on all three. Herding and conviction-size miscalibration are omitted below:
+their old explanation relied on the gap-fraction threshold that the
+population rule now replaces for those two parameters, and the numbers have
+not been rerun since.
 
 - `exit_deficiency` passes: its miss probability acts directly on the
   fired-rule response the estimator reads, with no rule precedence or
@@ -390,8 +414,6 @@ equities, and the other five parameters fail on all three:
 - `overconfidence_coverage` passes: overconfidence rescales the stated
   interval by the same z-score ratio the inside-share estimator reads, again
   a direct readout of the trait.
-- `herding_weight` on equities: the neutral spread is about half the gap,
-  just past the 0.5 limit - a marginal fail, with no mechanism claimed.
 - `loss_aversion_lambda` fails: a higher lambda makes cutting worse but also
   penalises adding against holding, so the two effects offset, the add rate
   stays flat, and cut is rarely chosen at softmax temperature 1.
@@ -403,16 +425,13 @@ equities, and the other five parameters fail on all three:
 - `extrapolation_theta` fails: the forecast never reaches entry direction or
   target (the side follows the own signal, and the target follows the stop
   and the reward-to-risk draw), so theta leaves no public trace.
-- `conviction_size_miscalibration` fails the gap test: the neutral spread
-  across PMs is wider than half the active-neutral gap, although its rank
-  correlation clears 0.5.
 
 This pattern holds beyond the default root: sweeping the default config over
 99 root seeds (`seed.root`, every other knob fixed), exit deficiency and
-overconfidence pass on 93-99% of roots per asset class; herding sits at the
-threshold, its median neutral sd running 0.48-0.51 of the gap, and passes on
-about half the roots; the other five parameters fail on nearly every root,
-with conviction-size miscalibration passing on at most 5%.
+overconfidence pass on 93-99% of roots per asset class; loss aversion,
+disposition, anchoring and extrapolation fail on nearly every root. That
+sweep predates the population rule, so herding and conviction-size
+miscalibration are omitted here too.
 
 Limitations from the model:
 
@@ -435,9 +454,12 @@ Limitations from the model:
   verdict.
 - Every split beyond `all` (by regime, and before/after a drift event) is
   report-only and never gates a verdict.
-- Gate 1 blocks the pipeline at the default configuration: five of the
-  eight parameters fail on every asset class, as the verdict pattern above
-  shows.
+- Gate 1 blocks the pipeline at the default configuration: several
+  blocking parameters fail on every asset class, per the verdict pattern
+  above.
+- A report-only parameter's pooled cell can fail or stay insufficient without
+  blocking the pipeline, so a planted bias in `disposition_ratio` or
+  `anchoring_rho` can ship unverified at the default population.
 
 ## Development
 

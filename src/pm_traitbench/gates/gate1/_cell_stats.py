@@ -1,4 +1,4 @@
-"""Cell-level statistics: neutral/active baselines, floor, rank correlation and calibration.
+"""Cell-level statistics: neutral/active baselines, floor, rank correlation, pop_z and calibration.
 
 Holds `PmEstimate`, `CellStats` and the per-cell helpers `aggregate.py` calls
 once per group with that group's member rows; `verdict.py` also imports
@@ -69,6 +69,7 @@ class CellStats:
     floor: float | None
     active_share_past_floor: float | None
     rank_corr: float | None
+    pop_z: float | None
     count_p10: float | None
     count_ok: bool | None
     count_shortfall: bool
@@ -100,6 +101,31 @@ def _active_share_past_floor(
         return None
     past = sum(1 for v in active_values if (v > floor if higher_is_stronger else v < floor))
     return past / len(active_values)
+
+
+def _pop_z(
+    neutral_mean: float | None,
+    neutral_sd: float | None,
+    n_neutral: int,
+    active_mean: float | None,
+    active_sd: float | None,
+    n_active: int,
+    higher_is_stronger: bool,
+) -> float | None:
+    """Standard-error-of-the-difference z between the active and neutral means.
+
+    None when either set has fewer than 2 values (no sample sd) or the
+    pooled standard error is 0.
+    """
+    if neutral_mean is None or neutral_sd is None or active_mean is None or active_sd is None:
+        return None
+    if n_neutral < 2 or n_active < 2:
+        return None
+    se = math.sqrt(neutral_sd**2 / n_neutral + active_sd**2 / n_active)
+    if se == 0:
+        return None
+    direction = 1 if higher_is_stronger else -1
+    return direction * (active_mean - neutral_mean) / se
 
 
 def _rank_corr(planted: Sequence[float], values: Sequence[float]) -> float | None:
@@ -141,9 +167,18 @@ def build_cell(
     active_values = [e.estimate.value for e in active]
 
     neutral_mean, neutral_sd = _mean_sd(neutral_values)
-    active_mean, _ = _mean_sd(active_values)
+    active_mean, active_sd = _mean_sd(active_values)
     floor = _floor(neutral_mean, neutral_sd, higher_is_stronger, knobs.floor_se)
     active_share_past_floor = _active_share_past_floor(active_values, floor, higher_is_stronger)
+    pop_z = _pop_z(
+        neutral_mean,
+        neutral_sd,
+        len(neutral_values),
+        active_mean,
+        active_sd,
+        len(active_values),
+        higher_is_stronger,
+    )
 
     combined = neutral + active
     rank_corr = _rank_corr([e.planted for e in combined], [e.estimate.value for e in combined])
@@ -166,6 +201,7 @@ def build_cell(
         floor=floor,
         active_share_past_floor=active_share_past_floor,
         rank_corr=rank_corr,
+        pop_z=pop_z,
         count_p10=count_p10,
         count_ok=count_ok,
         count_shortfall=count_shortfall,
