@@ -67,19 +67,23 @@ class SignalMode(StrEnum):
     REVEALED = "revealed"
     CONTRADICTION = "contradiction"
 
+
 class Valence(StrEnum):
     CONFIRM = "confirm"
     RETRACTED = "retracted"
+
 
 class Ownership(StrEnum):
     SELF = "self"
     COLLEAGUE = "colleague"
     CLIENT = "client"
 
+
 class SessionKind(StrEnum):
     DECISION = "decision"
     CHECK_IN = "check_in"
     SILENCE = "silence"
+
 
 class StanceEntry(StrEnum):
     REVEALED = "revealed"
@@ -93,6 +97,7 @@ class StanceEntry(StrEnum):
     REVEALED_REACTION = "revealed_reaction"
     VIOLATION = "violation"
 
+
 class CarrierSource(StrEnum):
     LEDGER = "ledger"
     POSITION_DAY = "position_day"
@@ -105,32 +110,35 @@ class CarrierSource(StrEnum):
 _SIGNAL_ID_PATTERN = r"^sg_\d{3,}$"
 _SESSION_ID_PATTERN = r"^s_pm\d{3,}_\d{4}-\d{2}-\d{2}_[a-z]$"
 
-class Signal(BaseModel):          # frozen, extra="forbid", every field with a description
-    signal_id: str                # _SIGNAL_ID_PATTERN
-    pm_id: str                    # _PM_ID_PATTERN
-    session_id: str               # _SESSION_ID_PATTERN
+
+class Signal(BaseModel):  # frozen, extra="forbid", every field with a description
+    signal_id: str  # _SIGNAL_ID_PATTERN
+    pm_id: str  # _PM_ID_PATTERN
+    session_id: str  # _SESSION_ID_PATTERN
     date: datetime.date
-    trait_id: str                 # _TRAIT_ID_PATTERN
+    trait_id: str  # _TRAIT_ID_PATTERN
     mode: SignalMode
-    trade_idea_id: str | None     # _IDEA_ID_PATTERN when set
+    trade_idea_id: str | None  # _IDEA_ID_PATTERN when set
     valence: Valence
     ownership: Ownership
     third_party_value: str | None
     claim_session_id: str | None  # _SESSION_ID_PATTERN when set
 
-class Stance(BaseModel):          # frozen, extra="forbid"
-    signal_id: str                # _SIGNAL_ID_PATTERN
-    trait_id: str                 # _TRAIT_ID_PATTERN
+
+class Stance(BaseModel):  # frozen, extra="forbid"
+    signal_id: str  # _SIGNAL_ID_PATTERN
+    trait_id: str  # _TRAIT_ID_PATTERN
     mode: SignalMode
     entry: StanceEntry
-    stance: str                   # min_length=1
+    stance: str  # min_length=1
 
-class Skeleton(BaseModel):        # frozen, extra="forbid"
-    session_id: str               # _SESSION_ID_PATTERN
+
+class Skeleton(BaseModel):  # frozen, extra="forbid"
+    session_id: str  # _SESSION_ID_PATTERN
     pm_id: str
     date: datetime.date
     kind: SessionKind
-    trade_idea_ids: tuple[str, ...]   # each _IDEA_ID_PATTERN, sorted, unique
+    trade_idea_ids: tuple[str, ...]  # each _IDEA_ID_PATTERN, sorted, unique
     stances: tuple[Stance, ...]
     advisor_violation: str | None
     forbidden_trait_ids: tuple[str, ...]
@@ -223,9 +231,10 @@ Validators: `bias_signals_min <= bias_signals_max`; `claim_lead_days[0] <= claim
 
 ```python
 # models.py
-StanceLines = dict[str, tuple[str, ...]]   # key: "all" or an AssetClass value
+StanceLines = dict[str, tuple[str, ...]]  # key: "all" or an AssetClass value
 
-class BiasStances(BaseModel):              # frozen, extra="forbid"
+
+class BiasStances(BaseModel):  # frozen, extra="forbid"
     revealed: StanceLines
     stated: StanceLines
     claim: StanceLines
@@ -235,16 +244,18 @@ class BiasStances(BaseModel):              # frozen, extra="forbid"
     drift_dormant: StanceLines
     drift_revive: StanceLines
 
-class PreferenceStances(BaseModel):        # frozen, extra="forbid"
+
+class PreferenceStances(BaseModel):  # frozen, extra="forbid"
     stated: StanceLines
     revealed_reaction: StanceLines
     violation: StanceLines
     retract: StanceLines
     third_party: StanceLines
     drift_update: StanceLines
-    revealed: StanceLines = {}             # required (non-empty) for the expression group only
+    revealed: StanceLines = {}  # required (non-empty) for the expression group only
 
-class Stances(BaseModel):                  # frozen, extra="forbid"
+
+class Stances(BaseModel):  # frozen, extra="forbid"
     biases: dict[str, BiasStances]
     preferences: dict[PreferenceGroup, PreferenceStances]
 
@@ -254,6 +265,7 @@ class Stances(BaseModel):                  # frozen, extra="forbid"
         `key` is a bias param name or a PreferenceGroup value. Raises PlanError
         naming key and entry when the bank has no such entry.
         """
+
 
 # Catalogue gains: stances: Stances
 ```
@@ -278,12 +290,23 @@ STANCE_SLOTS: dict[tuple[Kind, StanceEntry], frozenset[str]] = {
     (Kind.PREFERENCE, StanceEntry.DRIFT_UPDATE): frozenset({"value", "old_value"}),
 }
 BANNED_STANCE_WORDS: tuple[str, ...] = (
-    "loss aversion", "loss averse", "disposition", "anchor", "extrapolat",
-    "herd", "overconfiden", "miscalibrat", "exit deficiency", "bias",
+    "loss aversion",
+    "loss averse",
+    "disposition",
+    "anchor",
+    "extrapolat",
+    "herd",
+    "overconfiden",
+    "miscalibrat",
+    "exit deficiency",
+    "bias",
 )
 
+
 def check_stances(catalogue: Catalogue) -> None: ...
-def render_stance(line: str, slots: Mapping[str, str]) -> str: ...   # str.format; CatalogueError on a missing slot
+def render_stance(
+    line: str, slots: Mapping[str, str]
+) -> str: ...  # str.format; CatalogueError on a missing slot
 ```
 
 `check_stances` raises `CatalogueError` with the offending key, entry and line when:
@@ -320,22 +343,32 @@ def render_stance(line: str, slots: Mapping[str, str]) -> str: ...   # str.forma
 @dataclass(frozen=True)
 class PlanInputs:
     persona: Persona
-    traits: tuple[Trait, ...]              # this PM's, sorted by trait_id
-    drift_events: tuple[DriftEvent, ...]   # this PM's, sorted by (date, trait_id, event)
-    ideas: Mapping[str, Idea]              # by trade_idea_id
-    ledger: tuple[LedgerRow, ...]          # sorted by (date, trade_idea_id)
+    traits: tuple[Trait, ...]  # this PM's, sorted by trait_id
+    drift_events: tuple[DriftEvent, ...]  # this PM's, sorted by (date, trait_id, event)
+    ideas: Mapping[str, Idea]  # by trade_idea_id
+    ledger: tuple[LedgerRow, ...]  # sorted by (date, trade_idea_id)
     rule_events: tuple[RuleEvent, ...]
-    position_days: tuple[PositionDay, ...] # sorted by (date, trade_idea_id)
-    trading_days: tuple[date, ...]         # ascending
+    position_days: tuple[PositionDay, ...]  # sorted by (date, trade_idea_id)
+    trading_days: tuple[date, ...]  # ascending
 
-    def trait(self, trait_id: str) -> Trait: ...                 # PlanError if unknown
+    def trait(self, trait_id: str) -> Trait: ...  # PlanError if unknown
     def dormant_windows(self, trait_id: str) -> tuple[tuple[date, date], ...]: ...
     def is_dormant(self, trait_id: str, day: date) -> bool: ...
     def value_at(self, trait_id: str, day: date) -> float | str: ...
 
+
 def trading_days(config: Config) -> tuple[date, ...]: ...
-def build_inputs(personas, traits, drift_events, ideas, ledger, rule_events, position_days,
-                 days: tuple[date, ...], skipped: Collection[str]) -> list[PlanInputs]: ...
+def build_inputs(
+    personas,
+    traits,
+    drift_events,
+    ideas,
+    ledger,
+    rule_events,
+    position_days,
+    days: tuple[date, ...],
+    skipped: Collection[str],
+) -> list[PlanInputs]: ...
 ```
 
 - `trading_days(config)`: `axis = build_axis(config.timeline(), config.market.burn_in_days)`; return `tuple(axis.dates[axis.horizon])` (the engine's published horizon, so every engine date is a trading day).
@@ -351,10 +384,11 @@ class Carrier:
     trade_idea_id: str
     date: date
     source: CarrierSource
-    pattern: str | None   # the engine action behind a bias carrier (flag suffix, "acked_no_action"
-                          # for a rule event, "chased_trend" for an extrapolation idea); None for an
-                          # expression-preference carrier. Must be in the stance bank's
-                          # REVEALED_PATTERNS[param] for that bias.
+    pattern: str | None  # the engine action behind a bias carrier (flag suffix, "acked_no_action"
+    # for a rule event, "chased_trend" for an extrapolation idea); None for an
+    # expression-preference carrier. Must be in the stance bank's
+    # REVEALED_PATTERNS[param] for that bias.
+
 
 FLAG_PREFIX_PARAM: dict[str, str] = {
     "disposition": "disposition_ratio",
@@ -369,6 +403,7 @@ HOLD_FLAGS: frozenset[str] = frozenset({"loss_aversion:hold", "disposition:hold_
 BREACH_RESPONSES: frozenset[RuleResponse] = frozenset(
     {RuleResponse.ACKED_NO_ACTION, RuleResponse.ADDED}
 )
+
 
 def carrier_pools(inputs: PlanInputs) -> dict[str, tuple[Carrier, ...]]: ...
 ```
@@ -405,8 +440,9 @@ def carrier_pools(inputs: PlanInputs) -> dict[str, tuple[Carrier, ...]]: ...
 ```python
 @dataclass(frozen=True)
 class DateWindow:
-    first: date   # inclusive
-    last: date    # inclusive
+    first: date  # inclusive
+    last: date  # inclusive
+
 
 @dataclass(frozen=True)
 class PlannedSignal:
@@ -418,13 +454,18 @@ class PlannedSignal:
     window: DateWindow
     needs_carrier: bool
     third_party_value: str | None = None
-    drift_date: date | None = None     # set only on drift notes
+    drift_date: date | None = None  # set only on drift notes
+
 
 def largest_remainder(total: int, weights: Sequence[tuple[K, float]]) -> dict[K, int]: ...
-def round_half_up(x: float) -> int: ...          # math.floor(x + 0.5); Python's round() is banker's
-def plan_quotas(inputs: PlanInputs, pools: Mapping[str, Sequence[Carrier]],
-                catalogue: Catalogue, knobs: PlanConfig,
-                rng: np.random.Generator) -> list[PlannedSignal]: ...
+def round_half_up(x: float) -> int: ...  # math.floor(x + 0.5); Python's round() is banker's
+def plan_quotas(
+    inputs: PlanInputs,
+    pools: Mapping[str, Sequence[Carrier]],
+    catalogue: Catalogue,
+    knobs: PlanConfig,
+    rng: np.random.Generator,
+) -> list[PlannedSignal]: ...
 ```
 
 `largest_remainder` (binding): floors of `total * w / sum(w)`, then the leftover units go one each to the largest fractional parts; ties go to the earlier item in `weights` order. Result sums to `total`; zero-weight items get 0.
@@ -472,29 +513,36 @@ class PlacedSignal:
     planned: PlannedSignal
     date: date
     trade_idea_id: str | None
-    claim_date: date | None            # set only for contradiction
-    carrier: Carrier | None            # the drawn carrier, for carrier signals
+    claim_date: date | None  # set only for contradiction
+    carrier: Carrier | None  # the drawn carrier, for carrier signals
+
 
 @dataclass(frozen=True)
 class PlannedSession:
     session_id: str
     date: date
     kind: SessionKind
-    trade_idea_ids: tuple[str, ...]    # sorted, unique
+    trade_idea_ids: tuple[str, ...]  # sorted, unique
     signals: tuple[PlacedSignal, ...]  # signals whose row sits on this session
-    claims: tuple[PlacedSignal, ...]   # contradiction signals whose claim stance sits here
+    claims: tuple[PlacedSignal, ...]  # contradiction signals whose claim stance sits here
+
 
 @dataclass(frozen=True)
 class Assembly:
-    sessions: tuple[PlannedSession, ...]   # sorted by session_id
-    signals: tuple[Signal, ...]            # table rows, sorted by signal_id
+    sessions: tuple[PlannedSession, ...]  # sorted by session_id
+    signals: tuple[Signal, ...]  # table rows, sorted by signal_id
     warnings: tuple[str, ...]
     counts: dict[str, Any]
 
-def session_id(pm_id: str, day: date, index: int) -> str: ...   # index 0 -> "a"; PlanError past "z"
-def assemble(inputs: PlanInputs, planned: Sequence[PlannedSignal],
-             pools: Mapping[str, Sequence[Carrier]], knobs: PlanConfig,
-             rng: np.random.Generator) -> Assembly: ...
+
+def session_id(pm_id: str, day: date, index: int) -> str: ...  # index 0 -> "a"; PlanError past "z"
+def assemble(
+    inputs: PlanInputs,
+    planned: Sequence[PlannedSignal],
+    pools: Mapping[str, Sequence[Carrier]],
+    knobs: PlanConfig,
+    rng: np.random.Generator,
+) -> Assembly: ...
 ```
 
 `session_id(pm_id, day, index)` = `f"s_{pm_id.replace('_', '')}_{day.isoformat()}_{letter}"`, letter `chr(ord("a") + index)`.
@@ -540,14 +588,19 @@ Session capacity (binding, every step): a draft session "has room for trait t" w
 **Interfaces (binding):**
 
 ```python
-def forbidden_sets(inputs: PlanInputs, catalogue: Catalogue) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def forbidden_sets(
+    inputs: PlanInputs, catalogue: Catalogue
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """(inactive bias trait_ids sorted, catalogue preference params for the PM's
     asset class that the PM does not hold, sorted)."""
 
-def format_level(x: float) -> str: ...       # f"{x:.4g}"
 
-def render_skeletons(inputs: PlanInputs, assembly: Assembly, catalogue: Catalogue,
-                     rng: np.random.Generator) -> list[Skeleton]: ...
+def format_level(x: float) -> str: ...  # f"{x:.4g}"
+
+
+def render_skeletons(
+    inputs: PlanInputs, assembly: Assembly, catalogue: Catalogue, rng: np.random.Generator
+) -> list[Skeleton]: ...
 ```
 
 Rules:
@@ -585,6 +638,7 @@ Rules:
 
 ```python
 def run(config: Config, store: DataStore) -> dict[str, Any]: ...
+
 
 PLAN_STAGE = Stage(
     number=5,
