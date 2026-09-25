@@ -1023,7 +1023,7 @@ def test_anchors_fall_back_to_target_when_none_qualify_mid_roll(cm_parts) -> Non
     ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
     params = ctx.schedule.for_day(view.dates[t], view.regime(t))
 
-    result = handle_discretionary(pos, view, t, ctx, params, 100.0, -10.0, PnlState.LOSS, -1.0)
+    result = handle_discretionary(pos, view, t, ctx, params, 100.0, PnlState.LOSS, -1.0)
 
     assert result.position is not None
     assert result.anchor_level == pytest.approx(200.0)
@@ -1053,7 +1053,7 @@ def test_anchor_uses_the_shifted_trailing_high_mid_roll(cm_parts) -> None:
     ctx = _ctx(persona, traits, pm_rules, adapter, ["CM-CRD"], catalogue, config)
     params = ctx.schedule.for_day(view.dates[t], view.regime(t))
 
-    result = handle_discretionary(pos, view, t, ctx, params, 100.0, 2.0, PnlState.GAIN, 10.0 / 15.0)
+    result = handle_discretionary(pos, view, t, ctx, params, 100.0, PnlState.GAIN, 10.0 / 15.0)
 
     assert result.position is not None
     assert result.anchor_level == pytest.approx(100.0)

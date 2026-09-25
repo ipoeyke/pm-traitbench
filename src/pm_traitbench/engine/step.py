@@ -192,7 +192,6 @@ def step(
                 ctx,
                 params,
                 cur_level_now,
-                cur_pnl_z,
                 cur_pnl_state,
                 cur_progress,
             )

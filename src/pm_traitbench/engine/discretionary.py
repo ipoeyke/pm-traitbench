@@ -47,7 +47,6 @@ def handle_discretionary(
     ctx: "PmContext",
     params: EffectiveParams,
     level_now: float,
-    pnl_z: float,
     pnl_state: PnlState,
     progress: float,
 ) -> DiscretionaryOutcome:

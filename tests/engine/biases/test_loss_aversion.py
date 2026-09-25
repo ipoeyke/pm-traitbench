@@ -5,7 +5,7 @@ import math
 import pytest
 
 from pm_traitbench.config import BIAS_PARAMS
-from pm_traitbench.engine.biases.loss_aversion import choose
+from pm_traitbench.engine.biases.loss_aversion import LossSideChoice, choose
 from pm_traitbench.engine.params import EffectiveParams
 from pm_traitbench.enums import PositionAction
 from pm_traitbench.rng import stream
@@ -21,7 +21,7 @@ def _params(lam: float, *, active: bool = True) -> EffectiveParams:
     )
 
 
-def _share(action: PositionAction, choices: list) -> float:
+def _share(action: PositionAction, choices: list[LossSideChoice]) -> float:
     return sum(1 for c in choices if c.action == action) / len(choices)
 
 
@@ -66,6 +66,7 @@ def test_lambda_twenty_caps_the_add_share_at_one_half() -> None:
 def test_flags_match_action_when_lambda_active() -> None:
     params = _params(4.0, active=True)
     rng = stream(1, "loss-aversion-flags")
+    seen_flags = set()
     for _ in range(500):
         choice = choose(params, rng, add_allowed=True)
         if choice.action == PositionAction.ADD:
@@ -74,6 +75,9 @@ def test_flags_match_action_when_lambda_active() -> None:
             assert choice.flag == "loss_aversion:hold"
         else:
             assert choice.flag is None
+        seen_flags.add(choice.flag)
+    assert "loss_aversion:add" in seen_flags
+    assert "loss_aversion:hold" in seen_flags
 
 
 def test_no_flag_when_lambda_inactive() -> None:
