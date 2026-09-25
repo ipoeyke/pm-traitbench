@@ -324,8 +324,9 @@ horizon fails or has too few PMs to judge. One estimator per parameter:
 | `exit_deficiency` | share of non-overridden fired rules left unacted on or added to | non-overridden rule firings | higher recovers more strongly |
 
 Each parameter is estimated over the full horizon (split `all`) for every
-direct-asset PM and, when its trait is boosted in a regime or drifts mid-run,
-over that regime and its before/after windows too. The `all`-split estimates
+direct-asset PM, and over further splits: a neutral trait over all three
+regimes, an active trait over each regime that boosts it, and a drifted trait
+over its before and after windows only. The `all`-split estimates
 are then pooled into a neutral baseline and an active mean per asset class,
 over every synthetic seed together (seed group `synthetic`, seed group kind
 `synthetic_pool` - the one that blocks the pipeline) and again per seed on
@@ -365,7 +366,10 @@ derived for the conflict-follow rate, not the agreement statistic gate 1
 estimates, and its minimum is applied to the latter as an approximation). The
 `count_shortfall` warning compares each seed's 10th-percentile PM on the
 estimator's own opportunity count (`Estimate.n`) against `n_min`, rather than
-an engine counter.
+an engine counter. On the default run anchoring falls short on every seed and
+asset class (the 10th-percentile PM has 2-9 discretionary exits away from the
+target against 29), exit deficiency on rates and credit for seeds A and R1,
+and herding on rates and credit for R1 only.
 
 Gate 1 writes two tables: `gate1_pm`, one row per PM/parameter/split keyed on
 `(pm_id, param, split)`, and `gate1_cells`, one row per seed group/asset
