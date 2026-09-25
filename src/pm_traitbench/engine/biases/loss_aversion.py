@@ -1,16 +1,18 @@
-"""Loss aversion: on a losing position, weighs cutting, holding and adding."""
+"""Loss aversion: hazards for cutting, holding and adding on a losing position.
+
+Lambda raises the add hazard above 1 and lowers the cut hazard below its
+neutral level, a calibrated construction: a linear prospect value over the
+PM's own forecast leaves lambda no measurable effect at typical loss sizes.
+"""
 
 from dataclasses import dataclass
 
 import numpy as np
 
-from pm_traitbench.config import Config
-from pm_traitbench.engine.constants import ADD_FRACTION
+from pm_traitbench.engine.constants import LOSS_ADD_CAP, LOSS_ADD_SLOPE, LOSS_CUT_HAZARD
 from pm_traitbench.engine.params import EffectiveParams
 from pm_traitbench.enums import PositionAction
 
-# Fixed evaluation order for the softmax draw's cumulative selection.
-_ACTION_ORDER = (PositionAction.CUT, PositionAction.HOLD, PositionAction.ADD)
 _FLAG_BY_ACTION: dict[PositionAction, str | None] = {
     PositionAction.CUT: None,
     PositionAction.HOLD: "loss_aversion:hold",
@@ -26,38 +28,31 @@ class LossSideChoice:
     flag: str | None
 
 
-def choose(
-    pnl_z: float,
-    forecast_remaining_z: float,
-    params: EffectiveParams,
-    config: Config,
-    rng: np.random.Generator,
-    add_allowed: bool,
-) -> LossSideChoice:
-    """Softmax-select cut, hold or add on a losing position at temperature `softmax_tau`."""
+def choose(params: EffectiveParams, rng: np.random.Generator, add_allowed: bool) -> LossSideChoice:
+    """Draw cut, add or hold on a losing position from lambda-scaled hazards."""
     lam = params.value("loss_aversion_lambda")
-    loss = abs(pnl_z)
-    value_by_action = {
-        PositionAction.CUT: -lam * loss,
-        PositionAction.HOLD: forecast_remaining_z,
-        PositionAction.ADD: forecast_remaining_z * (1 + ADD_FRACTION) - lam * loss * ADD_FRACTION,
-    }
-    actions = tuple(a for a in _ACTION_ORDER if add_allowed or a != PositionAction.ADD)
-
-    tau = config.engine.softmax_tau
-    scores = np.array([value_by_action[a] for a in actions])
-    weights = np.exp((scores - scores.max()) / tau)
-    probs = weights / weights.sum()
+    p_cut = LOSS_CUT_HAZARD / lam
+    p_add = min(LOSS_ADD_CAP, LOSS_ADD_SLOPE * max(lam - 1.0, 0.0)) if add_allowed else 0.0
 
     u = rng.uniform()
-    cumulative = 0.0
-    chosen = actions[-1]
-    for action, p in zip(actions, probs, strict=True):
-        cumulative += p
-        if u < cumulative:
-            chosen = action
-            break
+    if u < p_cut:
+        action = PositionAction.CUT
+    elif u < p_cut + p_add:
+        action = PositionAction.ADD
+    else:
+        action = PositionAction.HOLD
 
     active = params.is_active("loss_aversion_lambda")
-    flag = _FLAG_BY_ACTION[chosen] if active else None
-    return LossSideChoice(chosen, flag)
+    flag = _FLAG_BY_ACTION[action] if active else None
+    return LossSideChoice(action, flag)
+
+
+def hold_flag(params: EffectiveParams) -> str | None:
+    """The hold flag when active, else None.
+
+    Reused when a drawn add is blocked at the mandate cap, so that day still
+    carries the same flag a drawn hold would.
+    """
+    return (
+        _FLAG_BY_ACTION[PositionAction.HOLD] if params.is_active("loss_aversion_lambda") else None
+    )

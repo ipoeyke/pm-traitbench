@@ -5,7 +5,7 @@ import pytest
 
 from pm_traitbench.engine.adapters.base import leg_side, pnl_unit, relative_move
 from pm_traitbench.engine.adapters.rates_credit import RatesCreditAdapter
-from pm_traitbench.engine.constants import CURVE_PAIRS, DV01_PER_MILLION, TRAILING_HIGH_DAYS
+from pm_traitbench.engine.constants import CURVE_PAIRS, DV01_PER_MILLION
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import PmState, Position
 from pm_traitbench.enums import (
@@ -345,67 +345,6 @@ def test_round_step_curve_rounds_to_25bp(fixture_view) -> None:
     level = fixture_view.level(series, 0)
     rounded = adapter.round_step(series, level)
     assert rounded == pytest.approx(nearest_level(level, 25.0))
-
-
-def test_anchors_in_range_regime_include_rounded_slope_for_curve(fixture_view) -> None:
-    adapter = RatesCreditAdapter("sovereign_rates", _HORIZON)
-    legs_ref = (LegRef("RT-USD", Tenor.Y10, 1.0), LegRef("RT-USD", Tenor.Y2, -1.0))
-    series = adapter.series(Expression.CURVE, legs_ref)
-    legs = (
-        Leg(instrument_id="RT-USD", tenor=Tenor.Y10, side=Side.BUY, weight=1.0),
-        Leg(instrument_id="RT-USD", tenor=Tenor.Y2, side=Side.SELL, weight=1.0),
-    )
-    entry_level = fixture_view.level(series, 0)
-    t_range = 10
-    assert fixture_view.regime(t_range).value == "range"
-
-    pos = _make_position(series=series, legs=legs, side=Side.BUY, entry_level=entry_level)
-    anchors = adapter.anchors(pos, fixture_view, t_range)
-    assert len(anchors) == 3
-    level_now = fixture_view.level(series, t_range)
-    assert anchors[1] == pytest.approx(nearest_level(level_now, 25.0))
-    if pos.adverse_dir < 0:
-        assert anchors[2] == pytest.approx(
-            fixture_view.trailing_high(series, t_range, TRAILING_HIGH_DAYS)
-        )
-    else:
-        assert anchors[2] == pytest.approx(
-            fixture_view.trailing_low(series, t_range, TRAILING_HIGH_DAYS)
-        )
-
-
-def test_anchors_in_range_regime_include_rounded_spread_for_credit(fixture_view) -> None:
-    adapter = RatesCreditAdapter("long_short_credit", _HORIZON)
-    series = adapter.outright_series("CR-IG-001")
-    leg = Leg(instrument_id="CR-IG-001", tenor=None, side=Side.BUY, weight=1.0)
-    entry_level = fixture_view.level(series, 0)
-    t_range = 10
-    assert fixture_view.regime(t_range).value == "range"
-
-    pos = _make_position(
-        series=series,
-        legs=(leg,),
-        side=Side.BUY,
-        instrument_id="CR-IG-001",
-        entry_level=entry_level,
-    )
-    anchors = adapter.anchors(pos, fixture_view, t_range)
-    assert len(anchors) == 3
-    level_now = fixture_view.level(series, t_range)
-    assert anchors[1] == pytest.approx(nearest_level(level_now, SPREAD_STEP_BP))
-
-
-def test_anchors_outside_range_has_no_round_level(fixture_view) -> None:
-    adapter = RatesCreditAdapter("sovereign_rates", _HORIZON)
-    series = adapter.outright_series("RT-USD")
-    leg = Leg(instrument_id="RT-USD", tenor=Tenor.Y10, side=Side.BUY, weight=1.0)
-    entry_level = fixture_view.level(series, 0)
-    t_risk_off = 45
-    assert fixture_view.regime(t_risk_off).value == "risk_off"
-
-    pos = _make_position(series=series, legs=(leg,), side=Side.BUY, entry_level=entry_level)
-    anchors = adapter.anchors(pos, fixture_view, t_risk_off)
-    assert len(anchors) == 2
 
 
 def test_peer_ids_curve_is_itself(fixture_view) -> None:

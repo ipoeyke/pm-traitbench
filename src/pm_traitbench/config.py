@@ -484,14 +484,6 @@ class EngineConfig(BaseModel):
             "note": "share of ideas in the preferred expression when a mapped preference is held",
         },
     )
-    softmax_tau: float = Field(
-        1.0,
-        gt=0,
-        json_schema_extra={
-            "basis": "guess",
-            "note": "temperature of the loss-side action draw in vol units",
-        },
-    )
     base_hazard: float = Field(
         0.03,
         gt=0,
@@ -515,17 +507,6 @@ class EngineConfig(BaseModel):
 class Gate1Config(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    anchor_band_k: float = Field(
-        0.1,
-        gt=0,
-        json_schema_extra={
-            "basis": "design",
-            "note": (
-                "horizon-vols around the anchor counted as an exit at the anchor; puts "
-                "neutral PMs near a 0.2 share"
-            ),
-        },
-    )
     floor_se: float = Field(
         2.0,
         gt=0,
@@ -563,6 +544,49 @@ class Gate1Config(BaseModel):
             "note": "smallest neutral or active set with a usable standard deviation",
         },
     )
+    min_pop_z: float = Field(
+        3.0,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": "about a 0.1% one-sided false pass per test",
+        },
+    )
+    population_params: tuple[str, ...] = Field(
+        (
+            "herding_weight",
+            "conviction_size_miscalibration",
+            "disposition_ratio",
+            "anchoring_rho",
+        ),
+        json_schema_extra={
+            "basis": "design",
+            "note": "parameters limited by how many decisions one PM makes a year",
+        },
+    )
+    report_only_params: tuple[str, ...] = Field(
+        ("herding_weight", "disposition_ratio", "anchoring_rho"),
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "disposition_ratio's pooled population z is about 1 (median 1.0 over 12 "
+                "roots) at the sourced 1.2 centre, and anchoring_rho's pooled z has median "
+                "3.9 but falls below 3 on 2 of 12 roots. herding_weight passes pooled on "
+                "all 12 roots but stays report-only because the trend-built street view "
+                "couples it to extrapolation, so a pass does not isolate it"
+            ),
+        },
+    )
+
+    @field_validator("population_params", "report_only_params")
+    @classmethod
+    def _check_param_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        unknown = set(value) - set(BIAS_PARAMS)
+        if unknown:
+            raise ValueError(f"unknown bias parameter(s): {sorted(unknown)}")
+        if len(set(value)) != len(value):
+            raise ValueError(f"must not repeat an entry: {list(value)}")
+        return value
 
 
 class OutputConfig(BaseModel):

@@ -318,16 +318,6 @@ class MarketView:
         """Sessions available between `t` and `t + h`, clamped at the horizon end."""
         return min(t + h, self.n_days - 1) - t
 
-    def trailing_high(self, series: Series, t: int, days: int) -> float:
-        """Highest level over the trailing `days` sessions up to and including `t`."""
-        lo = max(0, t - days)
-        return float(np.max(self._level_series(series)[lo : t + 1]))
-
-    def trailing_low(self, series: Series, t: int, days: int) -> float:
-        """Lowest level over the trailing `days` sessions up to and including `t`."""
-        lo = max(0, t - days)
-        return float(np.min(self._level_series(series)[lo : t + 1]))
-
     def street_view(self, instrument_id: str, t: int) -> StreetView | None:
         """The street's categorical view on day `t`, or None if the instrument has no consensus."""
         row = self._consensus_row(instrument_id, t)

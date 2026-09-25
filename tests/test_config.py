@@ -12,6 +12,7 @@ from pm_traitbench.config import (
     CalendarConfig,
     Config,
     DriftConfig,
+    EngineConfig,
     EventSpec,
     MarketConfig,
     RealSeedSpec,
@@ -122,6 +123,16 @@ def test_unknown_top_level_key_raises_config_error_naming_key(tmp_path: Path) ->
 def test_unknown_nested_key_raises_config_error_naming_key(tmp_path: Path) -> None:
     path = _write_yaml(tmp_path, {"biases": {"bogus_nested": 1}})
     with pytest.raises(ConfigError, match="bogus_nested"):
+        load_config(path)
+
+
+def test_engine_config_has_no_softmax_tau() -> None:
+    assert "softmax_tau" not in EngineConfig.model_fields
+
+
+def test_softmax_tau_in_yaml_raises_config_error(tmp_path: Path) -> None:
+    path = _write_yaml(tmp_path, {"engine": {"softmax_tau": 1}})
+    with pytest.raises(ConfigError, match="softmax_tau"):
         load_config(path)
 
 
@@ -838,11 +849,22 @@ def test_dump_with_basis_covers_every_engine_leaf() -> None:
 
 def test_gate1_config_defaults() -> None:
     config = Config().gate1
-    assert config.anchor_band_k == 0.1
     assert config.floor_se == 2.0
     assert config.gap_fraction == 0.5
     assert config.min_rank_corr == 0.5
     assert config.min_pms == 5
+    assert config.min_pop_z == 3.0
+    assert config.population_params == (
+        "herding_weight",
+        "conviction_size_miscalibration",
+        "disposition_ratio",
+        "anchoring_rho",
+    )
+    assert config.report_only_params == ("herding_weight", "disposition_ratio", "anchoring_rho")
+
+
+def test_gate1_config_has_no_anchor_band_k() -> None:
+    assert "anchor_band_k" not in type(Config().gate1).model_fields
 
 
 def test_gate1_min_rank_corr_at_one_raises() -> None:
@@ -860,11 +882,6 @@ def test_gate1_min_pms_below_three_raises() -> None:
         Config.model_validate({"gate1": {"min_pms": 2}})
 
 
-def test_gate1_anchor_band_k_at_zero_raises() -> None:
-    with pytest.raises(ValidationError, match="anchor_band_k"):
-        Config.model_validate({"gate1": {"anchor_band_k": 0}})
-
-
 def test_gate1_gap_fraction_at_one_is_accepted() -> None:
     config = Config.model_validate({"gate1": {"gap_fraction": 1}})
     assert config.gate1.gap_fraction == 1
@@ -878,6 +895,33 @@ def test_gate1_min_rank_corr_at_zero_is_accepted() -> None:
 def test_gate1_min_pms_at_three_is_accepted() -> None:
     config = Config.model_validate({"gate1": {"min_pms": 3}})
     assert config.gate1.min_pms == 3
+
+
+def test_gate1_min_pop_z_at_zero_raises() -> None:
+    with pytest.raises(ValidationError, match="min_pop_z"):
+        Config.model_validate({"gate1": {"min_pop_z": 0}})
+
+
+def test_gate1_population_params_unknown_name_raises() -> None:
+    with pytest.raises(ValidationError, match="unknown bias parameter"):
+        Config.model_validate({"gate1": {"population_params": ["not_a_param"]}})
+
+
+def test_gate1_population_params_repeat_raises() -> None:
+    with pytest.raises(ValidationError, match="repeat"):
+        Config.model_validate(
+            {"gate1": {"population_params": ["herding_weight", "herding_weight"]}}
+        )
+
+
+def test_gate1_report_only_params_unknown_name_raises() -> None:
+    with pytest.raises(ValidationError, match="unknown bias parameter"):
+        Config.model_validate({"gate1": {"report_only_params": ["nope"]}})
+
+
+def test_gate1_report_only_params_may_include_a_per_pm_parameter() -> None:
+    config = Config.model_validate({"gate1": {"report_only_params": ["loss_aversion_lambda"]}})
+    assert config.gate1.report_only_params == ("loss_aversion_lambda",)
 
 
 def test_dump_with_basis_covers_every_gate1_leaf() -> None:

@@ -9,15 +9,12 @@ import pytest
 from pm_traitbench.config import Config, EngineConfig
 from pm_traitbench.engine.biases.overconfidence import Z_80
 from pm_traitbench.engine.own_signal import (
-    SignalDraw,
     conviction_bucket,
     draw_signal,
-    signal_sign,
     z_for_coverage,
 )
 from pm_traitbench.engine.params import EffectiveParams
 from pm_traitbench.engine.series import LegRef, Series
-from pm_traitbench.enums import Side
 from pm_traitbench.rng import stream
 
 _INSTRUMENT_ID = "EQ-0001"
@@ -200,39 +197,3 @@ def test_conviction_buckets(own_signal_value: float, expected: int) -> None:
 def test_z_for_coverage_matches_expected_quantile() -> None:
     assert z_for_coverage(0.8) == pytest.approx(1.2816, abs=1e-3)
     assert Z_80 == pytest.approx(z_for_coverage(0.8))
-
-
-def test_signal_sign_buy_when_positive() -> None:
-    draw = SignalDraw(
-        own_signal=0.5,
-        sd_h=1.0,
-        thesis_move=0.5,
-        forecast=0.5,
-        interval_lo=0.0,
-        interval_hi=1.0,
-        conviction=1,
-    )
-    assert signal_sign(draw) == Side.BUY
-
-
-def test_signal_sign_sell_when_not_positive() -> None:
-    negative = SignalDraw(
-        own_signal=-0.5,
-        sd_h=1.0,
-        thesis_move=-0.5,
-        forecast=-0.5,
-        interval_lo=-1.0,
-        interval_hi=0.0,
-        conviction=1,
-    )
-    zero = SignalDraw(
-        own_signal=0.0,
-        sd_h=1.0,
-        thesis_move=0.0,
-        forecast=0.0,
-        interval_lo=-1.0,
-        interval_hi=1.0,
-        conviction=1,
-    )
-    assert signal_sign(negative) == Side.SELL
-    assert signal_sign(zero) == Side.SELL

@@ -192,6 +192,13 @@ class Gate1Verdict(StrEnum):
     INSUFFICIENT = "insufficient"
 
 
+class Gate1Test(StrEnum):
+    """Which rule judged a gate 1 cell: one PM's own statistic, or the pooled population."""
+
+    PER_PM = "per_pm"
+    POPULATION = "population"
+
+
 class Gate1Split(StrEnum):
     ALL = "all"
     REGIME_RANGE = "regime_range"

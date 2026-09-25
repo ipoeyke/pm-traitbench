@@ -53,6 +53,10 @@ class Position:
     rolled_offset: float = 0.0
     roll_breached: bool = False
     rolled_until_t: int | None = None
+    # The idea's fixed round-level anchor, set at entry; None if none qualified.
+    anchor_level: float | None = None
+    # Whether this idea's exit uses the anchor instead of the target, drawn once at entry.
+    anchored: bool = False
 
     @property
     def side_sign(self) -> int:

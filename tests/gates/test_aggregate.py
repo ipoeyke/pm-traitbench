@@ -1,5 +1,6 @@
 """Tests for gate 1's estimate run and its pooling into neutral/active cells."""
 
+import math
 from dataclasses import replace
 from datetime import date
 
@@ -135,6 +136,123 @@ def test_no_member_group_is_not_emitted() -> None:
     estimates = [_pm("pm_001", "seed_a", "disposition_ratio", Gate1Split.ALL, 0.1, 10, 0.3, False)]
     cells = aggregate(estimates, {"seed_a", "seed_b"}, {"seed_r"}, Gate1Config())
     assert not any(c.seed_group in ("seed_b", "seed_r") for c in cells)
+
+
+# --- aggregate: cross-class pooled row -----------------------------------------
+
+
+def test_cross_class_row_sums_n_neutral_and_n_active_over_per_class_pooled_rows() -> None:
+    param = "disposition_ratio"
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False, asset_class=EQ),
+        _pm(
+            "pm_002",
+            "seed_a",
+            param,
+            Gate1Split.ALL,
+            0.2,
+            10,
+            0.3,
+            False,
+            asset_class=AssetClass.COMMODITIES,
+        ),
+        _pm(
+            "pm_003",
+            "seed_a",
+            param,
+            Gate1Split.ALL,
+            0.9,
+            10,
+            0.9,
+            True,
+            asset_class=AssetClass.COMMODITIES,
+        ),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+
+    per_class = [c for c in cells if c.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL]
+    cross_class = next(c for c in per_class if c.asset_class is None)
+    class_rows = [c for c in per_class if c.asset_class is not None]
+
+    assert cross_class.n_neutral == sum(c.n_neutral for c in class_rows)
+    assert cross_class.n_active == sum(c.n_active for c in class_rows)
+    assert cross_class.seed_group == "synthetic"
+
+
+def test_cross_class_row_only_emitted_for_the_synthetic_pool() -> None:
+    param = "disposition_ratio"
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 10, 0.3, False, asset_class=EQ),
+        _pm(
+            "pm_002",
+            "seed_r",
+            param,
+            Gate1Split.ALL,
+            0.2,
+            10,
+            0.3,
+            False,
+            asset_class=AssetClass.COMMODITIES,
+            is_real_seed=True,
+        ),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, {"seed_r"}, Gate1Config())
+    non_pool_null = [
+        c
+        for c in cells
+        if c.seed_group_kind != SeedGroupKind.SYNTHETIC_POOL and c.asset_class is None
+    ]
+    assert non_pool_null == []
+
+
+def test_cross_class_count_shortfall_propagates_from_any_asset_class() -> None:
+    param = "exit_deficiency"  # N_MIN: 7
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 5, 0.3, False, asset_class=EQ),
+        _pm(
+            "pm_002",
+            "seed_a",
+            param,
+            Gate1Split.ALL,
+            0.2,
+            50,
+            0.3,
+            False,
+            asset_class=AssetClass.COMMODITIES,
+        ),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+    cross_class = next(
+        c
+        for c in cells
+        if c.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL and c.asset_class is None
+    )
+    assert cross_class.count_shortfall is True  # equities seed_a fell short of n_min=7
+
+
+def test_cross_class_count_shortfall_false_when_no_class_is_short() -> None:
+    param = "exit_deficiency"  # N_MIN: 7
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.1, 20, 0.3, False, asset_class=EQ),
+        _pm(
+            "pm_002",
+            "seed_a",
+            param,
+            Gate1Split.ALL,
+            0.2,
+            50,
+            0.3,
+            False,
+            asset_class=AssetClass.COMMODITIES,
+        ),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+    cross_class = next(
+        c
+        for c in cells
+        if c.seed_group_kind == SeedGroupKind.SYNTHETIC_POOL and c.asset_class is None
+    )
+    assert cross_class.count_shortfall is False
 
 
 # --- aggregate: neutral/active stats -----------------------------------------
@@ -345,3 +463,64 @@ def test_calibration_matches_pearsonr_on_pooled_pairs_and_is_none_for_other_para
     ]
     other_cells = aggregate(other, {"seed_a"}, set(), Gate1Config())
     assert next(c for c in other_cells if c.seed_group == "seed_a").calibration is None
+
+
+# --- aggregate: pop_z ----------------------------------------------------------
+
+
+def test_pop_z_matches_the_standard_error_of_difference_formula() -> None:
+    param = "herding_weight"  # higher_is_stronger True
+    neutral_values = [0.10, 0.12, 0.08, 0.11, 0.09]
+    active_values = [0.60, 0.55, 0.65, 0.58, 0.62]
+    estimates = [
+        _pm(f"pm_{i:03d}", "seed_a", param, Gate1Split.ALL, v, 10, 0.2, False)
+        for i, v in enumerate(neutral_values, start=1)
+    ] + [
+        _pm(f"pm_{i:03d}", "seed_a", param, Gate1Split.ALL, v, 10, 0.8, True)
+        for i, v in enumerate(active_values, start=6)
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+    cell = next(c for c in cells if c.seed_group == "seed_a")
+
+    neutral_mean = float(np.mean(neutral_values))
+    neutral_sd = float(np.std(neutral_values, ddof=1))
+    active_mean = float(np.mean(active_values))
+    active_sd = float(np.std(active_values, ddof=1))
+    expected = (active_mean - neutral_mean) / math.sqrt(
+        neutral_sd**2 / len(neutral_values) + active_sd**2 / len(active_values)
+    )
+    assert cell.pop_z == pytest.approx(expected)
+
+
+def test_pop_z_none_with_fewer_than_two_active_pms() -> None:
+    param = "herding_weight"
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.10, 10, 0.2, False),
+        _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.12, 10, 0.2, False),
+        _pm("pm_003", "seed_a", param, Gate1Split.ALL, 0.60, 10, 0.8, True),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+    cell = next(c for c in cells if c.seed_group == "seed_a")
+    assert cell.pop_z is None
+
+
+def test_pop_z_sign_follows_direction_for_a_lower_is_stronger_param() -> None:
+    param = "overconfidence_coverage"  # higher_is_stronger False
+    neutral_values = [0.80, 0.82, 0.78, 0.81, 0.79]
+    stronger_active = [0.40, 0.45, 0.42, 0.38, 0.44]  # below neutral: the stronger direction
+    weaker_active = [0.90, 0.92, 0.88, 0.91, 0.89]  # above neutral: the wrong direction
+
+    def _cells(active_values):
+        estimates = [
+            _pm(f"pm_{i:03d}", "seed_a", param, Gate1Split.ALL, v, 10, 0.3, False)
+            for i, v in enumerate(neutral_values, start=1)
+        ] + [
+            _pm(f"pm_{i:03d}", "seed_a", param, Gate1Split.ALL, v, 10, 0.9, True)
+            for i, v in enumerate(active_values, start=6)
+        ]
+        return aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+
+    stronger_cell = next(c for c in _cells(stronger_active) if c.seed_group == "seed_a")
+    weaker_cell = next(c for c in _cells(weaker_active) if c.seed_group == "seed_a")
+    assert stronger_cell.pop_z > 0
+    assert weaker_cell.pop_z < 0

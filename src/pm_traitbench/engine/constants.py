@@ -2,17 +2,26 @@
 
 from pm_traitbench.enums import Tenor
 
-# Entry requires the own signal to reach one sd of view.
+# Entry requires the blended forecast to reach one sd of view.
 ENTRY_THRESHOLD = 1.0
-# Lower edges of conviction buckets 1-5: quintiles of a standard normal's absolute value
-# given it exceeds the entry threshold of 1, so every rank is equally likely at entry.
+# Lower edges of conviction buckets 1-5: quintiles of the own signal's absolute value given
+# it exceeds 1, a bucketing floor on stated conviction, separate from the forecast-based entry gate.
 CONVICTION_CUTS = (1.0, 1.14, 1.31, 1.53, 1.86)
 # Each idea carries two or three signposts to track toward its target.
 SIGNPOSTS_PER_IDEA = (2, 3)
 # An add buys half the position's original size.
 ADD_FRACTION = 0.5
+# A neutral PM (lambda about 1.1) cuts on about 4.5% of loss-side days.
+LOSS_CUT_HAZARD = 0.05
+# An active PM at the 2.0 centre adds on about 10% of loss-side days.
+LOSS_ADD_SLOPE = 0.1
+# Caps the add hazard so no lambda adds on more than half of loss-side days.
+LOSS_ADD_CAP = 0.5
 # Size at conviction rank 1-5 as a fraction of the mandate cap, linear.
 RISK_STEPS = (0.2, 0.4, 0.6, 0.8, 1.0)
+# Overconfidence's size factor at the active coverage centre 0.4 (Z_80 / z(0.4), about
+# 2.45), so a centre-planted PM's largest step still lands under the mandate cap.
+SIZE_HEADROOM = 2.5
 # No new entries in the final five sessions, so every idea gets at least a week of life.
 NO_ENTRY_LAST_SESSIONS = 5
 # Realised volatility for sizing and signposts is measured over a trailing 60 days.
@@ -23,8 +32,9 @@ MIN_SD_DAYS = 5
 SD_FLOOR = 1e-6
 # Consecutive sessions a level signpost must hold before it fires.
 LEVEL_WINDOW_CHOICES = (3, 4, 5)
-# Lookback for the prior-high anchor used by the anchoring bias.
-TRAILING_HIGH_DAYS = 60
+# The salient round-level anchor sits 40% of the way from entry to target, where
+# most ideas that do not stop out reach it.
+ANCHOR_FRACTION = 0.4
 
 # DV01 per $1mm notional by sovereign tenor, in local currency.
 DV01_PER_MILLION: dict[Tenor, float] = {

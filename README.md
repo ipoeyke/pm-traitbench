@@ -37,8 +37,10 @@ driving rule on `ledger`. Hidden data is generator provenance for checking
 the engine itself and is never shown to a system under test. The `gate1`
 stage recovers each direct-asset PM's eight planted biases from the engine's
 ledger and pools them per asset class, writing `gate1_pm` and `gate1_cells`;
-it exits 1 when a synthetic recovery test fails, leaving both tables and its
-run metadata on disk either way. Pass `--force` to overwrite a table that
+it exits 1 when a blocking row fails - one row per non-report-only parameter,
+pooled over every direct asset class of the synthetic seeds. Per-class and
+report-only rows are judged but never block. Both tables and its run
+metadata land on disk either way. Pass `--force` to overwrite a table that
 already exists. Run `uv run pm-traitbench --help` for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
@@ -255,18 +257,24 @@ trades off realism for a model whose biases are each one legible formula:
   realised coverage matches its stated coverage regardless of what its
   forecast says.
 - One rule per bias parameter, each collapsing to a formula: loss aversion
-  is a cut/hold/add softmax over `{-lambda|z|, r, r(1+f) - lambda|z|f}`,
-  where `r` is the forecast still to come in z units,
-  `side * bullish_sign * (forecast - (level - entry)) / sd` with `sd` taken
-  at entry; disposition is a daily sell hazard scaled by `sqrt(D)` at
-  a gain and `1/sqrt(D)` at a loss; anchoring blends the exit level
-  `(1-rho)*target + rho*anchor`; extrapolation blends the forecast
-  `(1-theta)*thesis_move + theta*trailing_move`; herding follows the
+  cuts a losing position with probability `0.05 / lambda` and, when adding
+  is allowed, adds with probability `min(0.5, 0.1 * max(lambda - 1, 0))`,
+  else holds, so lambda above 1 raises the add hazard and lowers the cut
+  hazard; disposition is a daily sell hazard scaled by `sqrt(D)` at
+  a gain and `1/sqrt(D)` at a loss; anchoring fixes one round-level anchor
+  per idea, 40% of the way from entry to target, and exits there instead of
+  at target with probability rho, drawn once at entry; extrapolation blends
+  the forecast
+  `(1-theta)*thesis_move + theta*trailing_move`, and entry and side follow
+  the same theta-blend of the own signal and the trailing move, in z-units
+  normalised to unit variance; herding follows the
   street with probability `herding_weight` when it conflicts with the
   PM's own side; overconfidence narrows the stated interval and inflates
-  entry size by the same z-score ratio, `z(0.8) / z(coverage)`; conviction
-  blends the size rank `round((1-m)*conviction + m*u)` toward a
-  uniform(1,5) draw; exit deficiency makes a fired rule's response miss
+  entry size by the same z-score ratio, `z(0.8) / z(coverage)`, and entry
+  size divides the mandate cap's risk step by a headroom of 2.5 so that
+  inflation has room below the cap; conviction sizes at the stated
+  conviction rank with probability `1-m`, else at a uniform(1,5) draw;
+  exit deficiency makes a fired rule's response miss
   with probability `e` (adding instead of missing, at a loss, when loss
   aversion is also active).
 - A day's fired rules resolve in one precedence order: exclusions and the
@@ -308,19 +316,20 @@ Limitations from the model:
 ## Gate 1
 
 Gate 1 recovers each direct-asset PM's eight planted bias parameters from the
-engine's own ledger, pools the recovered statistics per asset class, and
-blocks the pipeline only when the pooled synthetic comparison over the full
-horizon fails or has too few PMs to judge. One estimator per parameter:
+engine's own ledger, pools the recovered statistics per asset class and, for
+the synthetic pool, once more across every direct asset class together. Only
+that cross-class row blocks the pipeline, when it fails or has too few PMs to
+judge over the full horizon. One estimator per parameter:
 
 | Parameter | Statistic | Opportunity unit | Direction |
 | --- | --- | --- | --- |
 | `loss_aversion_lambda` | share of loss-side opportunities where the PM adds instead of cutting | loss-side, untriggered position-days | higher recovers more strongly |
 | `disposition_ratio` | proportion-of-gains-realised over proportion-of-losses-realised (Odean 1998) | sell-day position-days | higher recovers more strongly |
-| `anchoring_rho` | share of discretionary exits landing inside a band around the anchor | discretionary exits | higher recovers more strongly |
+| `anchoring_rho` | share of anchor crossings the PM exits on that same day | anchor crossings before the last horizon date | higher recovers more strongly |
 | `extrapolation_theta` | share of entries chasing a trailing move already past one horizon-sd | entries | higher recovers more strongly |
 | `herding_weight` | share of entries on the street's side, among entries with a non-neutral street view | entries with a non-neutral street view | higher recovers more strongly |
 | `overconfidence_coverage` | share of entries whose realised move lands inside the stated interval | entries | lower recovers more strongly |
-| `conviction_size_miscalibration` | one minus the rank correlation of entry sizing and stated conviction | entries with a stated conviction | higher recovers more strongly |
+| `conviction_size_miscalibration` | one minus the rank correlation of the lead leg's entry risk and stated conviction | entries with a stated conviction | higher recovers more strongly |
 | `exit_deficiency` | share of non-overridden fired rules left unacted on or added to | non-overridden rule firings | higher recovers more strongly |
 
 Each parameter is estimated over the full horizon (split `all`) for every
@@ -329,13 +338,16 @@ regimes, an active trait over each regime that boosts it, and a drifted trait
 over its before and after windows only. The `all`-split estimates
 are then pooled into a neutral baseline and an active mean per asset class,
 over every synthetic seed together (seed group `synthetic`, seed group kind
-`synthetic_pool` - the one that blocks the pipeline) and again per seed on
-its own; a drifted PM's `all`-split estimate is dropped from every pooled
-comparison, since it mixes two different trait values. On the default
-population, each synthetic seed's own cell holds 12 PMs per asset class, of
-which only 1-11 are neutral for any given parameter; pooling the three
-synthetic seeds together is what gives the pooled `synthetic` cell enough
-neutral PMs for a usable baseline, about 36 PMs per asset class in all.
+`synthetic_pool`) and again per seed on its own; a drifted PM's `all`-split
+estimate is dropped from every pooled comparison, since it mixes two
+different trait values. For the synthetic pool, those same `all`-split
+estimates are pooled once more across every direct asset class together,
+into a cross-class row (`asset_class` null) - the one row that blocks the
+pipeline. On the default population, each synthetic seed's own cell holds 12
+PMs per asset class, of which only 1-11 are neutral for any given parameter;
+pooling the three synthetic seeds together gives each per-asset-class
+`synthetic` cell about 36 PMs, and pooling the three direct asset classes
+together again gives the cross-class row about 108 PMs in all.
 
 A regime split compares the active PMs boosted in that regime with every
 neutral PM's rows for the same regime, since a neutral trait is estimated
@@ -344,19 +356,38 @@ rows for that window with the neutral PMs' full-horizon (`all`-split) rows
 instead of a regime-style shared date set, since a drift window differs per
 PM. Every split beyond `all` is report-only, the same as the per-seed rows.
 
-A cell passes when the active mean sits on the stronger side of the neutral
-mean (per the parameter's own direction) with the neutral standard deviation
-no more than half the gap between them (`gap_fraction`, default 0.5), and
-the planted-versus-recovered rank correlation clears `min_rank_corr` (default
-0.5); a cell with fewer than `min_pms` (default 5) neutral or active PMs is
-`insufficient` rather than judged. `floor_se` (default 2.0, standard
-deviations above or below the neutral mean) and the `active_share_past_floor`
-it produces are reported for re-centring the marginals, not part of the pass
-rule. `anchor_band_k` (default 0.1, in horizon-vols) is the anchoring
-estimator's own band width, not a pass-rule knob either. Only the pooled
-`synthetic`/`all` cell (seed group `synthetic`, kind `synthetic_pool`) blocks
-the pipeline: every per-seed cell, synthetic or real, is reported but never
-blocks, and every split beyond `all` is report-only for the same reason.
+A cell is judged by one of two pass rules, chosen by whether its parameter is
+in `population_params`. The default, per-PM rule passes when the active mean
+sits on the stronger side of the neutral mean (per the parameter's own
+direction) with the neutral standard deviation no more than half the gap
+between them (`gap_fraction`, default 0.5), and the planted-versus-recovered
+rank correlation clears `min_rank_corr` (default 0.5). The population rule
+passes when the active mean exceeds the neutral mean, in the parameter's own
+direction, by at least `min_pop_z` (default 3.0) standard errors of the
+difference (each side's own sample standard deviation), with a positive rank
+correlation; it suits a parameter whose per-PM opportunity count is limited
+by how many decisions one PM makes in a year, so a single PM's own estimate
+is too noisy to judge even though the pooled population carries a signal.
+`population_params` (default `herding_weight`, `conviction_size_miscalibration`,
+`disposition_ratio`, `anchoring_rho`) names the parameters judged this way;
+every other parameter keeps the per-PM rule. A cell with fewer than `min_pms`
+(default 5) neutral or active PMs is `insufficient` rather than judged,
+whichever rule applies. `floor_se` (default 2.0, standard deviations above or
+below the neutral mean) and the `active_share_past_floor` it produces are
+reported for re-centring the marginals, not part of either pass rule.
+
+Only the synthetic pool's cross-class row (seed group `synthetic`, kind
+`synthetic_pool`, split `all`, `asset_class` null) of a parameter not in
+`report_only_params` blocks the pipeline: every per-asset-class `synthetic`
+cell, every per-seed cell (synthetic or real), and every split beyond `all`
+are reported but never block, and a report-only parameter's cross-class row
+is reported but never blocks either, whatever its verdict. `report_only_params`
+defaults to `herding_weight`, `disposition_ratio` and `anchoring_rho`:
+disposition's pooled population z is about 1 (median 1.0 over 12 roots) at
+the sourced 1.2 centre, and anchoring's pooled z has median 3.9 but falls
+below 3 on 2 of 12 roots; herding passes pooled on all 12 roots but stays
+report-only because the trend-built street view couples it to extrapolation,
+so a pass does not isolate it.
 
 Four parameters also carry an opportunity-count minimum (`n_min`): exit
 deficiency 7, loss aversion 16, herding 14, anchoring 29 - each the
@@ -366,54 +397,54 @@ derived for the conflict-follow rate, not the agreement statistic gate 1
 estimates, and its minimum is applied to the latter as an approximation). The
 `count_shortfall` warning compares each seed's 10th-percentile PM on the
 estimator's own opportunity count (`Estimate.n`) against `n_min`, rather than
-an engine counter. On the default run anchoring falls short on every seed and
-asset class (the 10th-percentile PM has 2-9 discretionary exits away from the
-target against 29), exit deficiency on rates and credit for seeds A and R1,
-and herding on rates and credit for R1 only.
+an engine counter. The anchoring opportunity is an anchor crossing; on the
+default run anchoring falls short of its minimum on every seed and asset
+class, and exit deficiency and herding both fall short on rates and credit
+for the real seed R1.
 
 Gate 1 writes two tables: `gate1_pm`, one row per PM/parameter/split keyed on
 `(pm_id, param, split)`, and `gate1_cells`, one row per seed group/asset
-class/parameter/split keyed on `(seed_group, asset_class, param, split)`.
+class/parameter/split keyed on `(seed_group, asset_class, param, split)`,
+where a null `asset_class` is the synthetic pool's cross-class row. Each
+`gate1_cells` row records which rule judged it (`test`), the per-PM gap and
+rank checks (`gap_ok`, `rank_ok`), and, for a population-tested parameter,
+the standard-error z (`pop_z`) and whether it and the rank correlation passed
+(`pop_ok`).
 
-On the default root, exit deficiency and overconfidence pass on all three
-asset classes, herding passes on rates/credit and commodities but fails on
-equities, and the other five parameters fail on all three:
+Blocking rows are pooled over every direct asset class, synthetic seeds:
+exit deficiency, extrapolation, loss aversion and overconfidence use the
+per-PM rule; conviction uses the population rule. On the default root and on
+12 further root seeds (20260301-20260312) all five pass on every root, so
+Gate 1 exits 0. Over the 12 roots: per-PM neutral-sd-over-gap medians
+0.18-0.30 (max 0.41) and rank correlations 0.71-0.90; conviction population z
+median 7.7 (min 5.6).
 
-- `exit_deficiency` passes: its miss probability acts directly on the
-  fired-rule response the estimator reads, with no rule precedence or
-  softmax layer between the trait and the observable.
-- `overconfidence_coverage` passes: overconfidence rescales the stated
-  interval by the same z-score ratio the inside-share estimator reads, again
-  a direct readout of the trait.
-- `herding_weight` on equities: the neutral spread is about half the gap,
-  just past the 0.5 limit - a marginal fail, with no mechanism claimed.
-- `loss_aversion_lambda` fails: a higher lambda makes cutting worse but also
-  penalises adding against holding, so the two effects offset, the add rate
-  stays flat, and cut is rarely chosen at softmax temperature 1.
-- `disposition_ratio` fails: the planted multiplier sqrt(D), about 1.1 at
-  the professional centre, acts on a 0.03 base sell hazard and is swamped by
-  rule-triggered sales.
-- `anchoring_rho` fails: exits at the anchored level are rare beside
-  hazard-driven discretionary exits.
-- `extrapolation_theta` fails: the forecast never reaches entry direction or
-  target (the side follows the own signal, and the target follows the stop
-  and the reward-to-risk draw), so theta leaves no public trace.
-- `conviction_size_miscalibration` fails the gap test: the neutral spread
-  across PMs is wider than half the active-neutral gap, although its rank
-  correlation clears 0.5.
+Report-only rows: herding passes pooled on 12 of 12 roots (z median 6.7, min
+5.5) but stays report-only for the coupling reason above; anchoring passes on
+10 of 12 (z median 3.9, min 2.8); disposition on 1 of 12 (z median 1.0).
 
-This pattern holds beyond the default root: sweeping the default config over
-99 root seeds (`seed.root`, every other knob fixed), exit deficiency and
-overconfidence pass on 93-99% of roots per asset class; herding sits at the
-threshold, its median neutral sd running 0.48-0.51 of the gap, and passes on
-about half the roots; the other five parameters fail on nearly every root,
-with conviction-size miscalibration passing on at most 5%.
+Per-asset-class rows are reported only; over the 12 roots herding passed 26
+of 36 class rows, overconfidence 31 (plus 2 insufficient), conviction 32,
+which is why the blocking verdict pools.
+
+Before these rule changes, on the default root only exit deficiency and
+overconfidence passed per PM on all three asset classes, herding passed on
+two, and loss aversion, disposition, anchoring, extrapolation and conviction
+failed everywhere. The causes were that the forecast never reached entry
+side or target, lambda had no measurable effect under a linear value
+function, the conviction estimator double-counted two-leg ideas and the size
+ladder tied the top ranks at the cap, and anchors moved every day so
+anchored exits were rare.
 
 Limitations from the model:
 
 - The pooled synthetic baseline hides seed-level effects: a bias that only
-  shows up on one market seed is averaged away in the pooled `synthetic`
-  cell that blocks the pipeline.
+  shows up on one market seed is averaged away in the cross-class row that
+  blocks the pipeline.
+- Pooling across asset classes hides asset-class-level effects the same way:
+  a bias recoverable in only one direct asset class is averaged away in the
+  cross-class row, and only the per-asset-class `synthetic` cell (report-only)
+  would show it.
 - Herding is measured as agreement with the street's non-neutral view, not
   as a PM crossing its own conflicting signal: a PM who follows the street
   in a conflict ends on the street's side, so the conflict itself cannot be
@@ -421,17 +452,32 @@ Limitations from the model:
 - Disposition's realised share counts any sell-day cut, trim or exit,
   rule-triggered or discretionary alike, not only a PM's own voluntary
   realisation.
-- Anchoring's recovered rate depends on the configured band width
-  (`anchor_band_k`) around the anchor, not a model-free distance.
-- The pass-rule thresholds were probed against one run of the default
-  population, not validated across many.
+- The size headroom of 2.5 matches the overconfidence size factor at the
+  active prior's centre (coverage about 0.4); PMs planted with lower coverage
+  still hit the cap on their top size ranks (on the default run about half of
+  active overconfident PMs have rank 5 clipped and 8.4% of all entries sit at
+  the cap), which ties conviction ranks for those PMs and blocks their
+  loss-aversion adds (recorded as holds).
+- Anchoring's recovered rate is hits over crossings, not rho alone: a
+  crossing inside the minimum holding period, or on a day a rule exit acts,
+  counts as an opportunity without a hit, so the statistic sits below rho
+  plus the background sell hazard.
+- Rounding the anchor to the nearest round level can place it close to entry
+  (10th percentile about 0.1-0.26 of the way to target by asset class), so
+  some anchored ideas exit soon after entry.
+- The pass-rule thresholds were checked on the default root and 12 further
+  roots, not a wider sweep or other configs.
 - `active_share_past_floor` is reported for every cell but never gates a
   verdict.
 - Every split beyond `all` (by regime, and before/after a drift event) is
   report-only and never gates a verdict.
-- Gate 1 blocks the pipeline at the default configuration: five of the
-  eight parameters fail on every asset class, as the verdict pattern above
-  shows.
+- The population rule certifies a shift in the population, not that one PM's
+  value can be read back: conviction and the report-only parameters are
+  judged this way.
+- A report-only parameter's cross-class row can fail or stay insufficient
+  without blocking the pipeline, so a planted bias in `herding_weight`,
+  `disposition_ratio` or `anchoring_rho` can ship unverified at the default
+  population.
 
 ## Development
 

@@ -21,6 +21,7 @@ from pm_traitbench.enums import (
     Expression,
     Family,
     Gate1Split,
+    Gate1Test,
     Gate1Verdict,
     InstrumentKind,
     Kind,
@@ -592,16 +593,16 @@ class PositionDay(BaseModel):
         description="Semicolon-separated bias:pattern tags detected on this day.",
     )
     anchor_level: float | None = Field(
-        description="Reference level anchoring the PM's view; null unless exit level is set."
+        description="The idea's fixed round-level anchor; null if none qualified at entry."
     )
     effective_exit_level: float | None = Field(
-        description="Effective exit level; set together with anchor_level."
+        description="The idea's anchor when anchored, else its target level."
     )
 
     @model_validator(mode="after")
     def _check_invariants(self) -> "PositionDay":
-        if (self.anchor_level is None) != (self.effective_exit_level is None):
-            raise ValueError("anchor_level and effective_exit_level must be both null or both set")
+        if self.effective_exit_level is None and self.anchor_level is not None:
+            raise ValueError("anchor_level requires effective_exit_level to be set")
         is_flat = abs(self.pnl_z) < 1e-9
         if is_flat != (self.pnl_state == PnlState.FLAT):
             raise ValueError("pnl_state must be 'flat' exactly when abs(pnl_z) < 1e-9")
@@ -630,7 +631,9 @@ class Gate1PmRow(BaseModel):
 
 
 class Gate1CellRow(BaseModel):
-    """A neutral-versus-active comparison for one bias parameter, asset class and split."""
+    """A neutral-versus-active comparison for one bias parameter, asset class (or every
+    direct asset class pooled) and split.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -638,7 +641,9 @@ class Gate1CellRow(BaseModel):
     seed_group_kind: SeedGroupKind = Field(
         description="Kind of seed group the cell aggregates over."
     )
-    asset_class: AssetClass = Field(description="Asset class the cell covers.")
+    asset_class: AssetClass | None = Field(
+        description="Asset class the cell covers; null pools every direct asset class."
+    )
     param: str = Field(description="Name of the bias parameter the cell compares.")
     split: Gate1Split = Field(description="Window of the ledger the cell was computed over.")
     n_neutral: int = Field(ge=0, description="Number of neutral PMs contributing to the cell.")
@@ -671,8 +676,19 @@ class Gate1CellRow(BaseModel):
             "sds; extrapolation only, null for every other parameter."
         )
     )
+    test: Gate1Test = Field(description="Which rule judged the cell: per-PM or population.")
     gap_ok: bool = Field(description="Whether the neutral-to-active gap check passed.")
     rank_ok: bool = Field(description="Whether the rank correlation check passed.")
+    pop_z: float | None = Field(
+        description=(
+            "Standard errors of the difference by which the active mean exceeds the neutral "
+            "mean, in the parameter's own direction; null when either set has fewer than 2 "
+            "values or the standard error is 0."
+        )
+    )
+    pop_ok: bool = Field(
+        description="Whether the population check (pop_z and a positive rank correlation) passed."
+    )
     count_ok: bool | None = Field(
         description="Whether the observation count check passed; null when not evaluated."
     )
@@ -683,7 +699,12 @@ class Gate1CellRow(BaseModel):
         )
     )
     verdict: Gate1Verdict = Field(description="The cell's recovery verdict.")
-    blocking: bool = Field(description="Whether a failing verdict on this cell blocks the gate.")
+    blocking: bool = Field(
+        description=(
+            "Whether a failing verdict on this cell blocks the gate; always false for a "
+            "report-only parameter."
+        )
+    )
 
 
 def to_record(row: BaseModel) -> dict[str, Any]:
