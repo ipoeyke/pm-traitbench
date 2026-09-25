@@ -2,8 +2,11 @@
 decide pass or fail against the neutral baseline the engine itself produced.
 
 Reads the engine's four tables plus the market tables `build_views` needs to
-rebuild each idea's series, and blocks the pipeline only when the pooled
-synthetic comparison over the full horizon fails or is insufficient.
+rebuild each idea's series, and blocks the pipeline only on one row per
+parameter: the synthetic seeds pooled over every direct asset class, and only
+for a parameter that is not report-only (herding, disposition and anchoring
+are report-only). Every per-class and report-only row is judged but never
+blocks.
 """
 
 from typing import Any
@@ -102,7 +105,10 @@ def raise_on_failures(extra: dict[str, Any]) -> None:
 GATE1_STAGE = Stage(
     number=4,
     name="gate1",
-    help="recover planted biases from the engine's ledger per asset class",
+    help=(
+        "recover planted biases from the engine's ledger; blocks on the synthetic "
+        "pool's cross-class row per non-report-only parameter"
+    ),
     run=run,
     reads=(PERSONAS, TRAITS, DRIFT_EVENTS, *ENGINE_TABLES, *MARKET_TABLES),
     writes=GATE1_TABLES,
