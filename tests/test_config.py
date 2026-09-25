@@ -465,6 +465,18 @@ def test_seed_name_in_both_synthetic_and_real_seeds_raises() -> None:
         Config.model_validate({"market": {"seeds": {"R1": ["range", "risk_off", "risk_on"]}}})
 
 
+def test_seed_named_synthetic_in_market_seeds_raises() -> None:
+    with pytest.raises(ValidationError, match="seed name 'synthetic' is reserved"):
+        Config.model_validate(
+            {"market": {"seeds": {"synthetic": ["range", "risk_off", "risk_on"]}}}
+        )
+
+
+def test_seed_named_synthetic_in_real_seeds_raises() -> None:
+    with pytest.raises(ValidationError, match="seed name 'synthetic' is reserved"):
+        Config.model_validate({"market": {"real": {"seeds": {"synthetic": _real_seed_kwargs()}}}})
+
+
 def _real_seed_kwargs(**overrides) -> dict:
     kwargs = {
         "window_start": date(2018, 6, 4),

@@ -1613,6 +1613,10 @@ class MarketConfig(BaseModel):
             raise ValueError(
                 f"seed name(s) in both market.seeds and market.real.seeds: {sorted(overlap)}"
             )
+        if "synthetic" in self.seeds or "synthetic" in self.real.seeds:
+            raise ValueError(
+                "seed name 'synthetic' is reserved for gate 1's pooled synthetic group"
+            )
         return self
 
     @model_validator(mode="after")

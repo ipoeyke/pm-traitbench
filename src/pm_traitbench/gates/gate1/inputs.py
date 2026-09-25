@@ -156,7 +156,7 @@ def kept_personas(personas: Sequence[Persona], skipped: Collection[str]) -> list
 
     Drops multi-asset personas (no adapter routes their legs) and every
     `pm_id` in `skipped`; shared with the stage module so it builds market
-    views for exactly the seeds `build_inputs` will actually use.
+    views for exactly the seeds `build_inputs` will use.
     """
     return [
         persona

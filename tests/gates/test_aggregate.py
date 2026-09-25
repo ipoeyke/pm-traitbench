@@ -185,12 +185,13 @@ def test_rank_corr_has_no_sign_adjustment_for_a_lower_is_stronger_param() -> Non
 
 def test_rank_corr_is_positive_when_coverage_moves_with_its_planted_value() -> None:
     param = "overconfidence_coverage"  # higher_is_stronger is False
-    # a PM with lower planted overconfidence realises lower coverage too: the
-    # statistic moves with the planted value, so no sign flip gives a positive rho.
+    # active PMs get the lower planted coverage and realise the lower coverage
+    # too: the statistic moves with the planted value, so no sign flip gives a
+    # positive rho.
     estimates = [
-        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.45, 10, 0.5, False),
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.45, 10, 0.5, True),
         _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.65, 10, 0.7, True),
-        _pm("pm_003", "seed_a", param, Gate1Split.ALL, 0.85, 10, 0.9, True),
+        _pm("pm_003", "seed_a", param, Gate1Split.ALL, 0.85, 10, 0.9, False),
     ]
     cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
     cell = next(c for c in cells if c.seed_group == "seed_a")

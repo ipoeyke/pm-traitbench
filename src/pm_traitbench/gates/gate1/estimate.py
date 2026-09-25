@@ -14,7 +14,7 @@ class Estimate:
 
     `value` is null when the split had too little data to compute; `n` is the
     observation count behind it either way. `pairs` carries calibration points
-    (planted strength, recovered value) and is used by extrapolation only.
+    `(direction, trailing move / horizon sd)`, extrapolation only.
     """
 
     value: float | None

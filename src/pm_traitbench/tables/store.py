@@ -162,15 +162,17 @@ class DataStore:
             if collisions:
                 raise ValueError(f"run metadata extra key(s) collide with fixed keys: {collisions}")
             metadata.update(extra)
-        metadata_dir = self._data_dir / "run_metadata"
-        metadata_dir.mkdir(parents=True, exist_ok=True)
-        path = metadata_dir / f"{stage_name}.json"
+        path = self._run_metadata_path(stage_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         return path
 
     def read_run_metadata(self, stage_name: str) -> dict[str, Any] | None:
         """Parsed JSON of `run_metadata/<stage_name>.json`, or None if absent."""
-        path = self._data_dir / "run_metadata" / f"{stage_name}.json"
+        path = self._run_metadata_path(stage_name)
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _run_metadata_path(self, stage_name: str) -> Path:
+        return self._data_dir / "run_metadata" / f"{stage_name}.json"

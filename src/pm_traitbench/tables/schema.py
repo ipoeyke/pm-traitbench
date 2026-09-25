@@ -652,7 +652,9 @@ class Gate1CellRow(BaseModel):
     )
     active_mean: float | None = Field(description="Mean statistic across active PMs.")
     floor: float | None = Field(
-        description="Statistic level, above the neutral mean, that counts as recovery."
+        description=(
+            "Neutral mean plus or minus floor_se neutral sds, in the strengthening direction."
+        )
     )
     active_share_past_floor: float | None = Field(
         description="Share of active PMs whose statistic clears the floor."
@@ -661,10 +663,13 @@ class Gate1CellRow(BaseModel):
         description="Rank correlation between planted strength and the recovered statistic."
     )
     count_p10: float | None = Field(
-        description="10th percentile of the observation count across the cell's PMs."
+        description="10th percentile of the cell's PMs' estimator opportunity counts (Estimate.n)."
     )
     calibration: float | None = Field(
-        description="Calibration measure between planted and recovered magnitude."
+        description=(
+            "Pooled Pearson correlation of entry direction with the trailing move in horizon "
+            "sds; extrapolation only, null for every other parameter."
+        )
     )
     gap_ok: bool = Field(description="Whether the neutral-to-active gap check passed.")
     rank_ok: bool = Field(description="Whether the rank correlation check passed.")
@@ -672,7 +677,10 @@ class Gate1CellRow(BaseModel):
         description="Whether the observation count check passed; null when not evaluated."
     )
     count_shortfall: bool = Field(
-        description="Whether the cell's observation count fell short of the estimator's minimum."
+        description=(
+            "For a single-seed cell, whether its own count fell short of the estimator's "
+            "minimum; for a pooled cell, whether any single synthetic seed's count did."
+        )
     )
     verdict: Gate1Verdict = Field(description="The cell's recovery verdict.")
     blocking: bool = Field(description="Whether a failing verdict on this cell blocks the gate.")

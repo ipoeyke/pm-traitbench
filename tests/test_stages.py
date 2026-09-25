@@ -324,7 +324,7 @@ def test_run_stage_calls_verdict_after_metadata_is_written(tmp_path: Path) -> No
     config = Config()
     received: dict[str, Any] = {}
 
-    def _run(config: Config, store: DataStore) -> dict:
+    def _run(config: Config, store: DataStore) -> dict[str, Any]:
         store.write(TRAITS, [_trait("pm_001", "t_01")])
         return {"check": {"ok": True}}
 
