@@ -380,10 +380,12 @@ Only the synthetic pool's cross-class row (seed group `synthetic`, kind
 cell, every per-seed cell (synthetic or real), and every split beyond `all`
 are reported but never block, and a report-only parameter's cross-class row
 is reported but never blocks either, whatever its verdict. `report_only_params`
-defaults to `herding_weight`, `disposition_ratio` and `anchoring_rho`: the
-latter two are population-tested parameters the default population has too
-few PMs per asset class to trust the population test for, and herding is
-coupled to extrapolation through the trend-built street view.
+defaults to `herding_weight`, `disposition_ratio` and `anchoring_rho`:
+disposition's pooled population z is about 1 (median 1.1 over 12 roots) at
+the sourced 1.2 centre, and anchoring's pooled z has median 3.9 but falls
+below 3 on 2 of 12 roots; herding passes pooled on all 12 roots but stays
+report-only because the trend-built street view couples it to extrapolation,
+so a pass does not isolate it.
 
 Four parameters also carry an opportunity-count minimum (`n_min`): exit
 deficiency 7, loss aversion 16, herding 14, anchoring 29 - each the
@@ -407,37 +409,30 @@ rank checks (`gap_ok`, `rank_ok`), and, for a population-tested parameter,
 the standard-error z (`pop_z`) and whether it and the rank correlation passed
 (`pop_ok`).
 
-On the default root, exit deficiency and overconfidence pass on all three
-asset classes; loss aversion, disposition, anchoring and extrapolation fail
-on all three. Herding and conviction-size miscalibration are omitted below:
-their old explanation relied on the gap-fraction threshold that the
-population rule now replaces for those two parameters, and the numbers have
-not been rerun since.
+Blocking rows are pooled over every direct asset class, synthetic seeds:
+exit deficiency, extrapolation, loss aversion and overconfidence use the
+per-PM rule; conviction uses the population rule. On the default root and on
+12 further root seeds (20260301-20260312) all five pass on every root, so
+Gate 1 exits 0. Over the 12 roots: per-PM neutral-sd-over-gap medians
+0.18-0.30 (max 0.41) and rank correlations 0.71-0.90; conviction population z
+median 7.7 (min 5.6).
 
-- `exit_deficiency` passes: its miss probability acts directly on the
-  fired-rule response the estimator reads, with no rule precedence or
-  softmax layer between the trait and the observable.
-- `overconfidence_coverage` passes: overconfidence rescales the stated
-  interval by the same z-score ratio the inside-share estimator reads, again
-  a direct readout of the trait.
-- `loss_aversion_lambda` fails: a higher lambda makes cutting worse but also
-  penalises adding against holding, so the two effects offset, the add rate
-  stays flat, and cut is rarely chosen at softmax temperature 1.
-- `disposition_ratio` fails: the planted multiplier sqrt(D), about 1.1 at
-  the professional centre, acts on a 0.03 base sell hazard and is swamped by
-  rule-triggered sales.
-- `anchoring_rho` fails: exits at the anchored level are rare beside
-  hazard-driven discretionary exits.
-- `extrapolation_theta` fails: the forecast never reaches entry direction or
-  target (the side follows the own signal, and the target follows the stop
-  and the reward-to-risk draw), so theta leaves no public trace.
+Report-only rows: herding passes pooled on 12 of 12 roots (z median 6.7, min
+5.6) but stays report-only for the coupling reason above; anchoring passes on
+10 of 12 (z median 3.9, min 2.8); disposition on none (z median 1.1).
 
-This pattern holds beyond the default root: sweeping the default config over
-99 root seeds (`seed.root`, every other knob fixed), exit deficiency and
-overconfidence pass on 93-99% of roots per asset class; loss aversion,
-disposition, anchoring and extrapolation fail on nearly every root. That
-sweep predates the population rule, so herding and conviction-size
-miscalibration are omitted here too.
+Per-asset-class rows are reported only; over the 12 roots herding passed 26
+of 36 class rows, overconfidence 31 (plus 2 insufficient), conviction 32,
+which is why the blocking verdict pools.
+
+Before these rule changes, on the default root only exit deficiency and
+overconfidence passed per PM on all three asset classes, herding passed on
+two, and loss aversion, disposition, anchoring, extrapolation and conviction
+failed everywhere. The causes were that the forecast never reached entry
+side or target, lambda had no measurable effect under a linear value
+function, the conviction estimator double-counted two-leg ideas and the size
+ladder tied the top ranks at the cap, and anchors moved every day so
+anchored exits were rare.
 
 Limitations from the model:
 
@@ -464,8 +459,9 @@ Limitations from the model:
   verdict.
 - Every split beyond `all` (by regime, and before/after a drift event) is
   report-only and never gates a verdict.
-- Gate 1 blocks the pipeline at the default configuration: several blocking
-  parameters fail their cross-class row, per the verdict pattern above.
+- The population rule certifies a shift in the population, not that one PM's
+  value can be read back: conviction and the report-only parameters are
+  judged this way.
 - A report-only parameter's cross-class row can fail or stay insufficient
   without blocking the pipeline, so a planted bias in `herding_weight`,
   `disposition_ratio` or `anchoring_rho` can ship unverified at the default
