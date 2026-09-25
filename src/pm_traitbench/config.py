@@ -569,7 +569,7 @@ class Gate1Config(BaseModel):
         json_schema_extra={
             "basis": "design",
             "note": (
-                "disposition_ratio's pooled population z is about 1 (median 1.1 over 12 "
+                "disposition_ratio's pooled population z is about 1 (median 1.0 over 12 "
                 "roots) at the sourced 1.2 centre, and anchoring_rho's pooled z has median "
                 "3.9 but falls below 3 on 2 of 12 roots. herding_weight passes pooled on "
                 "all 12 roots but stays report-only because the trend-built street view "

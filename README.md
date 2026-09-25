@@ -383,7 +383,7 @@ cell, every per-seed cell (synthetic or real), and every split beyond `all`
 are reported but never block, and a report-only parameter's cross-class row
 is reported but never blocks either, whatever its verdict. `report_only_params`
 defaults to `herding_weight`, `disposition_ratio` and `anchoring_rho`:
-disposition's pooled population z is about 1 (median 1.1 over 12 roots) at
+disposition's pooled population z is about 1 (median 1.0 over 12 roots) at
 the sourced 1.2 centre, and anchoring's pooled z has median 3.9 but falls
 below 3 on 2 of 12 roots; herding passes pooled on all 12 roots but stays
 report-only because the trend-built street view couples it to extrapolation,
@@ -420,8 +420,8 @@ Gate 1 exits 0. Over the 12 roots: per-PM neutral-sd-over-gap medians
 median 7.7 (min 5.6).
 
 Report-only rows: herding passes pooled on 12 of 12 roots (z median 6.7, min
-5.6) but stays report-only for the coupling reason above; anchoring passes on
-10 of 12 (z median 3.9, min 2.8); disposition on none (z median 1.1).
+5.5) but stays report-only for the coupling reason above; anchoring passes on
+10 of 12 (z median 3.9, min 2.8); disposition on 1 of 12 (z median 1.0).
 
 Per-asset-class rows are reported only; over the 12 roots herding passed 26
 of 36 class rows, overconfidence 31 (plus 2 insufficient), conviction 32,
