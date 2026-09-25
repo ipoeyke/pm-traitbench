@@ -322,11 +322,11 @@ horizon fails or has too few PMs to judge. One estimator per parameter:
 | --- | --- | --- | --- |
 | `loss_aversion_lambda` | share of loss-side opportunities where the PM adds instead of cutting | loss-side, untriggered position-days | higher recovers more strongly |
 | `disposition_ratio` | proportion-of-gains-realised over proportion-of-losses-realised (Odean 1998) | sell-day position-days | higher recovers more strongly |
-| `anchoring_rho` | share of discretionary exits landing inside a band around the anchor | discretionary exits | higher recovers more strongly |
+| `anchoring_rho` | share of anchor crossings the PM exits on that same day | anchor crossings before the last horizon date | higher recovers more strongly |
 | `extrapolation_theta` | share of entries chasing a trailing move already past one horizon-sd | entries | higher recovers more strongly |
 | `herding_weight` | share of entries on the street's side, among entries with a non-neutral street view | entries with a non-neutral street view | higher recovers more strongly |
 | `overconfidence_coverage` | share of entries whose realised move lands inside the stated interval | entries | lower recovers more strongly |
-| `conviction_size_miscalibration` | one minus the rank correlation of entry sizing and stated conviction | entries with a stated conviction | higher recovers more strongly |
+| `conviction_size_miscalibration` | one minus the rank correlation of the lead leg's entry risk and stated conviction | entries with a stated conviction | higher recovers more strongly |
 | `exit_deficiency` | share of non-overridden fired rules left unacted on or added to | non-overridden rule firings | higher recovers more strongly |
 
 Each parameter is estimated over the full horizon (split `all`) for every
@@ -358,11 +358,10 @@ the planted-versus-recovered rank correlation clears `min_rank_corr` (default
 `insufficient` rather than judged. `floor_se` (default 2.0, standard
 deviations above or below the neutral mean) and the `active_share_past_floor`
 it produces are reported for re-centring the marginals, not part of the pass
-rule. `anchor_band_k` (default 0.1, in horizon-vols) is the anchoring
-estimator's own band width, not a pass-rule knob either. Only the pooled
-`synthetic`/`all` cell (seed group `synthetic`, kind `synthetic_pool`) blocks
-the pipeline: every per-seed cell, synthetic or real, is reported but never
-blocks, and every split beyond `all` is report-only for the same reason.
+rule. Only the pooled `synthetic`/`all` cell (seed group `synthetic`, kind
+`synthetic_pool`) blocks the pipeline: every per-seed cell, synthetic or
+real, is reported but never blocks, and every split beyond `all` is
+report-only for the same reason.
 
 Four parameters also carry an opportunity-count minimum (`n_min`): exit
 deficiency 7, loss aversion 16, herding 14, anchoring 29 - each the
@@ -427,8 +426,9 @@ Limitations from the model:
 - Disposition's realised share counts any sell-day cut, trim or exit,
   rule-triggered or discretionary alike, not only a PM's own voluntary
   realisation.
-- Anchoring's recovered rate depends on the configured band width
-  (`anchor_band_k`) around the anchor, not a model-free distance.
+- Anchoring's recovered rate is hits over crossings, not rho alone: the
+  background sell hazard exits some crossings even at rho zero, so the
+  statistic is an upper bound on rho.
 - The pass-rule thresholds were probed against one run of the default
   population, not validated across many.
 - `active_share_past_floor` is reported for every cell but never gates a

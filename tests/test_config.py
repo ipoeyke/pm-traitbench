@@ -849,11 +849,14 @@ def test_dump_with_basis_covers_every_engine_leaf() -> None:
 
 def test_gate1_config_defaults() -> None:
     config = Config().gate1
-    assert config.anchor_band_k == 0.1
     assert config.floor_se == 2.0
     assert config.gap_fraction == 0.5
     assert config.min_rank_corr == 0.5
     assert config.min_pms == 5
+
+
+def test_gate1_config_has_no_anchor_band_k() -> None:
+    assert "anchor_band_k" not in type(Config().gate1).model_fields
 
 
 def test_gate1_min_rank_corr_at_one_raises() -> None:
@@ -869,11 +872,6 @@ def test_gate1_gap_fraction_at_zero_raises() -> None:
 def test_gate1_min_pms_below_three_raises() -> None:
     with pytest.raises(ValidationError, match="min_pms"):
         Config.model_validate({"gate1": {"min_pms": 2}})
-
-
-def test_gate1_anchor_band_k_at_zero_raises() -> None:
-    with pytest.raises(ValidationError, match="anchor_band_k"):
-        Config.model_validate({"gate1": {"anchor_band_k": 0}})
 
 
 def test_gate1_gap_fraction_at_one_is_accepted() -> None:

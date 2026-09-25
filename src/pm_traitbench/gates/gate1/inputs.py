@@ -76,6 +76,23 @@ def _drift_dates(
     return {param: tuple(sorted(dates)) for param, dates in by_param.items()}
 
 
+def _lead_leg_risk(idea: Idea, entry_rows: Sequence[LedgerRow]) -> float:
+    """Entry risk of the idea's lead leg (`legs[0]`), not summed over legs.
+
+    Summing double-counts a pair or spread, whose legs are sized off the same risk
+    budget. Falls back to the first entry-date row when none matches the lead leg.
+    """
+    if not entry_rows:
+        return 0.0
+    lead = idea.legs[0]
+    for row in entry_rows:
+        if row.instrument_id == lead.instrument_id and (
+            lead.tenor is None or row.tenor == lead.tenor
+        ):
+            return row.risk_amount
+    return entry_rows[0].risk_amount
+
+
 def _entry_stats(
     pm_ideas: Sequence[Idea], pm_ledger: Sequence[LedgerRow]
 ) -> tuple[dict[str, float], dict[str, int]]:
@@ -87,7 +104,7 @@ def _entry_stats(
             for row in pm_ledger
             if row.trade_idea_id == idea.trade_idea_id and row.date == idea.entry_date
         ]
-        entry_risk[idea.trade_idea_id] = sum(row.risk_amount for row in entry_rows)
+        entry_risk[idea.trade_idea_id] = _lead_leg_risk(idea, entry_rows)
         if entry_rows:
             entry_conviction[idea.trade_idea_id] = entry_rows[0].stated_conviction
     return entry_risk, entry_conviction

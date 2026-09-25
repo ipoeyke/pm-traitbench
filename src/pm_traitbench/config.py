@@ -507,17 +507,6 @@ class EngineConfig(BaseModel):
 class Gate1Config(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    anchor_band_k: float = Field(
-        0.1,
-        gt=0,
-        json_schema_extra={
-            "basis": "design",
-            "note": (
-                "horizon-vols around the anchor counted as an exit at the anchor; puts "
-                "neutral PMs near a 0.2 share"
-            ),
-        },
-    )
     floor_se: float = Field(
         2.0,
         gt=0,

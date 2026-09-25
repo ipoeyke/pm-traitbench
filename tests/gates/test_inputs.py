@@ -9,15 +9,18 @@ from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.enums import (
     AssetClass,
     DriftEventType,
+    Expression,
     Kind,
     PositionAction,
     RuleResponse,
+    Side,
     Split,
+    Tenor,
     Typicality,
 )
 from pm_traitbench.errors import Gate1Error
 from pm_traitbench.gates.gate1.inputs import build_inputs
-from pm_traitbench.tables.schema import DriftEvent, Mandate, Persona, StatedProfile, Trait
+from pm_traitbench.tables.schema import DriftEvent, Leg, Mandate, Persona, StatedProfile, Trait
 from tests.gates.conftest import idea_row, ledger_row, position_day, rule_event
 
 
@@ -192,13 +195,10 @@ def test_build_inputs_partitions_rows_per_pm(fixture_view) -> None:
     assert by_pm["pm_002"].traits[param].value == 0.2
 
 
-def test_build_inputs_entry_risk_sums_only_entry_date_ledger_rows(fixture_view) -> None:
+def test_build_inputs_entry_risk_reads_lead_leg_row_not_later_dates(fixture_view) -> None:
     idea = idea_row(pm_id="pm_001", trade_idea_id="ti_001", entry_date=date(2026, 1, 5))
-    entry_row_a = ledger_row(
+    entry_row = ledger_row(
         pm_id="pm_001", trade_idea_id="ti_001", date=date(2026, 1, 5), risk_amount=1.0
-    )
-    entry_row_b = ledger_row(
-        pm_id="pm_001", trade_idea_id="ti_001", date=date(2026, 1, 5), risk_amount=2.0
     )
     later_row = ledger_row(
         pm_id="pm_001", trade_idea_id="ti_001", date=date(2026, 1, 6), risk_amount=100.0
@@ -209,14 +209,99 @@ def test_build_inputs_entry_risk_sums_only_entry_date_ledger_rows(fixture_view) 
         traits=_bias_traits("pm_001"),
         drift_events=[],
         ideas=[idea],
-        ledger=[entry_row_a, entry_row_b, later_row],
+        ledger=[entry_row, later_row],
         rule_events=[],
         position_days=[],
         views={"T": fixture_view},
         engine_counts={"pm_001": {"c": 0}},
         skipped=set(),
     )
-    assert result[0].entry_risk["ti_001"] == 3.0
+    assert result[0].entry_risk["ti_001"] == 1.0
+
+
+def test_build_inputs_entry_risk_pair_reads_lead_leg_not_the_sum(fixture_view) -> None:
+    idea = idea_row(
+        pm_id="pm_001",
+        trade_idea_id="ti_001",
+        entry_date=date(2026, 1, 5),
+        expression=Expression.PAIR,
+        legs=(
+            Leg(instrument_id="EQ-0001", tenor=None, side=Side.BUY, weight=1.0),
+            Leg(instrument_id="EQ-0002", tenor=None, side=Side.SELL, weight=1.0),
+        ),
+    )
+    lead_leg_row = ledger_row(
+        pm_id="pm_001",
+        trade_idea_id="ti_001",
+        date=date(2026, 1, 5),
+        instrument_id="EQ-0001",
+        risk_amount=1.0,
+    )
+    other_leg_row = ledger_row(
+        pm_id="pm_001",
+        trade_idea_id="ti_001",
+        date=date(2026, 1, 5),
+        instrument_id="EQ-0002",
+        risk_amount=2.0,
+    )
+    result = build_inputs(
+        config=Config(),
+        personas=[_persona("pm_001")],
+        traits=_bias_traits("pm_001"),
+        drift_events=[],
+        ideas=[idea],
+        ledger=[other_leg_row, lead_leg_row],
+        rule_events=[],
+        position_days=[],
+        views={"T": fixture_view},
+        engine_counts={"pm_001": {"c": 0}},
+        skipped=set(),
+    )
+    assert result[0].entry_risk["ti_001"] == 1.0
+
+
+def test_build_inputs_entry_risk_curve_reads_lead_leg_tenor(fixture_view) -> None:
+    idea = idea_row(
+        pm_id="pm_001",
+        trade_idea_id="ti_001",
+        instrument_id="RT-USD",
+        entry_date=date(2026, 1, 5),
+        expression=Expression.CURVE,
+        legs=(
+            Leg(instrument_id="RT-USD", tenor=Tenor.Y2, side=Side.BUY, weight=1.0),
+            Leg(instrument_id="RT-USD", tenor=Tenor.Y10, side=Side.SELL, weight=1.0),
+        ),
+    )
+    long_tenor_row = ledger_row(
+        pm_id="pm_001",
+        trade_idea_id="ti_001",
+        date=date(2026, 1, 5),
+        instrument_id="RT-USD",
+        tenor=Tenor.Y10,
+        risk_amount=2.0,
+    )
+    lead_tenor_row = ledger_row(
+        pm_id="pm_001",
+        trade_idea_id="ti_001",
+        date=date(2026, 1, 5),
+        instrument_id="RT-USD",
+        tenor=Tenor.Y2,
+        risk_amount=1.0,
+    )
+    result = build_inputs(
+        config=Config(),
+        personas=[_persona("pm_001")],
+        traits=_bias_traits("pm_001"),
+        drift_events=[],
+        ideas=[idea],
+        ledger=[long_tenor_row, lead_tenor_row],
+        rule_events=[],
+        position_days=[],
+        views={"T": fixture_view},
+        engine_counts={"pm_001": {"c": 0}},
+        skipped=set(),
+    )
+    assert result[0].entry_risk["ti_001"] == 1.0
 
 
 def test_build_inputs_entry_conviction_reads_first_entry_date_ledger_row(fixture_view) -> None:

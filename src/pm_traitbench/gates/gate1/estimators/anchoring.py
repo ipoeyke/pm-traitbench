@@ -1,53 +1,67 @@
-"""Anchoring: the share of discretionary exits that land at the anchor rather than the target."""
+"""Anchoring: the share of anchor crossings the PM exits on.
 
-import math
+An idea's anchor is a round level fixed at entry (`anchor_level` on its
+position-day rows), a salient prior level after Northcraft and Neale (1987).
+Among ideas whose tracked level reaches that anchor, the share exited on the
+crossing day estimates rho plus the background sell hazard that would exit
+some ideas there anyway.
+"""
+
 from datetime import date
 
 from pm_traitbench.config import Gate1Config
+from pm_traitbench.engine.series import Series
 from pm_traitbench.enums import PositionAction
 from pm_traitbench.gates.gate1.estimate import Estimate, EstimatorSpec
 from pm_traitbench.gates.gate1.inputs import PmInputs
 from pm_traitbench.gates.gate1.side_sign import SIDE_SIGN
+from pm_traitbench.tables.schema import Idea, PositionDay
 
 
-def _discretionary_exits(inputs: PmInputs, days: frozenset[date]):
-    ideas = {idea.trade_idea_id: idea for idea in inputs.ideas}
-    for row in inputs.position_days:
-        if row.date not in days or row.action != PositionAction.EXIT:
+def _crossing_row(idea: Idea, rows: list[PositionDay], series: Series) -> PositionDay | None:
+    """First row after entry whose tracked level reaches the anchor toward the target."""
+    if not rows or rows[0].anchor_level is None:
+        return None
+    anchor = rows[0].anchor_level
+    fav = 1.0 if idea.target_level >= idea.entry_level else -1.0
+    bullish = series.bullish_sign * SIDE_SIGN[idea.side]
+    for row in rows:
+        if row.date <= idea.entry_date:
             continue
-        if row.date == inputs.last_date:
-            continue
-        if (row.trade_idea_id, row.date) in inputs.acted:
-            continue
-        if row.anchor_level is None:
-            continue
-        idea = ideas[row.trade_idea_id]  # a position day always belongs to a known idea
-        if math.isclose(row.anchor_level, idea.target_level, rel_tol=1e-9, abs_tol=1e-9):
-            continue
-        yield idea, row
+        level = idea.entry_level + bullish * row.pnl_unit
+        if (level - anchor) * fav >= 0:
+            return row
+    return None
 
 
 def estimate(inputs: PmInputs, days: frozenset[date], knobs: Gate1Config) -> Estimate:
-    """Share of discretionary exits whose rebuilt level lands within a band of the anchor.
+    """Hits (exit on the crossing day) over opportunities (a crossing before the horizon ends).
 
-    A discretionary exit is one the PM chose (not a rule the PM acted on), not
-    on the last horizon date, with an anchor recorded and distinct from the
-    idea's target. The band is `anchor_band_k` horizon-vols either side of the
-    anchor.
+    A crossing on `inputs.last_date` is not an opportunity - every open position closes
+    out that day regardless of the PM's choice. A crossing day whose exit followed an
+    acted rule event is not a hit, since the PM did not choose it.
     """
-    n = 0
-    inside = 0
-    for idea, row in _discretionary_exits(inputs, days):
-        s = inputs.series[idea.trade_idea_id]
-        t = inputs.day_index[row.date]
-        exit_level = idea.entry_level + s.bullish_sign * SIDE_SIGN[idea.side] * row.pnl_unit
-        band = knobs.anchor_band_k * inputs.view.sd_h(s, t, inputs.horizon_days)
-        n += 1
-        if abs(exit_level - row.anchor_level) <= band:
-            inside += 1
-    if n == 0:
+    rows_by_idea: dict[str, list[PositionDay]] = {}
+    for row in inputs.position_days:
+        rows_by_idea.setdefault(row.trade_idea_id, []).append(row)
+
+    opportunities = 0
+    hits = 0
+    for idea in inputs.ideas:
+        if idea.entry_date not in days:
+            continue
+        rows = sorted(rows_by_idea.get(idea.trade_idea_id, ()), key=lambda row: row.date)
+        crossing = _crossing_row(idea, rows, inputs.series[idea.trade_idea_id])
+        if crossing is None or crossing.date == inputs.last_date:
+            continue
+        opportunities += 1
+        acted_that_day = (idea.trade_idea_id, crossing.date) in inputs.acted
+        if crossing.action == PositionAction.EXIT and not acted_that_day:
+            hits += 1
+
+    if opportunities == 0:
         return Estimate(value=None, n=0)
-    return Estimate(value=inside / n, n=n)
+    return Estimate(value=hits / opportunities, n=opportunities)
 
 
 SPEC = EstimatorSpec(estimate, higher_is_stronger=True)
