@@ -12,6 +12,7 @@ from pm_traitbench.config import (
     CalendarConfig,
     Config,
     DriftConfig,
+    EngineConfig,
     EventSpec,
     MarketConfig,
     RealSeedSpec,
@@ -122,6 +123,16 @@ def test_unknown_top_level_key_raises_config_error_naming_key(tmp_path: Path) ->
 def test_unknown_nested_key_raises_config_error_naming_key(tmp_path: Path) -> None:
     path = _write_yaml(tmp_path, {"biases": {"bogus_nested": 1}})
     with pytest.raises(ConfigError, match="bogus_nested"):
+        load_config(path)
+
+
+def test_engine_config_has_no_softmax_tau() -> None:
+    assert "softmax_tau" not in EngineConfig.model_fields
+
+
+def test_softmax_tau_in_yaml_raises_config_error(tmp_path: Path) -> None:
+    path = _write_yaml(tmp_path, {"engine": {"softmax_tau": 1}})
+    with pytest.raises(ConfigError, match="softmax_tau"):
         load_config(path)
 
 

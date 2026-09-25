@@ -255,10 +255,10 @@ trades off realism for a model whose biases are each one legible formula:
   realised coverage matches its stated coverage regardless of what its
   forecast says.
 - One rule per bias parameter, each collapsing to a formula: loss aversion
-  is a cut/hold/add softmax over `{-lambda|z|, r, r(1+f) - lambda|z|f}`,
-  where `r` is the forecast still to come in z units,
-  `side * bullish_sign * (forecast - (level - entry)) / sd` with `sd` taken
-  at entry; disposition is a daily sell hazard scaled by `sqrt(D)` at
+  cuts a losing position with probability `0.05 / lambda` and, when adding
+  is allowed, adds with probability `min(0.5, 0.1 * max(lambda - 1, 0))`,
+  else holds, so lambda above 1 raises the add hazard and lowers the cut
+  hazard; disposition is a daily sell hazard scaled by `sqrt(D)` at
   a gain and `1/sqrt(D)` at a loss; anchoring blends the exit level
   `(1-rho)*target + rho*anchor`; extrapolation blends the forecast
   `(1-theta)*thesis_move + theta*trailing_move`, and entry and side follow

@@ -1097,8 +1097,9 @@ def test_min_holding_period_blocks_a_discretionary_cut(eq_parts) -> None:
     idea_rules = _idea_rules_for(pos, persona.pm_id)
     min_holding_rule = next(r for r in pm_rules if r.param == "min_holding_period")
     assert float(min_holding_rule.level) == 5.0
+    # lambda near zero pushes the cut hazard (0.05 / lambda) past 1, forcing a cut.
     traits = _traits_with(
-        traits, {"exit_deficiency": (0.0, False), "loss_aversion_lambda": (0.0, True)}
+        traits, {"exit_deficiency": (0.0, False), "loss_aversion_lambda": (0.01, True)}
     )
     ctx = _ctx(persona, traits, pm_rules, adapter, ["EQ-A"], catalogue, config)
 

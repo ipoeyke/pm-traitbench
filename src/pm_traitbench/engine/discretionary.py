@@ -84,11 +84,6 @@ def handle_discretionary(
     b_acted = False
 
     if pnl_state == PnlState.LOSS:
-        remaining_move_bullish = position.series.bullish_sign * (
-            position.forecast - (level_now - position.entry_level)
-        )
-        forecast_remaining_z = position.side_sign * remaining_move_bullish / position.sd_h_at_entry
-
         no_add_rule = find_pm_rule(ctx.pm_rules, "no_add_before_trigger")
         breach = False
         if no_add_rule is not None and position.triggers_fired == 0:
@@ -100,10 +95,7 @@ def handle_discretionary(
             add_allowed = True
 
         choice = loss_aversion.choose(
-            pnl_z,
-            forecast_remaining_z,
             params,
-            ctx.config,
             ctx.rng_for("loss_side", t, position.trade_idea_id),
             add_allowed,
         )

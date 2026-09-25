@@ -484,14 +484,6 @@ class EngineConfig(BaseModel):
             "note": "share of ideas in the preferred expression when a mapped preference is held",
         },
     )
-    softmax_tau: float = Field(
-        1.0,
-        gt=0,
-        json_schema_extra={
-            "basis": "guess",
-            "note": "temperature of the loss-side action draw in vol units",
-        },
-    )
     base_hazard: float = Field(
         0.03,
         gt=0,

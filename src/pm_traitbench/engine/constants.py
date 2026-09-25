@@ -11,6 +11,12 @@ CONVICTION_CUTS = (1.0, 1.14, 1.31, 1.53, 1.86)
 SIGNPOSTS_PER_IDEA = (2, 3)
 # An add buys half the position's original size.
 ADD_FRACTION = 0.5
+# A neutral PM (lambda about 1.1) cuts on about 4.5% of loss-side days.
+LOSS_CUT_HAZARD = 0.05
+# An active PM at the 2.0 centre adds on about 10% of loss-side days.
+LOSS_ADD_SLOPE = 0.1
+# Caps the add hazard so no lambda adds on more than half of loss-side days.
+LOSS_ADD_CAP = 0.5
 # Size at conviction rank 1-5 as a fraction of the mandate cap, linear.
 RISK_STEPS = (0.2, 0.4, 0.6, 0.8, 1.0)
 # No new entries in the final five sessions, so every idea gets at least a week of life.

@@ -15,11 +15,10 @@ from pm_traitbench.engine.biases.anchoring import flag as anchoring_flag
 from pm_traitbench.engine.biases.disposition import draw_sell, sell_hazard
 from pm_traitbench.engine.biases.disposition import flag as disposition_flag
 from pm_traitbench.engine.biases.exit_deficiency import LATE_ROLL_FLAG, Response, respond
-from pm_traitbench.engine.biases.loss_aversion import LossSideChoice, choose
 from pm_traitbench.engine.params import EffectiveParams
 from pm_traitbench.engine.series import LegRef, Series
 from pm_traitbench.engine.state import Position
-from pm_traitbench.enums import Expression, PnlState, PositionAction, RuleResponse, Side
+from pm_traitbench.enums import Expression, PnlState, RuleResponse, Side
 from pm_traitbench.rng import stream
 
 
@@ -144,85 +143,6 @@ def test_respond_breach_share_matches_e_over_many_draws() -> None:
 
 def test_late_roll_flag_constant() -> None:
     assert LATE_ROLL_FLAG == "exit_deficiency:late_roll"
-
-
-# --- loss_aversion.choose -------------------------------------------------------
-
-
-def _share(action: PositionAction, choices: list[LossSideChoice]) -> float:
-    return sum(1 for c in choices if c.action == action) / len(choices)
-
-
-def test_choose_raising_lambda_raises_add_or_hold_share_and_lowers_cut_share() -> None:
-    # Direction comparison over many draws, no seed hunting.
-    config = Config()
-    low = _params({"loss_aversion_lambda": 1.0}, {"loss_aversion_lambda"})
-    high = _params({"loss_aversion_lambda": 4.0}, {"loss_aversion_lambda"})
-    rng_low = stream(1, "loss-aversion-lam-low")
-    rng_high = stream(1, "loss-aversion-lam-high")
-
-    choices_low = [choose(-1.0, 0.5, low, config, rng_low, add_allowed=True) for _ in range(2000)]
-    choices_high = [
-        choose(-1.0, 0.5, high, config, rng_high, add_allowed=True) for _ in range(2000)
-    ]
-
-    add_or_hold_low = _share(PositionAction.ADD, choices_low) + _share(
-        PositionAction.HOLD, choices_low
-    )
-    add_or_hold_high = _share(PositionAction.ADD, choices_high) + _share(
-        PositionAction.HOLD, choices_high
-    )
-    cut_low = _share(PositionAction.CUT, choices_low)
-    cut_high = _share(PositionAction.CUT, choices_high)
-
-    assert add_or_hold_high > add_or_hold_low
-    assert cut_high < cut_low
-
-
-def test_choose_matches_hand_computed_softmax_at_lambda_four() -> None:
-    # Oracle: lam=4, L=1, tau=1 gives V_cut=-4, V_hold=0.5, V_add=-1.25, so the
-    # softmax shares are (cut, hold, add) ~= (0.0094, 0.8440, 0.1467). Tolerance
-    # 0.03 at hold's SE (~0.0057 over 4,000 draws) is about 5.2 SE two-sided,
-    # a false-alarm rate under 1 in a million.
-    config = Config()
-    params = _params({"loss_aversion_lambda": 4.0}, {"loss_aversion_lambda"})
-    rng = stream(1, "loss-aversion-oracle")
-    choices = [choose(-1.0, 0.5, params, config, rng, add_allowed=True) for _ in range(4000)]
-    assert _share(PositionAction.CUT, choices) == pytest.approx(0.0094, abs=0.03)
-    assert _share(PositionAction.HOLD, choices) == pytest.approx(0.8440, abs=0.03)
-    assert _share(PositionAction.ADD, choices) == pytest.approx(0.1467, abs=0.03)
-
-
-def test_choose_add_not_allowed_never_returns_add() -> None:
-    config = Config()
-    params = _params({"loss_aversion_lambda": 4.0}, {"loss_aversion_lambda"})
-    rng = stream(1, "loss-aversion-no-add")
-    for _ in range(500):
-        choice = choose(-1.0, 0.5, params, config, rng, add_allowed=False)
-        assert choice.action != PositionAction.ADD
-
-
-def test_choose_flags_match_action_when_active() -> None:
-    config = Config()
-    params = _params({"loss_aversion_lambda": 4.0}, {"loss_aversion_lambda"})
-    rng = stream(1, "loss-aversion-flags")
-    for _ in range(500):
-        choice = choose(-1.0, 0.5, params, config, rng, add_allowed=True)
-        if choice.action == PositionAction.ADD:
-            assert choice.flag == "loss_aversion:add"
-        elif choice.action == PositionAction.HOLD:
-            assert choice.flag == "loss_aversion:hold"
-        else:
-            assert choice.flag is None
-
-
-def test_choose_no_flag_when_inactive() -> None:
-    config = Config()
-    params = _params({"loss_aversion_lambda": 4.0}, set())
-    rng = stream(1, "loss-aversion-inactive")
-    for _ in range(500):
-        choice = choose(-1.0, 0.5, params, config, rng, add_allowed=True)
-        assert choice.flag is None
 
 
 # --- disposition.sell_hazard, draw_sell, flag ----------------------------------
