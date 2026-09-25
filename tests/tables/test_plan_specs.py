@@ -138,6 +138,15 @@ def test_claim_dated_on_or_after_signal_raises() -> None:
         )
 
 
+def test_claim_belonging_to_another_pm_raises() -> None:
+    with pytest.raises(ValidationError):
+        _signal(
+            mode=SignalMode.CONTRADICTION,
+            trade_idea_id="ti_001",
+            claim_session_id="s_pm002_2026-02-01_a",
+        )
+
+
 def test_contradiction_without_idea_raises() -> None:
     with pytest.raises(ValidationError):
         _signal(
@@ -193,6 +202,31 @@ def test_revealed_reaction_stance_without_advisor_violation_raises() -> None:
 def test_unsorted_trade_idea_ids_raises() -> None:
     with pytest.raises(ValidationError):
         _skeleton(trade_idea_ids=("ti_002", "ti_001"))
+
+
+def test_trade_idea_id_failing_pattern_raises() -> None:
+    with pytest.raises(ValidationError):
+        _skeleton(trade_idea_ids=("bad_id",))
+
+
+def test_duplicate_trade_idea_ids_raises() -> None:
+    with pytest.raises(ValidationError):
+        _skeleton(trade_idea_ids=("ti_001", "ti_001"))
+
+
+def test_silence_with_trade_idea_ids_raises() -> None:
+    with pytest.raises(ValidationError):
+        _skeleton(kind=SessionKind.SILENCE, stances=(), trade_idea_ids=("ti_001",))
+
+
+def test_silence_with_advisor_violation_raises() -> None:
+    with pytest.raises(ValidationError):
+        _skeleton(
+            kind=SessionKind.SILENCE,
+            stances=(),
+            trade_idea_ids=(),
+            advisor_violation="Advisor violated a mandate constraint.",
+        )
 
 
 def test_hidden_columns_skeletons_equals_non_key_fields() -> None:

@@ -732,8 +732,12 @@ _SESSION_ID_PATTERN = r"^s_pm\d{3,}_\d{4}-\d{2}-\d{2}_[a-z]$"
 _IDEA_ID_RE = re.compile(_IDEA_ID_PATTERN)
 
 
+def _session_pm_prefix(pm_id: str) -> str:
+    return f"s_{pm_id.replace('_', '')}_"
+
+
 def _session_prefix(pm_id: str, date: datetime.date) -> str:
-    return f"s_{pm_id.replace('_', '')}_{date.isoformat()}_"
+    return f"{_session_pm_prefix(pm_id)}{date.isoformat()}_"
 
 
 def _session_date(session_id: str) -> datetime.date:
@@ -782,8 +786,7 @@ class Signal(BaseModel):
         if has_claim != (self.mode == SignalMode.CONTRADICTION):
             raise ValueError("claim_session_id must be set exactly when mode is 'contradiction'")
         if has_claim:
-            claim_prefix = f"s_{self.pm_id.replace('_', '')}_"
-            if not self.claim_session_id.startswith(claim_prefix):
+            if not self.claim_session_id.startswith(_session_pm_prefix(self.pm_id)):
                 raise ValueError("claim_session_id must belong to the signal's own pm")
             if _session_date(self.claim_session_id) >= self.date:
                 raise ValueError("claim_session_id must be dated earlier than date")
