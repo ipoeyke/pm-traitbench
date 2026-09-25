@@ -23,6 +23,8 @@ from pm_traitbench.errors import TableValidationError
 from pm_traitbench.tables.formats import FORMATS
 from pm_traitbench.tables.schema import (
     DriftEvent,
+    Gate1CellRow,
+    Gate1PmRow,
     Idea,
     Leg,
     Mandate,
@@ -223,6 +225,28 @@ def test_round_trip_idea_with_list_struct_legs(tmp_path: Path, format_name: str)
     fmt.write([to_record(row)], Idea, path)
     records = fmt.read(path, Idea)
     assert [Idea.model_validate(record) for record in records] == [row]
+
+
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
+def test_round_trip_gate1_pm_row(
+    tmp_path: Path, format_name: str, gate1_pm_row: Gate1PmRow
+) -> None:
+    fmt = FORMATS[format_name]
+    path = tmp_path / f"table.{fmt.extension}"
+    fmt.write([to_record(gate1_pm_row)], Gate1PmRow, path)
+    records = fmt.read(path, Gate1PmRow)
+    assert [Gate1PmRow.model_validate(record) for record in records] == [gate1_pm_row]
+
+
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
+def test_round_trip_gate1_cell_row(
+    tmp_path: Path, format_name: str, gate1_cell_row: Gate1CellRow
+) -> None:
+    fmt = FORMATS[format_name]
+    path = tmp_path / f"table.{fmt.extension}"
+    fmt.write([to_record(gate1_cell_row)], Gate1CellRow, path)
+    records = fmt.read(path, Gate1CellRow)
+    assert [Gate1CellRow.model_validate(record) for record in records] == [gate1_cell_row]
 
 
 def test_jsonl_write_missing_record_column_raises_table_validation_error(tmp_path: Path) -> None:

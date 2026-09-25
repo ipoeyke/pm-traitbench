@@ -24,7 +24,7 @@ from pm_traitbench.enums import (
     RuleScope,
     Side,
 )
-from pm_traitbench.tables.schema import Instrument, Rule
+from pm_traitbench.tables.schema import Idea, Instrument, Rule
 
 
 class Adapter(Protocol):
@@ -108,6 +108,28 @@ def tracked_level(pos: Position, view: MarketView, t: int) -> float:
 def leg_side(pos_side_sign: int, bullish_sign: int, coeff: float, leg_bullish: int) -> Side:
     """The ledger side for one leg, from the position's direction and the leg's own sign."""
     return Side.BUY if pos_side_sign * bullish_sign * coeff * leg_bullish > 0 else Side.SELL
+
+
+def series_for_idea(idea: Idea, adapter: Adapter) -> Series:
+    """The level series an idea trades, rebuilt from its public legs.
+
+    Inverts the ledger-side rule in `leg_side`: given a leg's recorded side and
+    the idea's own side, the leg's signed weight in the series is recoverable
+    without reading any hidden column. Outright uses `outright_series` because
+    an idea's outright leg drops the tenor the position tracks (commodity M1,
+    sovereign 10Y).
+    """
+    if idea.expression == Expression.OUTRIGHT:
+        return adapter.outright_series(idea.instrument_id)
+    bullish_sign = adapter.series(idea.expression, ()).bullish_sign
+    side_sign = 1 if idea.side == Side.BUY else -1
+    refs = []
+    for leg in idea.legs:
+        unit_ref = LegRef(leg.instrument_id, leg.tenor, 1.0)
+        leg_sign = 1 if leg.side == Side.BUY else -1
+        sign = leg_sign * side_sign * bullish_sign * adapter.leg_bullish(unit_ref)
+        refs.append(LegRef(leg.instrument_id, leg.tenor, leg.weight * sign))
+    return adapter.series(idea.expression, tuple(refs))
 
 
 def target_reached(pos: Position, level_now: float) -> bool:

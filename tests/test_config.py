@@ -465,6 +465,18 @@ def test_seed_name_in_both_synthetic_and_real_seeds_raises() -> None:
         Config.model_validate({"market": {"seeds": {"R1": ["range", "risk_off", "risk_on"]}}})
 
 
+def test_seed_named_synthetic_in_market_seeds_raises() -> None:
+    with pytest.raises(ValidationError, match="seed name 'synthetic' is reserved"):
+        Config.model_validate(
+            {"market": {"seeds": {"synthetic": ["range", "risk_off", "risk_on"]}}}
+        )
+
+
+def test_seed_named_synthetic_in_real_seeds_raises() -> None:
+    with pytest.raises(ValidationError, match="seed name 'synthetic' is reserved"):
+        Config.model_validate({"market": {"real": {"seeds": {"synthetic": _real_seed_kwargs()}}}})
+
+
 def _real_seed_kwargs(**overrides) -> dict:
     kwargs = {
         "window_start": date(2018, 6, 4),
@@ -819,6 +831,61 @@ def test_dump_with_basis_covers_every_engine_leaf() -> None:
     engine_paths = [path for path in rows if path.startswith("engine.")]
     assert set(engine_paths) == {f"engine.{name}" for name in type(config.engine).model_fields}
     for path in engine_paths:
+        row = rows[path]
+        assert row.basis in ("sourced", "design", "guess")
+        assert row.note.strip()
+
+
+def test_gate1_config_defaults() -> None:
+    config = Config().gate1
+    assert config.anchor_band_k == 0.1
+    assert config.floor_se == 2.0
+    assert config.gap_fraction == 0.5
+    assert config.min_rank_corr == 0.5
+    assert config.min_pms == 5
+
+
+def test_gate1_min_rank_corr_at_one_raises() -> None:
+    with pytest.raises(ValidationError, match="min_rank_corr"):
+        Config.model_validate({"gate1": {"min_rank_corr": 1.0}})
+
+
+def test_gate1_gap_fraction_at_zero_raises() -> None:
+    with pytest.raises(ValidationError, match="gap_fraction"):
+        Config.model_validate({"gate1": {"gap_fraction": 0}})
+
+
+def test_gate1_min_pms_below_three_raises() -> None:
+    with pytest.raises(ValidationError, match="min_pms"):
+        Config.model_validate({"gate1": {"min_pms": 2}})
+
+
+def test_gate1_anchor_band_k_at_zero_raises() -> None:
+    with pytest.raises(ValidationError, match="anchor_band_k"):
+        Config.model_validate({"gate1": {"anchor_band_k": 0}})
+
+
+def test_gate1_gap_fraction_at_one_is_accepted() -> None:
+    config = Config.model_validate({"gate1": {"gap_fraction": 1}})
+    assert config.gate1.gap_fraction == 1
+
+
+def test_gate1_min_rank_corr_at_zero_is_accepted() -> None:
+    config = Config.model_validate({"gate1": {"min_rank_corr": 0}})
+    assert config.gate1.min_rank_corr == 0
+
+
+def test_gate1_min_pms_at_three_is_accepted() -> None:
+    config = Config.model_validate({"gate1": {"min_pms": 3}})
+    assert config.gate1.min_pms == 3
+
+
+def test_dump_with_basis_covers_every_gate1_leaf() -> None:
+    config = Config()
+    rows = {row.path: row for row in config.dump_with_basis()}
+    gate1_paths = [path for path in rows if path.startswith("gate1.")]
+    assert set(gate1_paths) == {f"gate1.{name}" for name in type(config.gate1).model_fields}
+    for path in gate1_paths:
         row = rows[path]
         assert row.basis in ("sourced", "design", "guess")
         assert row.note.strip()

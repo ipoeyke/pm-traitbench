@@ -186,6 +186,27 @@ class PnlState(StrEnum):
     FLAT = "flat"
 
 
+class Gate1Verdict(StrEnum):
+    PASS = "pass"
+    FAIL = "fail"
+    INSUFFICIENT = "insufficient"
+
+
+class Gate1Split(StrEnum):
+    ALL = "all"
+    REGIME_RANGE = "regime_range"
+    REGIME_RISK_OFF = "regime_risk_off"
+    REGIME_RISK_ON = "regime_risk_on"
+    BEFORE = "before"
+    AFTER = "after"
+
+
+class SeedGroupKind(StrEnum):
+    SYNTHETIC_POOL = "synthetic_pool"
+    SYNTHETIC_SEED = "synthetic_seed"
+    REAL_SEED = "real_seed"
+
+
 SOVEREIGN_TENORS: tuple[Tenor, ...] = (Tenor.Y2, Tenor.Y5, Tenor.Y10, Tenor.Y30)
 FUTURES_TENORS: tuple[Tenor, ...] = (
     Tenor.M1,

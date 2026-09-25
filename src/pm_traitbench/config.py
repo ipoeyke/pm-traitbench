@@ -512,6 +512,59 @@ class EngineConfig(BaseModel):
         return self
 
 
+class Gate1Config(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    anchor_band_k: float = Field(
+        0.1,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "horizon-vols around the anchor counted as an exit at the anchor; puts "
+                "neutral PMs near a 0.2 share"
+            ),
+        },
+    )
+    floor_se: float = Field(
+        2.0,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": "neutral standard deviations between the neutral mean and the active floor",
+        },
+    )
+    gap_fraction: float = Field(
+        0.5,
+        gt=0,
+        le=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "neutral sd at most this share of the active-neutral gap puts the active "
+                "mean past the floor"
+            ),
+        },
+    )
+    min_rank_corr: float = Field(
+        0.5,
+        ge=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": "about three standard errors of a rank correlation on 33 PMs under no recovery",
+        },
+    )
+    min_pms: int = Field(
+        5,
+        ge=3,
+        json_schema_extra={
+            "basis": "design",
+            "note": "smallest neutral or active set with a usable standard deviation",
+        },
+    )
+
+
 class OutputConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -1560,6 +1613,10 @@ class MarketConfig(BaseModel):
             raise ValueError(
                 f"seed name(s) in both market.seeds and market.real.seeds: {sorted(overlap)}"
             )
+        if "synthetic" in self.seeds or "synthetic" in self.real.seeds:
+            raise ValueError(
+                "seed name 'synthetic' is reserved for gate 1's pooled synthetic group"
+            )
         return self
 
     @model_validator(mode="after")
@@ -1605,6 +1662,7 @@ class Config(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
     market: MarketConfig = Field(default_factory=MarketConfig)
     engine: EngineConfig = Field(default_factory=EngineConfig)
+    gate1: Gate1Config = Field(default_factory=Gate1Config)
 
     @model_validator(mode="after")
     def _check_week_ranges_within_calendar(self) -> "Config":

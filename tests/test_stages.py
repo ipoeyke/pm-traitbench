@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -316,3 +317,70 @@ def test_run_stage_append_not_written_raises_did_not_write(tmp_path: Path) -> No
 
     with pytest.raises(StageIOError, match="did not write"):
         run_stage(stage, config, DataStore(tmp_path, config.output))
+
+
+def test_run_stage_calls_verdict_after_metadata_is_written(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    received: dict[str, Any] = {}
+
+    def _run(config: Config, store: DataStore) -> dict[str, Any]:
+        store.write(TRAITS, [_trait("pm_001", "t_01")])
+        return {"check": {"ok": True}}
+
+    def _verdict(extra: dict[str, Any]) -> None:
+        assert (tmp_path / "run_metadata" / "fake.json").exists()
+        received.update(extra)
+
+    stage = Stage(number=1, name="fake", help="h", run=_run, writes=(TRAITS,), verdict=_verdict)
+
+    run_stage(stage, config, store)
+
+    assert received == {"check": {"ok": True}}
+
+
+def test_run_stage_verdict_raising_leaves_tables_and_metadata(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+
+    def _verdict(extra: dict[str, Any]) -> None:
+        raise StageIOError("verdict failed")
+
+    stage = Stage(
+        number=1, name="fake", help="h", run=_write_two_traits, writes=(TRAITS,), verdict=_verdict
+    )
+
+    with pytest.raises(StageIOError, match="verdict failed"):
+        run_stage(stage, config, store)
+
+    assert store.exists(TRAITS)
+    assert (tmp_path / "run_metadata" / "fake.json").exists()
+
+
+def test_run_stage_without_verdict_is_unchanged(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    stage = Stage(number=1, name="fake", help="h", run=_write_two_traits, writes=(TRAITS,))
+
+    run_stage(stage, config, store)
+
+    assert store.exists(TRAITS)
+    assert (tmp_path / "run_metadata" / "fake.json").exists()
+
+
+def test_run_stage_verdict_receives_empty_dict_when_run_returns_none(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    received: dict[str, Any] = {"unset": True}
+
+    def _verdict(extra: dict[str, Any]) -> None:
+        received.clear()
+        received.update(extra)
+
+    stage = Stage(
+        number=1, name="fake", help="h", run=_write_two_traits, writes=(TRAITS,), verdict=_verdict
+    )
+
+    run_stage(stage, config, store)
+
+    assert received == {}

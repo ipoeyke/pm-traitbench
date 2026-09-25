@@ -47,3 +47,9 @@ class EngineError(PmTraitbenchError):
     """Raised when the behaviour engine breaks one of its own invariants."""
 
     exit_code = 1
+
+
+class Gate1Error(PmTraitbenchError):
+    """Raised when Gate 1 cannot run or a blocking recovery test fails."""
+
+    exit_code = 1
