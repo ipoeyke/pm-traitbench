@@ -108,7 +108,6 @@ class _DraftSession:
 class _Record:
     """One placed signal's mutable working state, before its id and rows are built."""
 
-    index: int
     planned: PlannedSignal
     carrier: Carrier | None = None
     trade_idea_id: str | None = None
@@ -157,7 +156,7 @@ def assemble(
         if lst is not None:
             lst[:] = [s for s in lst if s is not session]
 
-    # Step 1: carrier signals, grouped by trait in trait_id order, plan order within a trait.
+    # Carrier signals, grouped by trait in trait_id order, plan order within a trait.
     by_trait: dict[str, list[tuple[int, PlannedSignal]]] = {}
     for i, s in enumerate(planned):
         if s.needs_carrier:
@@ -185,21 +184,19 @@ def assemble(
             carrier = eligible[rng.integers(len(eligible))]
             used_carriers.add(carrier)
             session = find_room(carrier.date, trait_id, s.entry) or new_session(carrier.date)
-            record = _Record(
-                index=i, planned=s, carrier=carrier, trade_idea_id=carrier.trade_idea_id
-            )
+            record = _Record(planned=s, carrier=carrier, trade_idea_id=carrier.trade_idea_id)
             record.main_order = place(session, trait_id, s.entry, record)
             record.main_session = session
             records[i] = record
 
-    # Step 2: claims, for every placed contradiction.
+    # Claims, for every placed contradiction.
     for i in list(records):
         record = records[i]
         s = record.planned
         if s.mode != SignalMode.CONTRADICTION:
             continue
         carrier = record.carrier
-        assert carrier is not None
+        assert carrier is not None, "a placed contradiction was already given a carrier"
         lead_min, lead_max = knobs.claim_lead_days
         carrier_index = day_index[carrier.date]
         lo = max(0, carrier_index - lead_max)
@@ -235,7 +232,7 @@ def assemble(
         record.claim_session = claim_session
         record.claim_date = claim_day
 
-    # Step 3: every remaining non-note signal, in random order.
+    # Every remaining non-note signal, in random order.
     packable = [
         (i, s) for i, s in enumerate(planned) if not s.needs_carrier and s.drift_date is None
     ]
@@ -263,12 +260,12 @@ def assemble(
         else:
             day = allowed_dates[rng.integers(len(allowed_dates))]
             session = new_session(day)
-        record = _Record(index=i, planned=s)
+        record = _Record(planned=s)
         record.main_order = place(session, s.trait_id, s.entry, record)
         record.main_session = session
         records[i] = record
 
-    # Step 4: drift notes, in drift_date order.
+    # Drift notes, in drift_date order.
     drift_pairs = sorted(
         ((i, s) for i, s in enumerate(planned) if s.drift_date is not None),
         key=lambda pair: pair[1].drift_date,
@@ -291,12 +288,12 @@ def assemble(
         if session is None:
             day = next(d for d in inputs.trading_days if d >= s.drift_date)
             session = new_session(day)
-        record = _Record(index=i, planned=s)
+        record = _Record(planned=s)
         record.main_order = place(session, s.trait_id, s.entry, record)
         record.main_session = session
         records[i] = record
 
-    # Step 5: ledger sessions, for dates whose orders reach the PM's own risk percentile.
+    # Ledger sessions, for dates whose orders reach the PM's own risk percentile.
     if inputs.ledger:
         risk_amounts = [row.risk_amount for row in inputs.ledger]
         threshold = float(np.percentile(risk_amounts, knobs.ledger_session_percentile))
@@ -315,7 +312,7 @@ def assemble(
             else:
                 new_session(day).ledger_idea_ids |= idea_ids
 
-    # Step 7 (filler comes before the ids are assigned): round the calendar out.
+    # Filler sessions, drawn before ids are assigned, to round the calendar out.
     signal_session_count = sum(1 for lst in by_date.values() for s in lst if s.slots)
     total_session_count = sum(len(lst) for lst in by_date.values())
     needed = max(
@@ -339,7 +336,7 @@ def assemble(
             f"but only {len(free_days)} free day(s) available"
         )
 
-    # Step 8: ids.
+    # Session and signal ids, assigned once every session and placement is settled.
     for day, lst in by_date.items():
         for idx, session in enumerate(lst):
             session.session_id = session_id(pm_id, day, idx)
