@@ -322,21 +322,51 @@ def test_drift_note_joins_a_session_already_placed_on_its_own_date() -> None:
     assert note_row.session_id == carrier_row.session_id
 
 
-def test_drift_notes_open_a_second_same_day_session_rather_than_skip_ahead() -> None:
-    """With every candidate day full, a dormant note and its revive note still land on
-    their own event dates, each opening a second session on its own day, and the dormant
-    note still precedes the revive it announces the end of.
+def test_drift_note_opens_a_second_same_day_session_instead_of_a_later_one_with_room() -> None:
+    """The note's own date already holds a full session, and a nearby later day has a
+    session with a free slot; the note must open a second session on its own date rather
+    than take the free slot elsewhere.
     """
     inputs = plan_inputs()
-    knobs = Config().plan.model_copy(update={"max_signals_per_session": 1})
+    knobs = Config().plan
+    trait_id = "t_01"
+    drift_date = TRADING_DAYS[40]
+    later_room_day = TRADING_DAYS[45]
+    c1 = Carrier("t_02", "ti_001", drift_date, CarrierSource.LEDGER, "add")
+    c2 = Carrier("t_03", "ti_002", drift_date, CarrierSource.LEDGER, "add")
+    pools = {"t_02": (c1,), "t_03": (c2,)}
+    r1 = _revealed("t_02", DateWindow(drift_date, drift_date))
+    r2 = _revealed("t_03", DateWindow(drift_date, drift_date))
+    later_filler = _stated("t_04", DateWindow(later_room_day, later_room_day))
+    note = PlannedSignal(
+        trait_id=trait_id,
+        mode=SignalMode.STATED,
+        valence=Valence.CONFIRM,
+        ownership=Ownership.SELF,
+        entry=StanceEntry.DRIFT_UPDATE,
+        window=DateWindow(drift_date, TRADING_DAYS[-1]),
+        needs_carrier=False,
+        drift_date=drift_date,
+    )
+    assembly = assemble(inputs, [r1, r2, later_filler, note], pools, knobs, _rng(13))
+
+    note_row = next(r for r in assembly.signals if r.trait_id == trait_id)
+    assert note_row.date == drift_date
+    assert len({s.session_id for s in assembly.sessions if s.date == drift_date}) == 2
+
+
+def test_dormant_note_precedes_its_revive_even_when_a_far_session_has_room() -> None:
+    """A far-off day already has a session with a free slot when the notes are placed; the
+    dormant note must still land on its own date, ahead of the revive note, rather than
+    take that far slot and end up after the revive it announces the end of.
+    """
+    inputs = plan_inputs()
+    knobs = Config().plan
     trait_id = "t_01"
     dormant_date = TRADING_DAYS[40]
     revive_date = TRADING_DAYS[60]
-    c1 = Carrier("t_02", "ti_001", dormant_date, CarrierSource.LEDGER, "add")
-    c2 = Carrier("t_03", "ti_002", revive_date, CarrierSource.LEDGER, "add")
-    pools = {"t_02": (c1,), "t_03": (c2,)}
-    r1 = _revealed("t_02", DateWindow(dormant_date, dormant_date))
-    r2 = _revealed("t_03", DateWindow(revive_date, revive_date))
+    far_day = TRADING_DAYS[70]
+    far_filler = _stated("t_04", DateWindow(far_day, far_day))
     dormant_note = PlannedSignal(
         trait_id=trait_id,
         mode=SignalMode.STATED,
@@ -357,7 +387,7 @@ def test_drift_notes_open_a_second_same_day_session_rather_than_skip_ahead() -> 
         needs_carrier=False,
         drift_date=revive_date,
     )
-    assembly = assemble(inputs, [r1, r2, dormant_note, revive_note], pools, knobs, _rng(13))
+    assembly = assemble(inputs, [far_filler, dormant_note, revive_note], {}, knobs, _rng(13))
 
     placed = [
         ps
@@ -370,8 +400,6 @@ def test_drift_notes_open_a_second_same_day_session_rather_than_skip_ahead() -> 
     assert dormant_row.date == dormant_date
     assert revive_row.date == revive_date
     assert dormant_row.date < revive_row.date
-    assert len({s.session_id for s in assembly.sessions if s.date == dormant_date}) == 2
-    assert len({s.session_id for s in assembly.sessions if s.date == revive_date}) == 2
 
 
 # --- drift-side warnings -----------------------------------------------------------------
