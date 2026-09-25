@@ -58,11 +58,73 @@ def test_forbidden_sets_lists_only_inactive_biases_and_unheld_asset_class_prefs(
     inactive_params = {p for p in BIAS_PARAMS if p != active_param}
     assert len(inactive) == len(inactive_params)
     assert inactive == tuple(sorted(inactive))
+    assert "t_01" not in inactive  # the active trait's own id must not show up
 
     assert "response_format" not in unheld  # held by the PM
     assert "pushback_style" in unheld  # applicable to equities, never held
     assert "duration_expression" not in unheld  # rates_credit only, not this PM's asset class
     assert unheld == tuple(sorted(unheld))
+
+
+def test_forbidden_sets_appear_on_every_skeleton_even_with_a_third_party_stance():
+    inactive_trait_id = "t_01"
+    traits = tuple(
+        bias_trait(param, active=(param != "loss_aversion_lambda"), trait_id=f"t_{i:02d}")
+        for i, param in enumerate(BIAS_PARAMS, start=1)
+    )
+    inputs = plan_inputs(traits=traits)
+    expected_inactive, expected_unheld = forbidden_sets(inputs, _CATALOGUE)
+    assert inactive_trait_id in expected_inactive
+
+    day, silence_day = TRADING_DAYS[0], TRADING_DAYS[1]
+    planned = PlannedSignal(
+        trait_id=inactive_trait_id,
+        mode=SignalMode.STATED,
+        valence=Valence.CONFIRM,
+        ownership=Ownership.COLLEAGUE,
+        entry=StanceEntry.THIRD_PARTY,
+        window=DateWindow(day, day),
+        needs_carrier=False,
+    )
+    ps = PlacedSignal(
+        signal_id="sg_001",
+        planned=planned,
+        date=day,
+        trade_idea_id=None,
+        claim_date=None,
+        carrier=None,
+    )
+    third_party_session = PlannedSession(
+        session_id=_sid(day),
+        date=day,
+        kind=SessionKind.CHECK_IN,
+        trade_idea_ids=(),
+        signals=(ps,),
+        claims=(),
+    )
+    silence_session = PlannedSession(
+        session_id=_sid(silence_day),
+        date=silence_day,
+        kind=SessionKind.SILENCE,
+        trade_idea_ids=(),
+        signals=(),
+        claims=(),
+    )
+    assembly = Assembly(
+        sessions=(third_party_session, silence_session), signals=(), warnings=(), counts={}
+    )
+
+    skeletons = render_skeletons(inputs, assembly, _CATALOGUE, _rng())
+
+    assert len(skeletons) == 2
+    for skeleton in skeletons:
+        assert skeleton.forbidden_trait_ids == expected_inactive
+        assert skeleton.forbidden_pref_params == expected_unheld
+
+    # the third-party stance still names the forbidden trait; it stays forbidden regardless.
+    third_party_skeleton = skeletons[0]
+    assert third_party_skeleton.stances[0].trait_id == inactive_trait_id
+    assert inactive_trait_id in third_party_skeleton.forbidden_trait_ids
 
 
 # --- revealed bias stance ---------------------------------------------------------------------
@@ -183,6 +245,7 @@ def test_claim_and_carrier_stances_share_the_contradiction_signal_id():
     claim_stance = skeletons[0].stances[0]
     revealed_stance = skeletons[1].stances[0]
     assert claim_stance.entry == StanceEntry.CLAIM
+    assert claim_stance.mode == SignalMode.CONTRADICTION
     assert claim_stance.signal_id == "sg_002"
     assert revealed_stance.entry == StanceEntry.REVEALED
     assert revealed_stance.signal_id == "sg_002"

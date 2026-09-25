@@ -14,6 +14,7 @@ import numpy as np
 from pm_traitbench.catalogues.loader import STANCE_SLOTS, render_stance
 from pm_traitbench.catalogues.models import Catalogue, PreferenceGroup
 from pm_traitbench.enums import AssetClass, Kind, Ownership, SessionKind, SignalMode, StanceEntry
+from pm_traitbench.errors import PlanError
 from pm_traitbench.signals.assemble import Assembly, PlacedSignal
 from pm_traitbench.signals.inputs import PlanInputs
 from pm_traitbench.tables.schema import Skeleton, Stance, Trait
@@ -55,7 +56,7 @@ def format_level(x: float) -> str:
 
 
 def _draw_line(lines: tuple[str, ...], rng: np.random.Generator) -> str:
-    return str(lines[rng.integers(len(lines))])
+    return str(rng.choice(lines))
 
 
 def _claim_stance(
@@ -77,14 +78,24 @@ def _claim_stance(
 
 
 def _drift_event_values(inputs: PlanInputs, ps: PlacedSignal) -> tuple[str | float, str | float]:
-    """(from_value, to_value) of the drift event a `DRIFT_UPDATE` note announces."""
+    """(from_value, to_value) of the drift event a `DRIFT_UPDATE` note announces.
+
+    Raises `PlanError` naming the PM when no drift event matches the note, or when the
+    matching event carries no from/to value to render the stance from.
+    """
+    pm_id = inputs.persona.pm_id
+    trait_id = ps.planned.trait_id
     drift_date = ps.planned.drift_date
     for event in inputs.drift_events:
-        if event.trait_id == ps.planned.trait_id and event.date == drift_date:
-            assert event.from_value is not None and event.to_value is not None
+        if event.trait_id == trait_id and event.date == drift_date:
+            if event.from_value is None or event.to_value is None:
+                raise PlanError(
+                    f"PM '{pm_id}': drift event for trait '{trait_id}' on {drift_date} "
+                    "has no from/to value to render a drift_update stance"
+                )
             return event.from_value, event.to_value
-    raise AssertionError(
-        f"drift note for trait '{ps.planned.trait_id}' names no matching drift event "
+    raise PlanError(
+        f"PM '{pm_id}': drift note for trait '{trait_id}' names no matching drift event "
         f"on {drift_date}"
     )
 
@@ -110,7 +121,12 @@ def _signal_stance(
     if entry == StanceEntry.THIRD_PARTY:
         values["who"] = _WHO_BY_OWNERSHIP[ps.planned.ownership]
         if not is_bias:
-            values["value"] = str(ps.planned.third_party_value)
+            if ps.planned.third_party_value is None:
+                raise PlanError(
+                    f"PM '{inputs.persona.pm_id}': third-party signal '{ps.signal_id}' for "
+                    f"trait '{trait.trait_id}' has no third_party_value to render its stance from"
+                )
+            values["value"] = ps.planned.third_party_value
     elif entry in (StanceEntry.STATED, StanceEntry.RETRACT):
         if not is_bias:
             values["value"] = str(inputs.value_at(trait.trait_id, session_date))
@@ -122,7 +138,11 @@ def _signal_stance(
         values["old_value"] = str(from_value)
         values["value"] = str(to_value)
     elif entry == StanceEntry.REVEALED:
-        assert ps.trade_idea_id is not None
+        if ps.trade_idea_id is None:
+            raise PlanError(
+                f"PM '{inputs.persona.pm_id}': revealed signal '{ps.signal_id}' for trait "
+                f"'{trait.trait_id}' has no trade idea to render its stance from"
+            )
         idea = inputs.ideas[ps.trade_idea_id]
         if is_bias:
             values["instrument"] = idea.instrument_id
@@ -137,7 +157,11 @@ def _signal_stance(
     slots = {name: value for name, value in values.items() if name in allowed}
 
     if entry == StanceEntry.REVEALED and is_bias:
-        assert ps.carrier is not None
+        if ps.carrier is None:
+            raise PlanError(
+                f"PM '{inputs.persona.pm_id}': revealed signal '{ps.signal_id}' for trait "
+                f"'{trait.trait_id}' has no carrier to render its stance from"
+            )
         lines = catalogue.stances.revealed_lines(trait.param, ps.carrier.pattern, asset_class)
     else:
         lines = catalogue.stances.lines(key, entry, asset_class)
@@ -201,7 +225,11 @@ def render_skeletons(
 
         advisor_violation = None
         if violation_group is not None:
-            assert violation_value is not None
+            if violation_value is None:
+                raise PlanError(
+                    f"PM '{pm_id}': session '{session.session_id}' has a revealed_reaction "
+                    "stance with no value to render its advisor violation from"
+                )
             lines = catalogue.stances.lines(violation_group, StanceEntry.VIOLATION, asset_class)
             line = _draw_line(lines, rng)
             advisor_violation = render_stance(line, {"value": violation_value})
