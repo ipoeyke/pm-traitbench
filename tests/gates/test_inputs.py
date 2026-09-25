@@ -304,6 +304,40 @@ def test_build_inputs_entry_risk_curve_reads_lead_leg_tenor(fixture_view) -> Non
     assert result[0].entry_risk["ti_001"] == 1.0
 
 
+def test_build_inputs_entry_risk_falls_back_to_first_row_when_no_leg_matches(
+    fixture_view,
+) -> None:
+    idea = idea_row(pm_id="pm_001", trade_idea_id="ti_001", entry_date=date(2026, 1, 5))
+    first_row = ledger_row(
+        pm_id="pm_001",
+        trade_idea_id="ti_001",
+        date=date(2026, 1, 5),
+        instrument_id="EQ-9999",
+        risk_amount=1.0,
+    )
+    second_row = ledger_row(
+        pm_id="pm_001",
+        trade_idea_id="ti_001",
+        date=date(2026, 1, 5),
+        instrument_id="EQ-8888",
+        risk_amount=2.0,
+    )
+    result = build_inputs(
+        config=Config(),
+        personas=[_persona("pm_001")],
+        traits=_bias_traits("pm_001"),
+        drift_events=[],
+        ideas=[idea],
+        ledger=[first_row, second_row],
+        rule_events=[],
+        position_days=[],
+        views={"T": fixture_view},
+        engine_counts={"pm_001": {"c": 0}},
+        skipped=set(),
+    )
+    assert result[0].entry_risk["ti_001"] == 1.0
+
+
 def test_build_inputs_entry_conviction_reads_first_entry_date_ledger_row(fixture_view) -> None:
     idea = idea_row(pm_id="pm_001", trade_idea_id="ti_001", entry_date=date(2026, 1, 5))
     first_row = ledger_row(
