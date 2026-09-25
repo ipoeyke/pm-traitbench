@@ -9,6 +9,7 @@ from pm_traitbench import pipeline
 from pm_traitbench.cli import build_parser, main
 from pm_traitbench.config import OutputConfig, load_config
 from pm_traitbench.enums import AssetClass
+from pm_traitbench.signals.stage import PLAN_STAGE
 from pm_traitbench.tables.specs import (
     DRIFT_EVENTS,
     ENGINE_TABLES,
@@ -254,5 +255,6 @@ def test_sample_market_engine_then_plan_on_synthetic_seeds(tmp_path: Path) -> No
 
 
 def test_help_output_lists_the_plan_subcommand() -> None:
-    help_text = build_parser(pipeline.STAGES).format_help()
-    assert "plan" in help_text
+    parser = build_parser(pipeline.STAGES)
+    args = parser.parse_args(["plan", "--config", str(_DEMO_CONFIG)])
+    assert args.command == PLAN_STAGE.name

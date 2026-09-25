@@ -2,15 +2,19 @@
 signals it writes.
 """
 
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 
-from pm_traitbench.catalogues.models import PreferenceGroup
+from pm_traitbench.catalogues.models import Catalogue, PreferenceGroup
+from pm_traitbench.config import Config
 from pm_traitbench.engine.stage import ENGINE_STAGE
-from pm_traitbench.enums import Kind
+from pm_traitbench.enums import AssetClass, Kind, SignalMode
 from pm_traitbench.errors import PlanError
 from pm_traitbench.signals.stage import PLAN_STAGE
 from pm_traitbench.stages import run_stage
-from pm_traitbench.tables.schema import Trait
+from pm_traitbench.tables.schema import Persona, Rule, Trait
 from pm_traitbench.tables.specs import PERSONAS, PLAN_TABLES, SIGNALS, SKELETONS, TRAITS
 from pm_traitbench.tables.store import DataStore
 from tests.engine.conftest import (  # noqa: F401
@@ -21,8 +25,10 @@ from tests.engine.conftest import (  # noqa: F401
     write_stage_inputs,
 )
 
+NeutralPmFactory = Callable[[AssetClass, str], tuple[Persona, list[Trait], list[Rule]]]
 
-def _plant_carriers_and_preferences(store, catalogue) -> None:
+
+def _plant_carriers_and_preferences(store: DataStore, catalogue: Catalogue) -> None:
     """Give the first PM (`pm_001`) two active biases and one preference per group, so
     the engine leaves carriers and the plan has preferences to place.
     """
@@ -31,7 +37,7 @@ def _plant_carriers_and_preferences(store, catalogue) -> None:
     pm_traits = [t for t in traits if t.pm_id == pm_id]
     other_traits = [t for t in traits if t.pm_id != pm_id]
 
-    updated = []
+    updated: list[Trait] = []
     for trait in pm_traits:
         if trait.param == "loss_aversion_lambda":
             updated.append(trait.model_copy(update={"active": True, "value": 2.0}))
@@ -64,12 +70,14 @@ def _plant_carriers_and_preferences(store, catalogue) -> None:
     store.write(TRAITS, [*other_traits, *updated])
 
 
-def _asset_class_of(store, pm_id: str):
+def _asset_class_of(store: DataStore, pm_id: str) -> AssetClass:
     persona = next(p for p in store.read(PERSONAS) if p.pm_id == pm_id)
     return persona.mandate.asset_class
 
 
-def _run_full(tmp_path, fixture_market, neutral_pm, catalogue):
+def _run_full(
+    tmp_path: Path, fixture_market: dict, neutral_pm: NeutralPmFactory, catalogue: Catalogue
+) -> tuple[Config, DataStore]:
     config = stage_config()
     store = DataStore(tmp_path, config.output)
     write_stage_inputs(store, fixture_market, neutral_pm)
@@ -81,7 +89,7 @@ def _run_full(tmp_path, fixture_market, neutral_pm, catalogue):
 
 
 def test_plan_stage_writes_signals_and_skeletons_that_link_to_each_other(
-    tmp_path, fixture_market, neutral_pm, catalogue
+    tmp_path: Path, fixture_market: dict, neutral_pm: NeutralPmFactory, catalogue: Catalogue
 ) -> None:
     _, store = _run_full(tmp_path, fixture_market, neutral_pm, catalogue)
 
@@ -106,8 +114,16 @@ def test_plan_stage_writes_signals_and_skeletons_that_link_to_each_other(
     assert not multi_asset_rows
     assert not multi_asset_sessions
 
+    # The planted loss-aversion and overconfidence biases must have left at least one
+    # engine-flagged carrier the plan could place a revealed signal on, or the fixture
+    # setup above is not doing what it claims to.
+    pm_001_revealed = [s for s in signals if s.pm_id == "pm_001" and s.mode == SignalMode.REVEALED]
+    assert pm_001_revealed
 
-def test_plan_stage_raises_without_engine_metadata(tmp_path, fixture_market, neutral_pm) -> None:
+
+def test_plan_stage_raises_without_engine_metadata(
+    tmp_path: Path, fixture_market: dict, neutral_pm: NeutralPmFactory
+) -> None:
     config = stage_config()
     store = DataStore(tmp_path, config.output)
     write_stage_inputs(store, fixture_market, neutral_pm)
@@ -119,7 +135,7 @@ def test_plan_stage_raises_without_engine_metadata(tmp_path, fixture_market, neu
 
 
 def test_plan_stage_metadata_skips_the_multi_asset_pm(
-    tmp_path, fixture_market, neutral_pm, catalogue
+    tmp_path: Path, fixture_market: dict, neutral_pm: NeutralPmFactory, catalogue: Catalogue
 ) -> None:
     _, store = _run_full(tmp_path, fixture_market, neutral_pm, catalogue)
 
@@ -130,7 +146,7 @@ def test_plan_stage_metadata_skips_the_multi_asset_pm(
 
 
 def test_plan_stage_writes_byte_identical_tables_on_a_second_run(
-    tmp_path, fixture_market, neutral_pm, catalogue
+    tmp_path: Path, fixture_market: dict, neutral_pm: NeutralPmFactory, catalogue: Catalogue
 ) -> None:
     dir_a = tmp_path / "a"
     dir_b = tmp_path / "b"

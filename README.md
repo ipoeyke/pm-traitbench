@@ -519,7 +519,8 @@ a decision the engine did not take. Each planted bias's carrier evidence:
 | `herding_weight` | `ledger` | `followed_street` |
 | `overconfidence_coverage` | `ledger` | `oversized` |
 | `conviction_size_miscalibration` | `ledger` | `mis_sized` |
-| `exit_deficiency` | `rule_events` | `acked_no_action`, `added`, `late_roll` |
+| `exit_deficiency` | `rule_events` | `acked_no_action`, `added` |
+| `exit_deficiency` | `ledger`, `position_days` | `added`, `late_roll` |
 
 Every revealed stance line is keyed by the specific engine action behind its
 carrier, not just the bias it plants, so the line drawn always matches what
