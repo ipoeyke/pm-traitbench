@@ -222,6 +222,8 @@ def _trait_confirm_signals(
     entry and carrier need.
     """
     segments = _trait_segments(inputs, trait.trait_id)
+    if not segments:
+        return []
     if len(segments) > 1:
         notes_per_segment = _notes_per_segment(inputs, trait.trait_id, segments)
         needs = _segment_needs(notes_per_segment, knobs.drift_min_per_side)

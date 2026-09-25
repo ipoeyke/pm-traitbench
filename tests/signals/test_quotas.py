@@ -1,18 +1,20 @@
 """Tests for `plan_quotas`: per-trait signal counts, modes and date windows for one PM."""
 
+from collections import Counter
+
 import numpy as np
-import pytest
 
 from pm_traitbench.catalogues.loader import load_catalogue
-from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config
 from pm_traitbench.enums import (
+    CarrierSource,
     DriftEventType,
     Ownership,
     SignalMode,
     StanceEntry,
     Valence,
 )
+from pm_traitbench.signals.carriers import Carrier
 from pm_traitbench.signals.quotas import (
     DateWindow,
     PlannedSignal,
@@ -21,11 +23,6 @@ from pm_traitbench.signals.quotas import (
     round_half_up,
 )
 from tests.signals.conftest import TRADING_DAYS, bias_trait, drift_event, plan_inputs, pref_trait
-
-
-@pytest.fixture(scope="module")
-def catalogue() -> Catalogue:
-    return load_catalogue()
 
 
 def _rng(seed: int = 0) -> np.random.Generator:
@@ -60,8 +57,8 @@ def test_largest_remainder_known_case():
 
 
 def test_largest_remainder_ties_go_to_earlier_item():
-    # equal weights: raw values are 5.0, 5.0, 0.0 remainder from floors -> exact, no tie needed
-    # construct an actual tie: 3 equal-weight items splitting 10
+    # 3 equal-weight items splitting 10: floors are 3, 3, 3 with all three fractional
+    # parts tied at 1/3, so the one leftover unit goes to the earliest item, "a".
     weights = [("a", 1.0), ("b", 1.0), ("c", 1.0)]
     result = largest_remainder(10, weights)
     assert sum(result.values()) == 10
@@ -93,8 +90,19 @@ def test_active_bias_gets_confirm_signals_in_range_with_mode_split():
     signals = plan_quotas(inputs, {}, load_catalogue(), knobs, _rng(1))
     confirm = _confirm(signals)
     assert 8 <= len(confirm) <= 10
-    modes = {s.mode for s in confirm}
-    assert modes <= {SignalMode.REVEALED, SignalMode.STATED, SignalMode.CONTRADICTION}
+
+    counts = Counter(s.mode for s in confirm)
+    expected = largest_remainder(
+        len(confirm),
+        [
+            (SignalMode.REVEALED, knobs.bias_revealed_weight),
+            (SignalMode.STATED, knobs.bias_stated_weight),
+            (SignalMode.CONTRADICTION, knobs.bias_contradiction_weight),
+        ],
+    )
+    for mode, count in expected.items():
+        assert counts.get(mode, 0) == count
+
     for s in confirm:
         assert s.valence == Valence.CONFIRM
         assert s.ownership == Ownership.SELF
@@ -107,6 +115,21 @@ def test_inactive_bias_gets_no_confirm_signals():
     knobs = Config().plan
     signals = plan_quotas(inputs, {}, load_catalogue(), knobs, _rng(1))
     assert _confirm(signals) == []
+
+
+def test_fully_dormant_trait_gets_no_confirm_signals():
+    """A trait dormant for its whole horizon (no revive) has zero segments, and must not
+    crash trying to divide the confirm count across them.
+    """
+    inputs = plan_inputs(
+        traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
+        drift_events=(drift_event("t_01", TRADING_DAYS[0], DriftEventType.DORMANT),),
+    )
+    knobs = Config().plan
+    signals = plan_quotas(inputs, {}, load_catalogue(), knobs, _rng(1))
+    assert [s for s in _confirm(signals) if s.trait_id == "t_01"] == []
+    dormant_note = next(s for s in signals if s.entry == StanceEntry.DRIFT_DORMANT)
+    assert dormant_note.drift_date == TRADING_DAYS[0]
 
 
 def test_preference_gets_exactly_pref_signals_count():
@@ -139,7 +162,8 @@ def test_preference_with_nonempty_pool_plans_revealed_with_carrier():
         traits=(pref_trait("duration_expression", "steepeners over outright duration"),)
     )
     knobs = Config().plan
-    pools = {trait_id: ("fake carrier",)}
+    carrier = Carrier(trait_id, "ti_001", TRADING_DAYS[0], CarrierSource.IDEA, None)
+    pools = {trait_id: (carrier,)}
     signals = plan_quotas(inputs, pools, load_catalogue(), knobs, _rng(1))
     confirm = _confirm(signals)
     revealed = [s for s in confirm if s.mode == SignalMode.REVEALED]
@@ -210,12 +234,15 @@ def test_retracted_and_third_party_are_additional_and_match_formula():
 
 def test_third_party_preference_rows_carry_never_held_value():
     inputs = _base_inputs()
-    knobs = Config().plan
+    # A high third-party share so k >= 2: with an inactive bias and a preference target
+    # both present, k_pref = k - ceil(k / 2) is only non-zero once k reaches 2.
+    knobs = Config().plan.model_copy(update={"third_party_share": 0.5})
     catalogue = load_catalogue()
     signals = plan_quotas(inputs, {}, catalogue, knobs, _rng(3))
     third_party = [s for s in signals if s.entry == StanceEntry.THIRD_PARTY]
     pref_rows = [s for s in third_party if s.trait_id == "t_90"]
     entry = next(e for e in catalogue.preferences if e.param == "duration_expression")
+    assert pref_rows
     for s in pref_rows:
         assert s.third_party_value is not None
         assert s.third_party_value != "steepeners over outright duration"
@@ -225,6 +252,34 @@ def test_third_party_preference_rows_carry_never_held_value():
     bias_rows = [s for s in third_party if s.trait_id != "t_90"]
     assert all(s.trait_id == "t_02" for s in bias_rows)
     assert all(s.third_party_value is None for s in bias_rows)
+
+
+def test_third_party_never_held_value_excludes_drift_from_and_to():
+    """A value the trait passed through via a drift event is not "never held", even when
+    it differs from the trait's current value.
+    """
+    inputs = plan_inputs(
+        traits=(
+            bias_trait("loss_aversion_lambda", trait_id="t_01"),
+            bias_trait("disposition_ratio", trait_id="t_02", active=False),
+            pref_trait("duration_expression", "steepeners over outright duration"),
+        ),
+        drift_events=(
+            drift_event(
+                "t_90",
+                TRADING_DAYS[50],
+                DriftEventType.UPDATE,
+                from_value="steepeners over outright duration",
+                to_value="outright duration over curve trades",
+            ),
+        ),
+    )
+    knobs = Config().plan.model_copy(update={"third_party_share": 0.5})
+    signals = plan_quotas(inputs, {}, load_catalogue(), knobs, _rng(3))
+    pref_rows = [s for s in signals if s.entry == StanceEntry.THIRD_PARTY and s.trait_id == "t_90"]
+    assert pref_rows
+    for s in pref_rows:
+        assert s.third_party_value == "butterflies over outright duration"
 
 
 def test_no_inactive_bias_sends_all_third_party_to_preferences():
@@ -279,11 +334,19 @@ def test_dormant_revive_pair_gives_two_segments_excluding_dormant_window():
     )
     signals = plan_quotas(inputs, {}, load_catalogue(), knobs, _rng(9))
     confirm = [s for s in _confirm(signals) if s.trait_id == "t_01"]
-    windows = {s.window for s in confirm}
+    windows = sorted({s.window for s in confirm}, key=lambda w: w.first)
+    assert len(windows) == 2
+    before_window, after_window = windows
     for window in windows:
         assert not (dormant_date <= window.first < revive_date)
         assert not (dormant_date <= window.last < revive_date)
         assert window.first < dormant_date or window.first >= revive_date
+
+    before = [s for s in confirm if s.window == before_window]
+    after = [s for s in confirm if s.window == after_window]
+    assert len(before) >= knobs.drift_min_per_side
+    # the revive note itself counts toward the after side's minimum
+    assert len(after) + 1 >= knobs.drift_min_per_side
 
     dormant_note = next(s for s in signals if s.entry == StanceEntry.DRIFT_DORMANT)
     revive_note = next(s for s in signals if s.entry == StanceEntry.DRIFT_REVIVE)
