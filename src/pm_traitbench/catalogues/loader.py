@@ -72,10 +72,8 @@ BANNED_STANCE_WORDS: tuple[str, ...] = (
     "exit deficiency",
     "bias",
 )
-# Each bias's `revealed` stance is keyed by the engine's flag suffix (`<bias>:<pattern>`)
-# for that action, plus "acked_no_action" (a fired rule acknowledged without acting, from
-# rule events) and "chased_trend" (an entry that chased a trailing move), so the line drawn
-# always matches the specific action the engine logged that day, not just the trait behind it.
+# Keys are the engine's per-bias action flags, so the line drawn always matches the
+# specific action logged that day, not just the trait behind it.
 REVEALED_PATTERNS: dict[str, tuple[str, ...]] = {
     "loss_aversion_lambda": ("add", "add_before_trigger", "hold"),
     "disposition_ratio": ("realise_gain_early", "hold_loser"),

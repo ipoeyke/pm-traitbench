@@ -3,16 +3,16 @@ biases:
     revealed:
       add:
         all:
-        - add to {instrument} while it already sits below your entry at {entry}
-        - average down into {instrument} under {entry}
+        - add to {instrument} while it is already under water against your entry at {entry}
+        - average into {instrument} while it is losing money against {entry}
       add_before_trigger:
         all:
-        - add to {instrument} below {entry} before any signpost has fired
-        - buy more {instrument} under {entry}, ahead of any trigger firing
+        - add to {instrument} while it is under water against {entry}, before any signpost has fired
+        - buy more {instrument} while it is losing money against {entry}, ahead of any trigger firing
       hold:
         all:
-        - keep {instrument} below {entry} rather than lock in the loss
-        - stay in {instrument} under {entry} to avoid taking the loss
+        - keep {instrument} under water against your entry at {entry} rather than lock in the loss
+        - stay in {instrument} while it is losing money against {entry}, to avoid taking the loss
     stated:
       all:
       - say a loss stings far more than an equal gain feels good
@@ -48,12 +48,13 @@ biases:
     revealed:
       realise_gain_early:
         all:
-        - sell part of {instrument} well before the target at {target}, with nothing else changed
-        - take profit on {instrument} early, well short of {target}, with the setup unchanged
+        - close {instrument} for a quick profit well before the target at {target}, with nothing else
+          changed
+        - take the whole profit on {instrument} early, well short of {target}, with the setup unchanged
       hold_loser:
         all:
-        - keep {instrument} in the book long after it slipped under your entry at {entry}
-        - hold {instrument} months after it fell below {entry}
+        - keep {instrument} in the book now that it has turned into a loss against your entry at {entry}
+        - hold on to {instrument} the moment it turns into a loss against {entry}
     stated:
       all:
       - say you take profits quickly but let losing positions sit
@@ -89,44 +90,45 @@ biases:
     revealed:
       exit_at_anchor:
         all:
-        - exit {instrument} right at a round number, with no news to justify the timing
-        - close {instrument} back at your entry of {entry}, as if that price were a signal
+        - exit {instrument} right at a round level well short of the target at {target}
+        - take profit on {instrument} at a round number, long before it reaches {target}
     stated:
       all:
-      - say your target always stays tied to the price you first paid
-      - tell the advisor you judge a position against your own entry, not fresh information
-      - describe how the price you paid shapes every target you set
+      - say you fixate on round numbers as exit points
+      - tell the advisor you take profit right at a round price, not necessarily your target
+      - describe how a round number pulls you to take profit early
     claim:
       all:
-      - tell the advisor your entry price barely affects your target
-      - say you reprice every position fresh each session, entry price aside
-      - tell the advisor you judge each price on today's information alone
+      - tell the advisor round numbers mean nothing to your exits
+      - say you ride a position straight through round levels to your actual target
+      - tell the advisor you never let a round number pull you out early
     retract:
       all:
-      - 'say your target stays tied to your entry, then correct yourself: you reprice fresh each session'
-      - 'tell the advisor your entry shapes your view, then walk it back: today''s price is all that matters'
+      - 'say round numbers pull you to take profit early, then correct yourself: you ride straight through
+        them'
+      - 'tell the advisor a round price shapes your exits, then take it back: only your target does'
     third_party:
       all:
-      - say {who} keeps a target tied to the price first paid
-      - tell the advisor {who} judges a position against the entry price, not fresh information
+      - say {who} fixates on round numbers as exit points
+      - tell the advisor {who} takes profit at a round price, short of the real target
     drift_update:
       all:
-      - tell the advisor you have been working on repricing fresh each session
-      - say you have started letting go of your entry price when you judge a position
+      - tell the advisor you have been working on riding through round numbers to your actual target
+      - say you have started ignoring round levels when you take profit
     drift_dormant:
       all:
-      - tell the advisor your entry price no longer shapes your target
-      - say you have stopped judging a position against where you bought it
+      - tell the advisor round numbers no longer pull you into an early exit
+      - say you have stopped taking profit at a round price short of target
     drift_revive:
       all:
-      - tell the advisor your entry price has crept back into your target
-      - say you have slipped back into judging a position against where you bought it
+      - tell the advisor round numbers are pulling you into an early exit again
+      - say you have slipped back into taking profit at a round price short of target
   extrapolation_theta:
     revealed:
       chased_trend:
         all:
-        - enter {instrument} long right after a strong run higher, chasing the move
-        - go short {instrument} right after a sharp drop, because of the move
+        - put on {instrument} in the direction it has just moved hard, because of that move
+        - enter {instrument} chasing its own sharp recent move
     stated:
       all:
       - say a strong recent move in a name makes you expect it to keep going
@@ -200,8 +202,8 @@ biases:
     revealed:
       oversized:
         all:
-        - size {instrument} large while telling the desk you see only one likely outcome
-        - put on a big position in {instrument} while describing almost no chance you are wrong
+        - size {instrument} up beyond what the narrow range of outcomes you describe would warrant
+        - size {instrument} more heavily than the tight range of outcomes you lay out would support
     stated:
       all:
       - say your price targets carry a narrow range because you trust your read
@@ -236,8 +238,8 @@ biases:
     revealed:
       mis_sized:
         all:
-        - size {instrument} far below the conviction you stated for it
-        - put your largest size on {instrument}, a name you call low conviction
+        - size {instrument} out of line with the conviction you state in it
+        - size {instrument} out of step with how much conviction you have voiced for it
     stated:
       all:
       - say your biggest positions are not always your best ideas
@@ -273,8 +275,9 @@ biases:
     revealed:
       acked_no_action:
         all:
-        - acknowledge the stop on {instrument} has fired and keep the position anyway
-        - note that a signpost on {instrument} has triggered, then hold on regardless
+        - acknowledge that one of your own exit rules on {instrument} has triggered, and keep the position
+          anyway
+        - note that one of your own exit rules on {instrument} has fired, then hold on regardless
       added:
         all:
         - add to {instrument} right after one of its own exit conditions has fired
@@ -351,7 +354,7 @@ preferences:
     revealed_reaction:
       all:
       - say the last answer ignored your preference for {value}
-      - push back that the reply left out {value}, going against it
+      - 'push back that the reply ignored your preference: {value}'
     violation:
       all:
       - answer in a way that goes against the PM's stated preference for {value}

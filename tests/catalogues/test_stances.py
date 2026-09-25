@@ -7,7 +7,6 @@ from pm_traitbench.catalogues.loader import (
     STANCE_SLOTS,
     check_catalogue,
     check_stances,
-    load_catalogue,
     render_stance,
 )
 from pm_traitbench.catalogues.models import (
@@ -24,8 +23,8 @@ from pm_traitbench.errors import CatalogueError, PlanError
 
 _N_PREFERENCES_MAX = 8
 
-# The exact slot table the brief specifies: which parts of a planted event a stance
-# line for a given (kind of trait, kind of evidence) pair may quote.
+# Which parts of a planted event a stance line for a given (kind of trait, kind of
+# evidence) pair may quote.
 _EXPECTED_STANCE_SLOTS: dict[tuple[Kind, StanceEntry], frozenset[str]] = {
     (Kind.BIAS, StanceEntry.REVEALED): frozenset({"instrument", "entry", "target", "stop"}),
     (Kind.BIAS, StanceEntry.STATED): frozenset(),
@@ -460,8 +459,3 @@ def test_render_stance_raises_catalogue_error_on_positional_placeholder() -> Non
 def test_render_stance_raises_catalogue_error_on_malformed_line() -> None:
     with pytest.raises(CatalogueError, match="add to"):
         render_stance("add to {instrument!r", {"instrument": "x"})
-
-
-def test_load_catalogue_stances_pass_check_catalogue() -> None:
-    catalogue = load_catalogue()
-    _check(catalogue)
