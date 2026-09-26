@@ -3,6 +3,8 @@ import pytest
 from pm_traitbench.errors import (
     CatalogueError,
     ConfigError,
+    DialogueBudgetError,
+    DialogueError,
     EngineError,
     Gate1Error,
     MarketCheckError,
@@ -26,6 +28,8 @@ from pm_traitbench.errors import (
         (EngineError, 1),
         (Gate1Error, 1),
         (PlanError, 1),
+        (DialogueError, 1),
+        (DialogueBudgetError, 1),
     ],
 )
 def test_subclass_is_pm_traitbench_error_with_exit_code(
@@ -37,3 +41,7 @@ def test_subclass_is_pm_traitbench_error_with_exit_code(
 
 def test_base_error_default_exit_code() -> None:
     assert PmTraitbenchError.exit_code == 1
+
+
+def test_dialogue_budget_error_is_a_dialogue_error() -> None:
+    assert issubclass(DialogueBudgetError, DialogueError)
