@@ -1,4 +1,5 @@
-"""Shared dialogue-test fixtures: fake message builders and an in-memory `LlmClient`.
+"""Shared dialogue-test fixtures: fake message builders, an in-memory `LlmClient`, and a
+`MarketLookup` built on the shared fixture market.
 
 Consumed by client, tools, prompt and session tests, so a canned response's
 shape only has to match `Message.to_dict()` in one place.
@@ -7,6 +8,11 @@ shape only has to match `Message.to_dict()` in one place.
 import json
 from collections.abc import Callable, Mapping
 from typing import Any
+
+import pytest
+
+from pm_traitbench.dialogue.tools import MarketLookup
+from tests.engine.conftest import fixture_market  # noqa: F401
 
 
 def fake_message(
@@ -61,3 +67,16 @@ def default_responder(request: Mapping[str, Any]) -> dict:
     if "tools" in request:
         return fake_message([turn_text("Sounds reasonable, tell me more.")])
     return fake_message([turn_text("Feeling good about the book today.")])
+
+
+@pytest.fixture(scope="module")
+def market_lookup(fixture_market: dict) -> MarketLookup:
+    """A `MarketLookup` built from the shared fixture market, seed 'T'."""
+    return MarketLookup.build(
+        seed="T",
+        instruments=fixture_market["instruments"],
+        prices=fixture_market["prices"],
+        curves=fixture_market["curves"],
+        consensus=fixture_market["consensus"],
+        calendar=fixture_market["calendar"],
+    )
