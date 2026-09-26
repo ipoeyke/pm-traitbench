@@ -380,4 +380,4 @@ def test_advisor_prompt_is_packaged_and_never_mentions_the_harness() -> None:
     lowered = text.lower()
     for stem in _ADVISOR_PROMPT_BANNED_STEMS:
         assert stem not in lowered, stem
-    assert not re.search(r"\btest\b", lowered)
+    assert not re.search(r"\btest(s|ed|ing)?\b", lowered)
