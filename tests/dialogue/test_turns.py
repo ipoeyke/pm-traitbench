@@ -1,3 +1,5 @@
+"""Tests for the deterministic dialogue turn plan."""
+
 import datetime
 
 import numpy as np
@@ -119,6 +121,42 @@ def test_each_stance_gets_its_own_pm_turn() -> None:
     assert len(placed_indices) == len(stances)
     assert len(set(placed_indices)) == len(stances)
     assert set(placed_stances) == set(stances)
+
+
+def test_too_many_stances_for_the_turn_cap_raises() -> None:
+    ranges = TurnRanges()
+    stances = tuple(_stance(signal_id=f"sg_{i:03d}", trait_id=f"t_{i:02d}") for i in range(1, 6))
+    skeleton = _skeleton(kind=SessionKind.DECISION, stances=stances)
+    rng = np.random.default_rng(0)
+    with pytest.raises(DialogueError, match=SESSION_ID):
+        plan_turns(skeleton, (), ranges, rng)
+
+
+def test_every_pm_turn_carries_a_stance_at_the_raised_minimum() -> None:
+    ranges = TurnRanges(decision=(2,))
+    stances = (
+        _stance(),
+        _stance(signal_id="sg_002", trait_id="t_02"),
+        _stance(signal_id="sg_003", trait_id="t_03"),
+        _reaction_stance(signal_id="sg_004", trait_id="t_04"),
+    )
+    skeleton = _skeleton(
+        kind=SessionKind.DECISION,
+        stances=stances,
+        advisor_violation="The advisor recommended a size above the PM's cap.",
+    )
+    for seed in range(50):
+        rng = np.random.default_rng(seed)
+        plan = plan_turns(skeleton, (), ranges, rng)
+        assert plan.n_turns == 8
+        assert all(directive.stance is not None for directive in plan.pm_directives)
+        reaction_index = next(
+            i
+            for i, directive in enumerate(plan.pm_directives)
+            if directive.stance.entry == StanceEntry.REVEALED_REACTION
+        )
+        assert reaction_index >= 1
+        assert plan.violation_advisor_index == reaction_index - 1
 
 
 def test_day_trades_and_opening_go_on_pm_turn_zero_only() -> None:

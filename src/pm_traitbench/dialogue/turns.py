@@ -22,7 +22,7 @@ _MAX_TURNS = 8
 
 
 class Opening(StrEnum):
-    """How PM turn 0 frames a session that has no stance already setting its topic."""
+    """How PM turn 0 frames the session; a stance planned for turn 0 is delivered alongside it."""
 
     SESSION_IDEAS = "session_ideas"  # decision: open on today's decision about the session's ideas
     OPEN_POSITIONS = "open_positions"  # check_in: a routine check on open positions
@@ -102,7 +102,7 @@ def plan_turns(
         remaining_indices.remove(reaction_index)
 
     order = rng.permutation(remaining_indices)
-    for stance, index in zip(other_stances, order[: len(other_stances)], strict=False):
+    for stance, index in zip(other_stances, order[: len(other_stances)], strict=True):
         stance_by_index[int(index)] = stance
 
     directives = tuple(
