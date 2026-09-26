@@ -368,3 +368,16 @@ def test_shipped_dialogue_catalogue_passes_its_checks() -> None:
     catalogue = load_catalogue()
     check_dialogue_catalogue(catalogue)
     assert len(catalogue.voices) == 8
+
+
+_ADVISOR_PROMPT_BANNED_STEMS = ("simulat", "placeholder", "dataset")
+
+
+def test_advisor_prompt_is_packaged_and_never_mentions_the_harness() -> None:
+    text = resources.files("pm_traitbench.catalogues").joinpath("advisor_prompt.md").read_text()
+    assert text.strip()
+    assert "—" not in text
+    lowered = text.lower()
+    for stem in _ADVISOR_PROMPT_BANNED_STEMS:
+        assert stem not in lowered, stem
+    assert not re.search(r"\btest\b", lowered)

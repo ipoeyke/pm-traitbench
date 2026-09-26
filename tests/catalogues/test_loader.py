@@ -9,7 +9,6 @@ import yaml
 
 from pm_traitbench.catalogues.loader import (
     check_catalogue,
-    check_dialogue_catalogue,
     load_catalogue,
     render_signpost,
     render_template,
@@ -621,6 +620,28 @@ def test_avoid_missing_a_preference_param_raises(tmp_path: Path) -> None:
         _check(catalogue)
 
 
+def test_avoid_extra_bias_key_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "avoid.yaml"
+    data = _load_yaml(path)
+    data["biases"]["not_a_bias_param"] = "do not do the thing"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="extra.*not_a_bias_param"):
+        _check(catalogue)
+
+
+def test_avoid_blank_line_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "avoid.yaml"
+    data = _load_yaml(path)
+    data["preferences"]["positioning_context"] = "   "
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="positioning_context"):
+        _check(catalogue)
+
+
 def test_voice_line_with_a_banned_word_raises(tmp_path: Path) -> None:
     _copy_shipped(tmp_path)
     path = tmp_path / "voices.yaml"
@@ -629,6 +650,52 @@ def test_voice_line_with_a_banned_word_raises(tmp_path: Path) -> None:
     _dump_yaml(path, data)
     catalogue = load_catalogue(tmp_path)
     with pytest.raises(CatalogueError, match="herd"):
+        _check(catalogue)
+
+
+def test_voice_line_with_a_banned_word_raises_case_insensitively(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][0]["line"] = "quietly follows the HERD on every call"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="herd"):
+        _check(catalogue)
+
+
+def test_voice_line_naming_a_bias_param_raises(tmp_path: Path) -> None:
+    # exit_deficiency has no BANNED_STANCE_WORDS stem, so this exercises only
+    # the param-name check, not the separate banned-word check above.
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][0]["line"] = "explains the exit_deficiency behind every call"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="exit_deficiency"):
+        _check(catalogue)
+
+
+def test_voice_line_naming_a_preference_param_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][0]["line"] = "casual register, drops articles"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="register"):
+        _check(catalogue)
+
+
+def test_blank_voice_line_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][0]["line"] = "   "
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="v_01"):
         _check(catalogue)
 
 
@@ -659,7 +726,3 @@ def test_missing_voices_file_raises(tmp_path: Path) -> None:
     (tmp_path / "voices.yaml").unlink()
     with pytest.raises(CatalogueError):
         load_catalogue(tmp_path)
-
-
-def test_shipped_dialogue_catalogue_passes_check_dialogue_catalogue(catalogue: Catalogue) -> None:
-    check_dialogue_catalogue(catalogue)

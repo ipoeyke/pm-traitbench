@@ -10,8 +10,8 @@ voices:
   - voice_id: v_05
     line: clipped one-liners, states the call and stops
   - voice_id: v_06
-    line: casual register, turns statements into questions back at the advisor
+    line: casual and conversational, turns statements into questions back at the advisor
   - voice_id: v_07
-    line: formal register, full sentences, cites every level with its unit
+    line: formal, full sentences, cites every level with its unit
   - voice_id: v_08
     line: rapid short sentences, stacks two or three data points before any view

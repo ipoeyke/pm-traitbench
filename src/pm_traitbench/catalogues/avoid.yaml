@@ -1,10 +1,10 @@
 biases:
-  loss_aversion_lambda: do not describe adding to a losing position before a trigger fires, or holding a loser just to avoid confirming the loss
+  loss_aversion_lambda: do not describe averaging into a losing position, holding one to avoid taking the loss, or pushing to get back to even after a loss
   disposition_ratio: do not describe selling winners quickly or holding on to losing positions
-  anchoring_rho: do not describe exiting a position because it came back to your original entry price
+  anchoring_rho: do not describe taking profit at a round number short of your target
   extrapolation_theta: do not describe adding to or entering a trade because a recent trend kept extending
   herding_weight: do not describe taking a position because the street or other desks are already positioned that way
-  overconfidence_coverage: do not describe sizing a position larger than your own stated risk limits
+  overconfidence_coverage: do not describe keeping a narrow range of outcomes around your targets, or sizing up because you trust your read
   conviction_size_miscalibration: do not describe sizing a position out of step with how confident you say you are in it
   exit_deficiency: do not describe noticing a trigger and not acting on it, adding to a position past its trigger, or rolling a position later than planned
 

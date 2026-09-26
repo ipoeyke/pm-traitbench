@@ -1,8 +1,9 @@
 """Loads catalogues from YAML and checks cross-cutting consistency the models can't."""
 
 import functools
+import re
 import string
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -572,6 +573,22 @@ def check_stances(catalogue: Catalogue) -> None:
             )
 
 
+def _voice_line_matched_param(line: str, params: Iterable[str]) -> str | None:
+    """Return the first bias or preference param named in a voice line, if any.
+
+    A voice line goes verbatim into the narrator's system prompt, so it must never
+    carry a param name for the narrator to repeat. Checks both the raw param (with
+    underscores) and its underscore-replaced phrase, each as a whole word or phrase,
+    so "register" and "loss_aversion_lambda" are caught however the line spells them.
+    """
+    lowered = line.lower()
+    for param in params:
+        for form in (param.lower(), param.lower().replace("_", " ")):
+            if re.search(rf"\b{re.escape(form)}\b", lowered):
+                return param
+    return None
+
+
 def check_dialogue_catalogue(catalogue: Catalogue) -> None:
     """Check the narrator's voice bank and its forbidden-behaviour lines.
 
@@ -581,17 +598,25 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
     """
     if len(catalogue.voices) < 6:
         raise CatalogueError(f"voices: need at least 6 voices, got {len(catalogue.voices)}")
+    forbidden_param_names = (*BIAS_PARAMS, *(entry.param for entry in catalogue.preferences))
     seen_ids: set[str] = set()
     for voice in catalogue.voices:
         if voice.voice_id in seen_ids:
             raise CatalogueError(f"voices: duplicate voice_id '{voice.voice_id}'")
         seen_ids.add(voice.voice_id)
+        if not voice.line.strip():
+            raise CatalogueError(f"voices: voice '{voice.voice_id}' line is blank")
         lowered = voice.line.lower()
         for banned in BANNED_STANCE_WORDS:
             if banned in lowered:
                 raise CatalogueError(
                     f"voices: voice '{voice.voice_id}' line contains banned word '{banned}'"
                 )
+        matched_param = _voice_line_matched_param(voice.line, forbidden_param_names)
+        if matched_param is not None:
+            raise CatalogueError(
+                f"voices: voice '{voice.voice_id}' line names param '{matched_param}'"
+            )
 
     actual_bias_keys = set(catalogue.avoid.biases)
     expected_bias_keys = set(BIAS_PARAMS)
