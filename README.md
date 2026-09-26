@@ -559,9 +559,9 @@ skip) is skipped here too; the plan's own `skipped` list is copied into this
 stage's run metadata, not used to decide the skip itself. The stage narrates
 every skeleton into a two-agent session and writes two tables: `sessions`,
 the public transcript of text-only turns, and `dialogue_logs`, a hidden
-table carrying each turn's voice, its directive, its `mentions`, any tool
-calls, the model that produced it, the cache keys of the requests behind it,
-and its token usage.
+table carrying each session's voice and, per turn, its directive, its
+`mentions`, any tool calls, the model that produced it, the cache keys of
+the requests behind it, and its token usage.
 
 Both agents are `claude-opus-5-5` at low reasoning effort. The advisor
 never sees the PM's persona, rules, ideas or plan; it is instructed to
