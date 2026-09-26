@@ -69,7 +69,7 @@ Five tools, `strict: true`, each taking `instrument` (an `instrument_id` or an i
 | `get_quote` | price and, for a credit issuer, `spread_bp` on the session date | `market/prices` |
 | `get_curve` | levels by tenor for a sovereign or commodity curve | `market/curves` |
 | `get_consensus` | `street_score`, `street_view`, `positioning_pct`, `positioning` | `market/consensus` |
-| `get_calendar` | events for the instrument (and market-wide rows) in a window of at most 20 trading days back and 20 forward; forward rows carry date and event only, never `surprise` | `market/calendar` |
+| `get_calendar` | events for the instrument (and market-wide rows) in a window of at most 20 trading days back and 20 forward; forward rows carry date and event, with `surprise` always null | `market/calendar` |
 | `get_history` | the trailing `n` (at most 60) trading days of price or spread | `market/prices` |
 
 An unknown instrument, a missing field or an out-of-range window returns an `is_error` tool result listing the valid choices; the advisor carries on. Forward calendar rows are the schedule a real desk knows in advance; their surprise is future information and is withheld.
