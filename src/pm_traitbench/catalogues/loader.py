@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from pm_traitbench.catalogues.models import (
     ADAPTER_FORMS,
+    AvoidLines,
     Catalogue,
     Phrasings,
     PreferenceEntry,
@@ -22,6 +23,7 @@ from pm_traitbench.catalogues.models import (
     Stances,
     SubStyle,
     ThesisTemplates,
+    Voice,
 )
 from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.enums import AssetClass, Kind, StanceEntry
@@ -35,6 +37,8 @@ _FILE_NAMES = (
     "signposts.yaml",
     "theses.yaml",
     "stances.yaml",
+    "voices.yaml",
+    "avoid.yaml",
 )
 
 # A stance line's slots vary by (kind of trait, kind of evidence): which parts of the
@@ -132,6 +136,12 @@ class _SignpostsFile(BaseModel):
     signposts: dict[AssetClass, SignpostTemplates]
 
 
+class _VoicesFile(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    voices: tuple[Voice, ...]
+
+
 def _read_yaml(base: Any, name: str) -> dict[str, Any]:
     try:
         text = base.joinpath(name).read_text()
@@ -158,6 +168,8 @@ def _build_catalogue(base: Any) -> Catalogue:
         signposts = _SignpostsFile.model_validate(raw["signposts.yaml"]).signposts
         theses = ThesisTemplates.model_validate(raw["theses.yaml"])
         stances = Stances.model_validate(raw["stances.yaml"])
+        voices = _VoicesFile.model_validate(raw["voices.yaml"]).voices
+        avoid = AvoidLines.model_validate(raw["avoid.yaml"])
     except ValidationError as e:
         raise CatalogueError(f"invalid catalogue content: {e}") from e
     return Catalogue(
@@ -168,6 +180,8 @@ def _build_catalogue(base: Any) -> Catalogue:
         signposts=signposts,
         theses=theses,
         stances=stances,
+        voices=voices,
+        avoid=avoid,
     )
 
 
@@ -558,6 +572,50 @@ def check_stances(catalogue: Catalogue) -> None:
             )
 
 
+def check_dialogue_catalogue(catalogue: Catalogue) -> None:
+    """Check the narrator's voice bank and its forbidden-behaviour lines.
+
+    A voice must not be so specific it becomes a near-unique PM fingerprint, and
+    every avoid line must cover exactly the bias and preference params a skeleton
+    can name as forbidden for a PM who does not have that trait.
+    """
+    if len(catalogue.voices) < 6:
+        raise CatalogueError(f"voices: need at least 6 voices, got {len(catalogue.voices)}")
+    seen_ids: set[str] = set()
+    for voice in catalogue.voices:
+        if voice.voice_id in seen_ids:
+            raise CatalogueError(f"voices: duplicate voice_id '{voice.voice_id}'")
+        seen_ids.add(voice.voice_id)
+        lowered = voice.line.lower()
+        for banned in BANNED_STANCE_WORDS:
+            if banned in lowered:
+                raise CatalogueError(
+                    f"voices: voice '{voice.voice_id}' line contains banned word '{banned}'"
+                )
+
+    actual_bias_keys = set(catalogue.avoid.biases)
+    expected_bias_keys = set(BIAS_PARAMS)
+    if actual_bias_keys != expected_bias_keys:
+        missing = sorted(expected_bias_keys - actual_bias_keys)
+        extra = sorted(actual_bias_keys - expected_bias_keys)
+        raise CatalogueError(
+            f"avoid: biases keys must equal the bias parameter set; "
+            f"missing {missing}, extra {extra}"
+        )
+    actual_pref_keys = set(catalogue.avoid.preferences)
+    expected_pref_keys = {entry.param for entry in catalogue.preferences}
+    if actual_pref_keys != expected_pref_keys:
+        missing = sorted(expected_pref_keys - actual_pref_keys)
+        extra = sorted(actual_pref_keys - expected_pref_keys)
+        raise CatalogueError(
+            f"avoid: preferences keys must equal the catalogue's preference params; "
+            f"missing {missing}, extra {extra}"
+        )
+    for param, line in {**catalogue.avoid.biases, **catalogue.avoid.preferences}.items():
+        if not line.strip():
+            raise CatalogueError(f"avoid: param '{param}' has an empty line")
+
+
 def check_catalogue(
     catalogue: Catalogue, asset_classes: Sequence[AssetClass], n_preferences_max: int
 ) -> None:
@@ -573,3 +631,4 @@ def check_catalogue(
     _check_self_descriptions(catalogue)
     _check_engine_templates(catalogue)
     check_stances(catalogue)
+    check_dialogue_catalogue(catalogue)

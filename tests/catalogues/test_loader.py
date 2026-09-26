@@ -9,6 +9,7 @@ import yaml
 
 from pm_traitbench.catalogues.loader import (
     check_catalogue,
+    check_dialogue_catalogue,
     load_catalogue,
     render_signpost,
     render_template,
@@ -31,6 +32,8 @@ _CATALOGUE_FILES = (
     "signposts.yaml",
     "theses.yaml",
     "stances.yaml",
+    "voices.yaml",
+    "avoid.yaml",
 )
 _ASSET_CLASSES = list(AssetClass)
 _N_PREFERENCES_MAX = 8
@@ -591,3 +594,72 @@ def test_render_thesis_maps_closer_to_a_phrase() -> None:
 def test_render_thesis_unknown_closer_raises_catalogue_error() -> None:
     with pytest.raises(CatalogueError, match="bogus"):
         render_thesis("out on {closer}", closer="bogus")
+
+
+# --- check_dialogue_catalogue: voice bank and forbidden-behaviour catalogue ---
+
+
+def test_avoid_missing_a_bias_param_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "avoid.yaml"
+    data = _load_yaml(path)
+    del data["biases"]["exit_deficiency"]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="missing.*exit_deficiency"):
+        _check(catalogue)
+
+
+def test_avoid_missing_a_preference_param_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "avoid.yaml"
+    data = _load_yaml(path)
+    del data["preferences"]["positioning_context"]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="missing.*positioning_context"):
+        _check(catalogue)
+
+
+def test_voice_line_with_a_banned_word_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][0]["line"] = "quietly follows the herd on every call"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="herd"):
+        _check(catalogue)
+
+
+def test_duplicate_voice_id_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][1]["voice_id"] = data["voices"][0]["voice_id"]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="duplicate"):
+        _check(catalogue)
+
+
+def test_fewer_than_six_voices_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"] = data["voices"][:5]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="6"):
+        _check(catalogue)
+
+
+def test_missing_voices_file_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    (tmp_path / "voices.yaml").unlink()
+    with pytest.raises(CatalogueError):
+        load_catalogue(tmp_path)
+
+
+def test_shipped_dialogue_catalogue_passes_check_dialogue_catalogue(catalogue: Catalogue) -> None:
+    check_dialogue_catalogue(catalogue)

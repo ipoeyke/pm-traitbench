@@ -10,6 +10,7 @@ import yaml
 from pm_traitbench.catalogues.loader import (
     CLOSER_PHRASES,
     check_catalogue,
+    check_dialogue_catalogue,
     load_catalogue,
     render_signpost,
     render_template,
@@ -202,6 +203,8 @@ def test_packaged_yaml_files_exist() -> None:
         "signposts.yaml",
         "theses.yaml",
         "stances.yaml",
+        "voices.yaml",
+        "avoid.yaml",
     ):
         assert base.joinpath(name).is_file()
 
@@ -294,6 +297,8 @@ def test_stance_bank_lines_are_lowercase_no_period_and_2_to_4_per_key() -> None:
         "signposts.yaml",
         "theses.yaml",
         "stances.yaml",
+        "voices.yaml",
+        "avoid.yaml",
     ],
 )
 def test_no_em_dash_or_banned_words_in_any_shipped_file(name: str) -> None:
@@ -357,3 +362,9 @@ def test_equities_and_commodities_outright_theses_have_no_unit_on_entry_or_targe
         for template in catalogue.theses.theses[asset_class][Expression.OUTRIGHT]:
             assert "{entry}{unit}" not in template, (asset_class, template)
             assert "{target}{unit}" not in template, (asset_class, template)
+
+
+def test_shipped_dialogue_catalogue_passes_its_checks() -> None:
+    catalogue = load_catalogue()
+    check_dialogue_catalogue(catalogue)
+    assert len(catalogue.voices) == 8
