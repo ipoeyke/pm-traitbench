@@ -93,7 +93,7 @@ class MarketLookup:
         }
         instruments_by_id = {
             instrument_id: instrument_by_id[instrument_id]
-            for instrument_id in covered_ids
+            for instrument_id in sorted(covered_ids)
             if instrument_id in instrument_by_id
         }
 
@@ -197,37 +197,31 @@ class MarketLookup:
         """Own and market-wide calendar rows in a trading-day window around `today`.
 
         The window spans `days_back` trading days before through
-        `days_forward` trading days after `today` itself. Empty if no
-        trading day in this seed falls in it (e.g. `today` is before every
-        date in the seed and `days_forward` is too small to reach one).
+        `days_forward` trading days after `today`, always including `today`
+        itself even when it falls on a holiday.
         """
-        window = self._calendar_window(today, days_back, days_forward)
-        if window is None:
-            return ()
-        lo, hi = window
+        lo, hi = self._calendar_window(today, days_back, days_forward)
         own = self._calendar_by_instrument.get(instrument_id, ())
         combined = [row for row in own if lo <= row.date <= hi]
         combined += [row for row in self._calendar_market_wide if lo <= row.date <= hi]
         return tuple(sorted(combined, key=lambda r: (r.date, r.event.value, r.instrument_id or "")))
 
-    def _calendar_window(
-        self, today: date, days_back: int, days_forward: int
-    ) -> tuple[date, date] | None:
-        """Trading-day window including `today`, or None if no trading day falls in it.
+    def _calendar_window(self, today: date, days_back: int, days_forward: int) -> tuple[date, date]:
+        """The trading-day window `[lo, hi]` around `today`, widened to include `today` itself.
 
-        `bisect_left` anchors the back edge and `bisect_right` the forward
-        edge, both directly against `today` (not a shifted anchor), so a
-        `today` that falls on a holiday neither widens the back window nor
-        drops a row dated exactly on `today`.
+        `lo` is `days_back` trading days before `today`, `hi` is
+        `days_forward` trading days after, each clamped to the seed's date
+        range and pulled in to cover `today` when it falls outside every
+        trading day (e.g. a holiday).
         """
         if not self.dates:
-            return None
+            return today, today
         n = len(self.dates)
         lo_idx = max(bisect.bisect_left(self.dates, today) - days_back, 0)
         hi_idx = min(bisect.bisect_right(self.dates, today) - 1 + days_forward, n - 1)
         if lo_idx > hi_idx:
-            return None
-        return self.dates[lo_idx], self.dates[hi_idx]
+            return today, today
+        return min(self.dates[lo_idx], today), max(self.dates[hi_idx], today)
 
 
 def _instrument_schema(description: str) -> dict[str, Any]:
@@ -509,9 +503,11 @@ _HANDLERS: dict[str, Callable[[MarketLookup, Mapping[str, Any], date], ToolOutco
 def run_tool(
     lookup: MarketLookup, name: str, tool_input: Mapping[str, Any], today: date
 ) -> ToolOutcome:
-    """Dispatch one advisor tool call; every handler validates its own input, so this never
-    raises for a malformed tool call. A bug elsewhere in the lookup is not caught here and
-    propagates as an exception.
+    """Dispatch one advisor tool call; malformed input returns an error outcome.
+
+    Each handler validates its own `tool_input` first, so a bad tool name,
+    unknown instrument or malformed argument never raises. A bug elsewhere
+    in the lookup is not caught here and propagates as an exception.
     """
     handler = _HANDLERS.get(name)
     if handler is None:

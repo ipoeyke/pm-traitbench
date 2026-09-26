@@ -9,10 +9,13 @@ from pm_traitbench.enums import AdvisorTool, EventType, Family, InstrumentKind
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import CalendarEvent, CurvePoint, Instrument, Price
 
+_HOLIDAY = date(2026, 1, 10)  # a Saturday: not a trading day in the mini lookup below
+
 
 def _mini_calendar_lookup() -> MarketLookup:
     """A hand-built lookup: 6 trading days (Jan 5-9 and Jan 12 2026, skipping the Jan 10-11
-    weekend) with one earnings event on each day, for exact calendar-window boundary tests.
+    weekend) with one earnings event on each trading day, plus one more dated on the Jan 10
+    holiday itself, for exact calendar-window boundary tests.
     """
     instrument = Instrument(
         instrument_id="EQ-TST",
@@ -27,7 +30,7 @@ def _mini_calendar_lookup() -> MarketLookup:
         beta=1.0,
         expiry_rule=None,
     )
-    days = [
+    trading_days = [
         date(2026, 1, 5),
         date(2026, 1, 6),
         date(2026, 1, 7),
@@ -37,8 +40,9 @@ def _mini_calendar_lookup() -> MarketLookup:
     ]
     prices = [
         Price(seed="T", date=day, instrument_id="EQ-TST", price=100.0, spread_bp=None)
-        for day in days
+        for day in trading_days
     ]
+    event_days = [*trading_days, _HOLIDAY]
     calendar = [
         CalendarEvent(
             seed="T",
@@ -48,7 +52,7 @@ def _mini_calendar_lookup() -> MarketLookup:
             surprise=0.1,
             affected="equities",
         )
-        for day in days
+        for day in event_days
     ]
     return MarketLookup.build(
         seed="T",
@@ -334,38 +338,52 @@ def test_calendar_window_bounds_accept_inclusive_edges(
 
 def test_get_calendar_on_a_holiday_today_does_not_widen_the_back_window():
     lookup = _mini_calendar_lookup()
-    holiday = date(2026, 1, 10)  # Saturday: not a trading day
 
     outcome = run_tool(
-        lookup, "get_calendar", {"instrument": "EQ-TST", "days_back": 1, "days_forward": 0}, holiday
+        lookup,
+        "get_calendar",
+        {"instrument": "EQ-TST", "days_back": 1, "days_forward": 0},
+        _HOLIDAY,
     )
 
     assert outcome.is_error is False
-    assert [e["date"] for e in outcome.result["events"]] == [date(2026, 1, 9).isoformat()]
+    # Jan 9 (1 session back) and the holiday itself, never Jan 8 (2 sessions back).
+    assert [e["date"] for e in outcome.result["events"]] == [
+        date(2026, 1, 9).isoformat(),
+        _HOLIDAY.isoformat(),
+    ]
 
 
 def test_get_calendar_on_a_holiday_today_does_not_drop_same_day_rows():
     lookup = _mini_calendar_lookup()
-    holiday = date(2026, 1, 10)
 
     outcome = run_tool(
-        lookup, "get_calendar", {"instrument": "EQ-TST", "days_back": 0, "days_forward": 1}, holiday
+        lookup,
+        "get_calendar",
+        {"instrument": "EQ-TST", "days_back": 0, "days_forward": 1},
+        _HOLIDAY,
     )
 
     assert outcome.is_error is False
-    assert [e["date"] for e in outcome.result["events"]] == [date(2026, 1, 12).isoformat()]
+    # The holiday itself and Jan 12 (1 session forward), never Jan 9 (0 sessions back).
+    assert [e["date"] for e in outcome.result["events"]] == [
+        _HOLIDAY.isoformat(),
+        date(2026, 1, 12).isoformat(),
+    ]
 
 
-def test_get_calendar_on_a_holiday_today_with_no_window_is_empty():
+def test_get_calendar_on_a_holiday_today_with_zero_window_only_returns_the_same_day_row():
     lookup = _mini_calendar_lookup()
-    holiday = date(2026, 1, 10)
 
     outcome = run_tool(
-        lookup, "get_calendar", {"instrument": "EQ-TST", "days_back": 0, "days_forward": 0}, holiday
+        lookup,
+        "get_calendar",
+        {"instrument": "EQ-TST", "days_back": 0, "days_forward": 0},
+        _HOLIDAY,
     )
 
     assert outcome.is_error is False
-    assert outcome.result["events"] == []
+    assert [e["date"] for e in outcome.result["events"]] == [_HOLIDAY.isoformat()]
 
 
 def test_get_calendar_today_before_the_first_date_only_looks_forward():
@@ -446,3 +464,9 @@ def test_build_raises_dialogue_error_for_curve_id_naming_the_wrong_kind(fixture_
             consensus=fixture_market["consensus"],
             calendar=fixture_market["calendar"],
         )
+
+
+def test_lookup_instruments_are_in_sorted_instrument_id_order(market_lookup: MarketLookup):
+    ids = list(market_lookup.instruments)
+
+    assert ids == sorted(ids)
