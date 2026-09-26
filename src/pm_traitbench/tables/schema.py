@@ -4,10 +4,11 @@ Re-exports pm_traitbench.enums so table code has a single import path.
 """
 
 import datetime
+import json
 import re
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pm_traitbench.enums import (
     MARKET_WIDE_EVENTS,
@@ -1000,6 +1001,16 @@ class Mention(BaseModel):
         return self
 
 
+def canonical_json(value: Any) -> str:
+    """One JSON serialisation for `value`: sorted keys, no extra whitespace.
+
+    The dialogue session log and the `tool_result` block sent back to the
+    model both serialise a tool call's input and result through this, so a
+    given value always renders the same string.
+    """
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
 class ToolCall(BaseModel):
     """One advisor tool invocation and its result."""
 
@@ -1019,6 +1030,17 @@ class ToolCall(BaseModel):
         )
     )
     is_error: bool = Field(description="Whether the tool call resulted in an error.")
+
+    @field_validator("input_json", "result_json")
+    @classmethod
+    def _check_canonical_json(cls, v: str) -> str:
+        try:
+            parsed = json.loads(v)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"must be valid JSON: {e}") from e
+        if canonical_json(parsed) != v:
+            raise ValueError("must be canonical JSON (sorted keys, no extra whitespace)")
+        return v
 
 
 class CallUsage(BaseModel):

@@ -14,6 +14,7 @@ from pm_traitbench.tables.schema import (
     ToolCall,
     Turn,
     TurnLog,
+    canonical_json,
 )
 from pm_traitbench.tables.specs import DIALOGUE_LOGS, HIDDEN_COLUMNS, SESSIONS
 from pm_traitbench.tables.store import DataStore
@@ -216,6 +217,25 @@ def test_tool_call_and_dialogue_log_build() -> None:
 def test_dialogue_log_rejects_session_id_of_another_pm() -> None:
     with pytest.raises(ValidationError):
         _dialogue_log(session_id="s_pm002_2026-03-02_a")
+
+
+def test_canonical_json_sorts_keys_and_strips_whitespace() -> None:
+    assert canonical_json({"b": 1, "a": 2}) == '{"a":2,"b":1}'
+
+
+def test_tool_call_rejects_non_json_input() -> None:
+    with pytest.raises(ValidationError):
+        _tool_call(input_json="not json")
+
+
+def test_tool_call_rejects_result_json_with_extra_whitespace() -> None:
+    with pytest.raises(ValidationError):
+        _tool_call(result_json='{"price": 100.0}')
+
+
+def test_tool_call_rejects_input_json_with_unsorted_keys() -> None:
+    with pytest.raises(ValidationError):
+        _tool_call(input_json='{"b":1,"a":2}')
 
 
 def test_dialogue_log_rejects_odd_turn_count() -> None:
