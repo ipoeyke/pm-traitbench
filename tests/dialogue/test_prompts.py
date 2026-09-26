@@ -176,25 +176,27 @@ def test_narrator_request_never_leaks_trait_or_bias_information(market_lookup):
 
     ctx = build_contexts(pm, voice, market_lookup, catalogue, Config())[0]
 
-    system = narrator_system(ctx, None)
-    directives = [narrator_directive(ctx, i) for i in range(len(ctx.turn_plan.pm_directives))]
-    combined_raw = system + "\n".join(directives)
+    messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
+    for i in range(len(ctx.turn_plan.pm_directives)):
+        messages.append({"role": "system", "content": narrator_directive(ctx, i)})
+    request = narrator_request(ctx, messages, _CONFIG.dialogue, None)
+    serialized_raw = json.dumps(request)
 
     # The scan is only meaningful if real content flowed through.
     assert ctx.avoid_lines and ctx.pm_rules and ctx.idea_rules
-    assert stance_line in combined_raw
+    assert stance_line in serialized_raw
 
-    combined = combined_raw.lower()
+    serialized = serialized_raw.lower()
     for trait in pm.traits:
-        assert trait.trait_id.lower() not in combined
+        assert trait.trait_id.lower() not in serialized
     for param in BIAS_PARAMS:
-        assert param.lower() not in combined
+        assert param.lower() not in serialized
     for trait in pm.traits:
         if trait.kind == Kind.BIAS:
-            assert str(trait.value).lower() not in combined
+            assert str(trait.value).lower() not in serialized
     for mode in SignalMode:
-        assert mode.value.lower() not in combined
-    assert re.search(r"\bbias\b", combined, re.IGNORECASE) is None
+        assert mode.value.lower() not in serialized
+    assert re.search(r"\bbias\b", serialized, re.IGNORECASE) is None
 
 
 def test_directive_carries_the_stance_line_and_day_trades(market_lookup):
