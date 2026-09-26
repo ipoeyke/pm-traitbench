@@ -95,6 +95,39 @@ def _instrument_name(lookup: MarketLookup, instrument_id: str) -> str:
     return instrument.name
 
 
+def _ledger_sort_key(row: LedgerRow) -> tuple[str, str, tuple[int, str], str]:
+    """The ledger table's own key, minus the (pm_id, date) already fixed by the caller."""
+    tenor_key = (0, "") if row.tenor is None else (1, row.tenor.value)
+    return (row.trade_idea_id, row.instrument_id, tenor_key, row.side.value)
+
+
+def _bias_avoid_line(
+    catalogue: Catalogue, traits_by_id: Mapping[str, Trait], trait_id: str, skeleton: Skeleton
+) -> str:
+    trait = traits_by_id.get(trait_id)
+    if trait is None:
+        raise DialogueError(
+            f"session '{skeleton.session_id}' forbids trait '{trait_id}' the PM does not have"
+        )
+    line = catalogue.avoid.biases.get(trait.param)
+    if line is None:
+        raise DialogueError(
+            f"session '{skeleton.session_id}' forbids trait '{trait_id}' with param "
+            f"'{trait.param}', which has no avoid line in the catalogue"
+        )
+    return line
+
+
+def _pref_avoid_line(catalogue: Catalogue, param: str, skeleton: Skeleton) -> str:
+    line = catalogue.avoid.preferences.get(param)
+    if line is None:
+        raise DialogueError(
+            f"session '{skeleton.session_id}' forbids preference param '{param}', which "
+            "has no avoid line in the catalogue"
+        )
+    return line
+
+
 def build_contexts(
     pm: PmTables,
     voice: Voice,
@@ -142,20 +175,22 @@ def build_contexts(
                     for row in pm.ledger
                     if row.date == skeleton.date and row.trade_idea_id in skeleton.trade_idea_ids
                 ),
-                key=lambda row: row.trade_idea_id,
+                key=_ledger_sort_key,
             )
         )
 
-        open_positions = tuple(
-            sorted(
-                (
-                    pm.ideas[row.trade_idea_id]
-                    for row in pm.position_days
-                    if row.date == skeleton.date and row.trade_idea_id in pm.ideas
-                ),
-                key=lambda idea: idea.trade_idea_id,
-            )
-        )
+        open_position_ideas: list[Idea] = []
+        for row in pm.position_days:
+            if row.date != skeleton.date:
+                continue
+            position_idea = pm.ideas.get(row.trade_idea_id)
+            if position_idea is None:
+                raise DialogueError(
+                    f"session '{skeleton.session_id}' has a position_days row for trade "
+                    f"idea '{row.trade_idea_id}' the PM does not have"
+                )
+            open_position_ideas.append(position_idea)
+        open_positions = tuple(sorted(open_position_ideas, key=lambda idea: idea.trade_idea_id))
 
         turn_plan = plan_turns(
             skeleton,
@@ -192,11 +227,11 @@ def build_contexts(
         }
 
         bias_lines = {
-            catalogue.avoid.biases[traits_by_id[trait_id].param]
+            _bias_avoid_line(catalogue, traits_by_id, trait_id, skeleton)
             for trait_id in skeleton.forbidden_trait_ids
         }
         pref_lines = {
-            catalogue.avoid.preferences[param] for param in skeleton.forbidden_pref_params
+            _pref_avoid_line(catalogue, param, skeleton) for param in skeleton.forbidden_pref_params
         }
         avoid_lines = tuple(sorted(bias_lines | pref_lines))
 

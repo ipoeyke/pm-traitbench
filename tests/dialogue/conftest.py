@@ -13,15 +13,15 @@ from typing import Any
 import pytest
 
 from pm_traitbench.catalogues.models import Voice
-from pm_traitbench.config import TurnRanges
+from pm_traitbench.config import Config, TurnRanges
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import MarketLookup
 from pm_traitbench.dialogue.turns import TurnPlan, plan_turns
-from pm_traitbench.enums import SessionKind
+from pm_traitbench.enums import Action, Op, RuleScope, RuleSource, SessionKind
 from pm_traitbench.rng import stream
-from pm_traitbench.tables.schema import LedgerRow, Skeleton, Stance
+from pm_traitbench.tables.schema import LedgerRow, Rule, Skeleton, Stance
 from tests.engine.conftest import fixture_market  # noqa: F401
-from tests.gates.conftest import idea_row
+from tests.gates.conftest import PM_ID, idea_row
 from tests.signals.conftest import persona
 
 
@@ -92,6 +92,27 @@ def market_lookup(fixture_market: dict) -> MarketLookup:
     )
 
 
+def rule(**overrides) -> Rule:
+    """A self-imposed, PM-scope stop-loss rule, overridable by keyword."""
+    fields = dict(
+        pm_id=PM_ID,
+        rule_id="r_01",
+        source=RuleSource.SELF,
+        scope=RuleScope.PM,
+        trade_idea_id=None,
+        param="stop_loss",
+        field="pnl_pct",
+        op=Op.LE,
+        level=-5.0,
+        unit="pct",
+        window=1,
+        action=Action.EXIT,
+        text="Exit a position after a 5 percent drawdown from entry.",
+    )
+    fields.update(overrides)
+    return Rule(**fields)
+
+
 def session_context(
     lookup: MarketLookup,
     *,
@@ -132,7 +153,7 @@ def session_context(
             skeleton,
             resolved_day_trades,
             TurnRanges(),
-            stream(0, "dialogue", pm.pm_id, skeleton.session_id, "turns"),
+            stream(Config().seed.root, "dialogue", pm.pm_id, skeleton.session_id, "turns"),
         )
 
     question_instrument = None

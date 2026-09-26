@@ -113,9 +113,10 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
             rule.text for rule in ctx.idea_rules if rule.trade_idea_id == idea.trade_idea_id
         )
     sections.append(ctx.voice.line)
-    sections.append(
-        "Never do any of the following:\n" + "\n".join(f"- {line}" for line in ctx.avoid_lines)
-    )
+    if ctx.avoid_lines:
+        sections.append(
+            "Never do any of the following:\n" + "\n".join(f"- {line}" for line in ctx.avoid_lines)
+        )
     if feedback:
         sections.append(f"Correction for this session:\n{feedback}")
     return "\n\n".join(sections)
@@ -123,16 +124,25 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
 
 def _trade_line(ctx: SessionContext, trade: LedgerRow) -> str:
     name = ctx.instrument_names[trade.instrument_id]
+    tenor = f", tenor {trade.tenor.value}" if trade.tenor is not None else ""
     return (
-        f"{trade.trade_idea_id}: {name} ({trade.instrument_id}), {trade.side.value} "
+        f"{trade.trade_idea_id}: {name} ({trade.instrument_id}){tenor}, {trade.side.value} "
         f"{trade.size} at {trade.price_or_yield}"
     )
+
+
+_NO_OPEN_POSITIONS = (
+    "Open with a routine check-in. You hold no open positions today, so ask the advisor "
+    "about the markets you trade without naming a position."
+)
 
 
 def _opening_line(ctx: SessionContext, opening: Opening) -> str:
     if opening == Opening.SESSION_IDEAS:
         return "Open the conversation about today's decision on your ideas listed above."
     if opening == Opening.OPEN_POSITIONS:
+        if not ctx.open_positions:
+            return _NO_OPEN_POSITIONS
         names = "; ".join(
             f"{ctx.instrument_names[p.instrument_id]} ({p.side.value})" for p in ctx.open_positions
         )
@@ -167,7 +177,7 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
 
 
 def advisor_system(advisor_prompt: str, day: date) -> str:
-    """The advisor prompt plus the session date, cache-marked and stable for the session."""
+    """The advisor prompt plus the session date, stable for the whole session."""
     return f"{advisor_prompt}\n\nToday is {day.isoformat()}."
 
 
