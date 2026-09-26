@@ -140,9 +140,10 @@ async def _send_accepted(
 ) -> tuple[Reply, _Accepted, int]:
     """Send `request`, retrying a rejected reply up to `max_retries` times.
 
-    A rejected reply that came from the cache makes the next attempt bypass
-    the cache, so a cache entry that no longer validates is never replayed
-    forever. Returns the accepted reply alongside how many attempts it took.
+    A rejected reply that came from the cache makes every later attempt
+    bypass the cache too, so a cache entry that no longer validates is never
+    replayed forever and a run does not alternate between it and a fresh
+    call. Returns the accepted reply alongside how many attempts it took.
     """
     refresh = False
     rejected = 0
@@ -152,7 +153,7 @@ async def _send_accepted(
         if accepted is not None:
             client.commit(reply)
             return reply, accepted, rejected
-        refresh = reply.cached
+        refresh = refresh or reply.cached
         rejected += 1
     raise DialogueError(f"session {session_id}: {reason}")
 

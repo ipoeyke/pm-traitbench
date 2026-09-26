@@ -79,11 +79,22 @@ TURN_SCHEMA: dict[str, Any] = {
     "required": ["text", "mentions"],
     "additionalProperties": False,
 }
+ADVISOR_TURN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string"},
+        # The advisor never sees a trade idea id, so it never offers the trade branch.
+        "mentions": {"type": "array", "items": _LEVEL_MENTION_SCHEMA},
+    },
+    "required": ["text", "mentions"],
+    "additionalProperties": False,
+}
 
 _ADVISOR_MENTIONS_INSTRUCTION = (
     "Return your reply as `text` and `mentions`. For every market number you state, add "
     'a mention with kind "level", using the instrument_id and field name a tool '
-    "returned, the tenor a tool gave or null, and the value you stated."
+    'returned (a curve point\'s field is "level"), the tenor a tool gave or null, and '
+    "the value you stated."
 )
 
 
@@ -247,7 +258,9 @@ def advisor_request(
     """The advisor's Messages API request body.
 
     The narrator's keys plus `tools`, and `tool_choice` only when tools are
-    disabled; never `thinking` or a sampling param.
+    disabled; never `thinking` or a sampling param. Its schema is
+    `ADVISOR_TURN_SCHEMA`, not `TURN_SCHEMA`, since the advisor never sees a
+    trade idea id and so can never fill a trade mention.
     """
     request: dict[str, Any] = {
         "model": config.advisor_model,
@@ -256,7 +269,7 @@ def advisor_request(
         "messages": list(messages),
         "output_config": {
             "effort": config.effort.value,
-            "format": {"type": "json_schema", "schema": TURN_SCHEMA},
+            "format": {"type": "json_schema", "schema": ADVISOR_TURN_SCHEMA},
         },
         "cache_control": {"type": "ephemeral"},
         "tools": list(TOOL_DEFINITIONS),

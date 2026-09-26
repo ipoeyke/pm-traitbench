@@ -12,6 +12,7 @@ from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.dialogue.client import request_key
 from pm_traitbench.dialogue.context import PmTables, build_contexts
 from pm_traitbench.dialogue.prompts import (
+    ADVISOR_TURN_SCHEMA,
     NARRATOR_OPENING_MESSAGE,
     TURN_SCHEMA,
     advisor_request,
@@ -113,7 +114,7 @@ def test_turn_schema_mention_enums_come_from_the_enum_classes():
         assert set(mention_schema["required"]) == set(mention_schema["properties"])
 
 
-def test_turn_schema_shapes_match_what_parse_turn_accepts():
+def test_parse_turn_accepts_each_mention_shape_the_schema_allows():
     trade_mention = {
         "kind": "trade",
         "instrument_id": "EQ-0001",
@@ -156,6 +157,39 @@ def test_turn_schema_rejects_an_off_enum_tenor():
     response = fake_message([turn_text("hi", mentions=[mention])])
 
     assert parse_turn(response) is None
+
+
+def test_advisor_turn_schema_offers_only_level_mentions():
+    """The advisor never sees idea ids, so its reply schema must not offer the trade branch."""
+    mentions_items = ADVISOR_TURN_SCHEMA["properties"]["mentions"]["items"]
+
+    assert "anyOf" not in mentions_items
+    assert mentions_items["properties"]["kind"] == {"const": "level"}
+    assert mentions_items == TURN_SCHEMA["properties"]["mentions"]["items"]["anyOf"][1]
+
+
+def test_narrator_turn_schema_still_offers_both_mention_kinds():
+    mentions_items = TURN_SCHEMA["properties"]["mentions"]["items"]
+
+    assert {branch["properties"]["kind"]["const"] for branch in mentions_items["anyOf"]} == {
+        "trade",
+        "level",
+    }
+
+
+def test_advisor_request_uses_the_advisor_only_turn_schema():
+    request = advisor_request(
+        "system prompt", [{"role": "user", "content": "hi"}], _CONFIG.dialogue
+    )
+
+    assert request["output_config"]["format"]["schema"] == ADVISOR_TURN_SCHEMA
+
+
+def test_advisor_mentions_instruction_names_level_for_a_curve_point():
+    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE)
+
+    assert "level" in system
+    assert "curve" in system.lower()
 
 
 def test_advisor_system_appends_the_mentions_instruction_before_the_date():

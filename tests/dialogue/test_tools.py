@@ -221,6 +221,17 @@ def test_get_curve_returns_tenors_in_order(market_lookup: MarketLookup, fixture_
     assert list(outcome.result["levels"].keys()) == ["2Y", "5Y", "10Y", "30Y"]
 
 
+def test_get_curve_names_its_field_as_level(market_lookup: MarketLookup, fixture_market: dict):
+    """The curves table column is `level`; the advisor is told to use a tool's field name, so
+    the result must name it explicitly rather than leave the advisor to guess from `levels`.
+    """
+    today = fixture_market["dates"][7]
+
+    outcome = run_tool(market_lookup, "get_curve", {"instrument": "RT-USD"}, today)
+
+    assert outcome.result["field"] == "level"
+
+
 def test_get_curve_on_instrument_with_no_curve_is_an_error(
     market_lookup: MarketLookup, fixture_market: dict
 ):

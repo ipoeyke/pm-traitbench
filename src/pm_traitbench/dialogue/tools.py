@@ -394,6 +394,7 @@ def _get_curve(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date)
             "instrument_id": resolved.instrument_id,
             "name": resolved.name,
             "date": curve_date.isoformat(),
+            "field": "level",
             "levels": levels,
         },
         is_error=False,

@@ -114,6 +114,34 @@ def test_send_accepted_refreshes_past_a_cached_reply_that_fails_validation(tmp_p
     assert stored["response"] == reply.response
 
 
+def test_send_accepted_refresh_stays_sticky_after_the_first_stale_cache_hit(tmp_path):
+    """Once a stale cached reply is rejected, every later attempt must go to the API, not
+    alternate back onto the same stale entry when a fresh reply is also rejected.
+    """
+    request = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
+    calls = {"n": 0}
+
+    def responder(req):
+        calls["n"] += 1
+        return fake_message([turn_text("   ")])  # always blank: always rejected
+
+    inner = FakeClient(responder)
+    client = CachedClient(lambda: inner, tmp_path, token_budget=None)
+    key = request_key(request, "s_test")
+    shard = tmp_path / key[:2]
+    shard.mkdir(parents=True)
+    stale = fake_message([turn_text("hi", mentions=[{"kind": "trade"}])])
+    (shard / f"{key}.json").write_text(
+        json.dumps({"key": key, "response": stale}), encoding="utf-8"
+    )
+
+    with pytest.raises(DialogueError):
+        asyncio.run(_send_accepted(client, request, _CONFIG, "s_test", allow_tool_use=False))
+
+    assert calls["n"] == _CONFIG.max_retries  # every attempt after the stale hit is fresh
+    assert client.totals.cache_hits == 1
+
+
 def test_advisor_tool_round_runs_the_tool_and_logs_the_call(market_lookup, tmp_path):
     ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
     instrument_id = sorted(market_lookup.instruments)[0]
