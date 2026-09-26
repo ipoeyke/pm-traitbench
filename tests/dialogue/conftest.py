@@ -1,5 +1,5 @@
-"""Shared dialogue-test fixtures: fake message builders, an in-memory `LlmClient`, and a
-`MarketLookup` built on the shared fixture market.
+"""Shared dialogue-test fixtures: fake message builders, an in-memory `LlmClient`, a
+`MarketLookup` built on the shared fixture market, and a small `SessionContext` builder.
 
 Consumed by client, tools, prompt and session tests, so a canned response's
 shape only has to match `Message.to_dict()` in one place.
@@ -7,12 +7,22 @@ shape only has to match `Message.to_dict()` in one place.
 
 import json
 from collections.abc import Callable, Mapping
+from datetime import date
 from typing import Any
 
 import pytest
 
+from pm_traitbench.catalogues.models import Voice
+from pm_traitbench.config import TurnRanges
+from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import MarketLookup
+from pm_traitbench.dialogue.turns import TurnPlan, plan_turns
+from pm_traitbench.enums import SessionKind
+from pm_traitbench.rng import stream
+from pm_traitbench.tables.schema import LedgerRow, Skeleton, Stance
 from tests.engine.conftest import fixture_market  # noqa: F401
+from tests.gates.conftest import idea_row
+from tests.signals.conftest import persona
 
 
 def fake_message(
@@ -79,4 +89,76 @@ def market_lookup(fixture_market: dict) -> MarketLookup:
         curves=fixture_market["curves"],
         consensus=fixture_market["consensus"],
         calendar=fixture_market["calendar"],
+    )
+
+
+def session_context(
+    lookup: MarketLookup,
+    *,
+    kind: SessionKind = SessionKind.DECISION,
+    stances: tuple[Stance, ...] = (),
+    advisor_violation: str | None = None,
+    day_trades: tuple[LedgerRow, ...] = (),
+    turn_plan: TurnPlan | None = None,
+) -> SessionContext:
+    """A small, internally consistent `SessionContext` for one PM's session.
+
+    Every field but `kind`, `stances`, `advisor_violation`, `day_trades` and
+    `turn_plan` is a fixed default built from `tests.signals.conftest.persona`
+    and `tests.gates.conftest.idea_row`. A silence session drops its stances,
+    trade and violation overrides, since a silence skeleton forbids them.
+    """
+    pm = persona()
+    voice = Voice(voice_id="v_01", line="terse trader shorthand, drops articles")
+    idea = idea_row()
+    is_silence = kind == SessionKind.SILENCE
+    resolved_day_trades = () if is_silence else day_trades
+
+    skeleton = Skeleton(
+        session_id=f"s_{pm.pm_id.replace('_', '')}_2026-01-05_a",
+        pm_id=pm.pm_id,
+        date=date(2026, 1, 5),
+        kind=kind,
+        trade_idea_ids=() if is_silence else (idea.trade_idea_id,),
+        stances=() if is_silence else stances,
+        advisor_violation=None if is_silence else advisor_violation,
+        forbidden_trait_ids=(),
+        forbidden_pref_params=(),
+    )
+
+    resolved_turn_plan = turn_plan
+    if resolved_turn_plan is None:
+        resolved_turn_plan = plan_turns(
+            skeleton,
+            resolved_day_trades,
+            TurnRanges(),
+            stream(0, "dialogue", pm.pm_id, skeleton.session_id, "turns"),
+        )
+
+    question_instrument = None
+    instrument_names: dict[str, str] = {}
+    if is_silence:
+        question_instrument = sorted(lookup.instruments.values(), key=lambda i: i.instrument_id)[0]
+        instrument_names[question_instrument.instrument_id] = question_instrument.name
+    else:
+        instrument_names[idea.instrument_id] = lookup.instruments[idea.instrument_id].name
+    for trade in resolved_day_trades:
+        instrument_names.setdefault(
+            trade.instrument_id, lookup.instruments[trade.instrument_id].name
+        )
+
+    return SessionContext(
+        skeleton=skeleton,
+        persona=pm,
+        voice=voice,
+        pm_rules=(),
+        idea_rules=(),
+        ideas=() if is_silence else (idea,),
+        day_trades=resolved_day_trades,
+        open_positions=(),
+        question_instrument=question_instrument,
+        instrument_names=instrument_names,
+        avoid_lines=(),
+        lookup=lookup,
+        turn_plan=resolved_turn_plan,
     )
