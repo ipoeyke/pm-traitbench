@@ -137,7 +137,7 @@ _NO_OPEN_POSITIONS = (
 )
 
 
-def _opening_line(ctx: SessionContext, opening: Opening) -> str:
+def opening_line(ctx: SessionContext, opening: Opening) -> str:
     if opening == Opening.SESSION_IDEAS:
         return "Open the conversation about today's decision on your ideas listed above."
     if opening == Opening.OPEN_POSITIONS:
@@ -165,7 +165,7 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
     directive = ctx.turn_plan.pm_directives[pm_index]
     lines: list[str] = []
     if pm_index == 0 and directive.opening is not None:
-        lines.append(_opening_line(ctx, directive.opening))
+        lines.append(opening_line(ctx, directive.opening))
         if directive.trades:
             trades = "; ".join(_trade_line(ctx, trade) for trade in directive.trades)
             lines.append(f"Mention each of these trades: {trades}")

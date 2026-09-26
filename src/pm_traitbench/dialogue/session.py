@@ -17,11 +17,11 @@ from pm_traitbench.dialogue.client import CachedClient, Reply
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.prompts import (
     NARRATOR_OPENING_MESSAGE,
-    _opening_line,
     advisor_request,
     advisor_system,
     narrator_directive,
     narrator_request,
+    opening_line,
 )
 from pm_traitbench.dialogue.tools import run_tool
 from pm_traitbench.enums import AdvisorTool, TurnRole
@@ -62,8 +62,11 @@ class SessionResult:
 def parse_turn(response: Mapping[str, Any]) -> TurnOutput | None:
     """The last text block parsed as JSON and validated into a `TurnOutput`.
 
-    None when `stop_reason` is not `end_turn`, no text block exists, or the
-    JSON or its mentions fail validation.
+    None when `stop_reason` is not `end_turn`, no text block exists, the text
+    is blank, or the JSON or its mentions fail validation. A blank `text`
+    would otherwise pass `TURN_SCHEMA` (which sets no `minLength`) and later
+    fail `Turn`'s own `min_length=1` after the reply is already cached, so it
+    is rejected here instead.
     """
     if response.get("stop_reason") != "end_turn":
         return None
@@ -81,7 +84,7 @@ def parse_turn(response: Mapping[str, Any]) -> TurnOutput | None:
         return None
     try:
         text = payload["text"]
-        if not isinstance(text, str):
+        if not isinstance(text, str) or not text.strip():
             return None
         mentions = tuple(Mention(**item) for item in payload.get("mentions") or ())
     except (TypeError, ValueError, KeyError):
@@ -97,28 +100,29 @@ class _Accepted:
     tool_blocks: tuple[Mapping[str, Any], ...]
 
 
-def _classify(response: Mapping[str, Any], allow_tool_use: bool) -> _Accepted | None:
-    """Accept a tool-use round (every block names an `AdvisorTool`) or a final parsed turn."""
-    if allow_tool_use and response.get("stop_reason") == "tool_use":
+def _classify(response: Mapping[str, Any], allow_tool_use: bool) -> tuple[_Accepted | None, str]:
+    """Accept a tool-use round or a final parsed turn; on rejection, name the reason why."""
+    stop_reason = response.get("stop_reason")
+    if stop_reason == "refusal":
+        return None, "the reply was refused"
+    if stop_reason == "max_tokens":
+        return None, "the reply hit max_tokens"
+    if stop_reason == "tool_use":
+        if not allow_tool_use:
+            return None, "the reply used a tool where tools are not available"
         blocks = tuple(
             block for block in response.get("content") or () if block.get("type") == "tool_use"
         )
-        if blocks and all(block.get("name") in _ADVISOR_TOOL_NAMES for block in blocks):
-            return _Accepted(output=None, tool_blocks=blocks)
-        return None
+        if not blocks:
+            return None, "the reply set stop_reason tool_use but named no tool"
+        unknown = sorted({block.get("name") for block in blocks} - _ADVISOR_TOOL_NAMES)
+        if unknown:
+            return None, f"the reply named an unknown tool: {', '.join(unknown)}"
+        return _Accepted(output=None, tool_blocks=blocks), ""
     output = parse_turn(response)
     if output is None:
-        return None
-    return _Accepted(output=output, tool_blocks=())
-
-
-def _reject_reason(response: Mapping[str, Any]) -> str:
-    stop_reason = response.get("stop_reason")
-    if stop_reason in ("refusal", "max_tokens"):
-        return f"reply rejected ({stop_reason})"
-    if stop_reason == "tool_use":
-        return "tool_use reply named an unknown tool"
-    return "reply was unparsable or schema-invalid"
+        return None, "the reply was unparsable or schema-invalid"
+    return _Accepted(output=output, tool_blocks=()), ""
 
 
 async def _send_accepted(
@@ -130,14 +134,12 @@ async def _send_accepted(
     allow_tool_use: bool,
 ) -> tuple[Reply, _Accepted]:
     """Send `request`, retrying the same body on a rejected reply up to `max_retries` times."""
-    reason = "no attempt made"
     for _ in range(1 + config.max_retries):
         reply = await client.send(request)
-        accepted = _classify(reply.response, allow_tool_use)
+        accepted, reason = _classify(reply.response, allow_tool_use)
         if accepted is not None:
             client.commit(reply)
             return reply, accepted
-        reason = _reject_reason(reply.response)
     raise DialogueError(f"session {session_id}: {reason}")
 
 
@@ -173,7 +175,7 @@ def _pm_directive_text(ctx: SessionContext, pm_index: int) -> str | None:
     if directive.stance is not None:
         return directive.stance.stance
     if pm_index == 0 and directive.opening is not None:
-        return _opening_line(ctx, directive.opening)
+        return opening_line(ctx, directive.opening)
     return None
 
 
@@ -205,7 +207,8 @@ async def narrate_session(
         )
         narrator_messages.append({"role": "assistant", "content": pm_reply.response["content"]})
         pm_output = pm_accepted.output
-        assert pm_output is not None
+        if pm_output is None:
+            raise DialogueError(f"session {session_id}: accepted narrator reply carried no output")
         turn_logs.append(
             TurnLog(
                 role=TurnRole.PM,
@@ -232,12 +235,10 @@ async def narrate_session(
         usage = _ZERO_USAGE
         rounds = 0
         tools_disabled = False
-        model_name = config.advisor_model
         while True:
             advisor_body = advisor_request(
                 system_advisor, advisor_messages, config, tools_disabled=tools_disabled
             )
-            model_name = advisor_body["model"]
             reply, accepted = await _send_accepted(
                 client, advisor_body, config, session_id, allow_tool_use=not tools_disabled
             )
@@ -275,7 +276,10 @@ async def narrate_session(
 
             advisor_messages.append({"role": "assistant", "content": reply.response["content"]})
             advisor_output = accepted.output
-            assert advisor_output is not None
+            if advisor_output is None:
+                raise DialogueError(
+                    f"session {session_id}: accepted advisor reply carried no output"
+                )
             turn_logs.append(
                 TurnLog(
                     role=TurnRole.ADVISOR,
@@ -284,7 +288,7 @@ async def narrate_session(
                     directive=advisor_directive,
                     scripted_violation=is_violation,
                     tool_calls=tuple(tool_calls),
-                    model=model_name,
+                    model=advisor_body["model"],
                     request_hashes=tuple(request_hashes),
                     usage=usage,
                 )

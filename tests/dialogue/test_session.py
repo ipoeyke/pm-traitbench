@@ -5,7 +5,8 @@ import asyncio
 import pytest
 
 from pm_traitbench.config import Config
-from pm_traitbench.dialogue.client import CachedClient
+from pm_traitbench.dialogue.client import CachedClient, request_key
+from pm_traitbench.dialogue.prompts import opening_line
 from pm_traitbench.dialogue.session import TurnOutput, narrate_session, parse_turn
 from pm_traitbench.dialogue.turns import Opening, PmDirective, TurnPlan
 from pm_traitbench.enums import AdvisorTool, SignalMode, StanceEntry, TurnRole
@@ -145,6 +146,167 @@ def test_refusal_is_retried_and_not_cached(market_lookup, tmp_path):
     assert len(cache_files) == 2
 
 
+def test_blank_reply_is_retried_and_never_committed(market_lookup, tmp_path):
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
+    calls = {"pm": 0}
+
+    def responder(request):
+        if "tools" in request:
+            return fake_message([turn_text("fine")])
+        calls["pm"] += 1
+        if calls["pm"] == 1:
+            return fake_message([turn_text("   ")])
+        return fake_message([turn_text("Feeling good about the book today.")])
+
+    _, client = _cached_client(responder, tmp_path)
+
+    asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    assert calls["pm"] == 2
+    cache_files = list(tmp_path.rglob("*.json"))
+    # one cache file per accepted reply: the blank reply is never cached
+    assert len(cache_files) == 2
+
+
+def test_retry_resends_an_identical_request(market_lookup, tmp_path):
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
+    calls = {"pm": 0}
+
+    def responder(request):
+        if "tools" in request:
+            return fake_message([turn_text("fine")])
+        calls["pm"] += 1
+        if calls["pm"] == 1:
+            return fake_message([], stop_reason="refusal")
+        return fake_message([turn_text("Feeling good about the book today.")])
+
+    fake, client = _cached_client(responder, tmp_path)
+
+    asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    narrator_requests = [r for r in fake.requests if "tools" not in r]
+    assert len(narrator_requests) == 2
+    assert narrator_requests[0] == narrator_requests[1]
+
+
+def test_unknown_tool_name_is_rejected_and_retried(market_lookup, tmp_path):
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
+    calls = {"advisor": 0}
+
+    def responder(request):
+        if "tools" not in request:
+            return fake_message([turn_text("Quick check-in.")])
+        calls["advisor"] += 1
+        if calls["advisor"] == 1:
+            return fake_message([tool_use("not_a_real_tool", {}, "tu_1")], stop_reason="tool_use")
+        return fake_message([turn_text("All set.")])
+
+    _, client = _cached_client(responder, tmp_path)
+
+    result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    assert calls["advisor"] == 2
+    advisor_log = result.log.turns[1]
+    assert advisor_log.tool_calls == ()
+    assert len(advisor_log.request_hashes) == 1
+
+
+def test_no_narrator_feed_after_the_last_advisor_reply(market_lookup, tmp_path):
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(3))
+    fake, client = _cached_client(default_responder, tmp_path)
+
+    asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    narrator_requests = [r for r in fake.requests if "tools" not in r]
+    advisor_text = "Sounds reasonable, tell me more."
+    # a mid-session narrator turn is fed the previous advisor reply
+    assert any(
+        m.get("role") == "user" and m.get("content") == advisor_text
+        for m in narrator_requests[1]["messages"]
+    )
+    # exactly one narrator request per pm turn and one advisor call per
+    # advisor turn: the session's last advisor reply never triggers a
+    # further narrator request
+    assert len(narrator_requests) == 3
+    assert len(fake.requests) == 6
+
+
+def test_usage_sums_and_request_hashes_are_ordered_across_a_tool_round(market_lookup, tmp_path):
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
+    instrument_id = sorted(market_lookup.instruments)[0]
+    calls = {"advisor": 0}
+
+    def responder(request):
+        if "tools" not in request:
+            return fake_message([turn_text("Quick check-in.")])
+        calls["advisor"] += 1
+        if calls["advisor"] == 1:
+            return fake_message(
+                [tool_use("get_quote", {"instrument": instrument_id}, "tu_1")],
+                stop_reason="tool_use",
+                input_tokens=20,
+                output_tokens=8,
+            )
+        return fake_message([turn_text("All set.")], input_tokens=15, output_tokens=6)
+
+    fake, client = _cached_client(responder, tmp_path)
+
+    result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    advisor_log = result.log.turns[1]
+    assert advisor_log.usage.input_tokens == 35
+    assert advisor_log.usage.output_tokens == 14
+    advisor_requests = [r for r in fake.requests if "tools" in r]
+    assert advisor_log.request_hashes == tuple(request_key(r) for r in advisor_requests)
+
+
+def test_pm_directive_is_stance_then_opening_then_none(market_lookup, tmp_path):
+    stance = Stance(
+        signal_id="sg_010",
+        trait_id="t_10",
+        mode=SignalMode.STATED,
+        entry=StanceEntry.STATED,
+        stance="I'm trimming into strength today.",
+    )
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(3, stances_by_index={1: stance}))
+    _, client = _cached_client(default_responder, tmp_path)
+
+    result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    pm_logs = [turn for turn in result.log.turns if turn.role == TurnRole.PM]
+    assert pm_logs[0].directive == opening_line(ctx, Opening.SESSION_IDEAS)
+    assert pm_logs[1].directive == "I'm trimming into strength today."
+    assert pm_logs[2].directive is None
+
+
+def test_advisor_history_preserves_thinking_and_tool_blocks_unchanged(market_lookup, tmp_path):
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
+    instrument_id = sorted(market_lookup.instruments)[0]
+    calls = {"advisor": 0}
+    thinking_block = {"type": "thinking", "thinking": "let me check the quote first"}
+    tool_block = tool_use("get_quote", {"instrument": instrument_id}, "tu_1")
+
+    def responder(request):
+        if "tools" not in request:
+            return fake_message([turn_text("Quick check-in.")])
+        calls["advisor"] += 1
+        if calls["advisor"] == 1:
+            return fake_message([thinking_block, tool_block], stop_reason="tool_use")
+        return fake_message([turn_text("All set.")])
+
+    fake, client = _cached_client(responder, tmp_path)
+
+    asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    advisor_requests = [r for r in fake.requests if "tools" in r]
+    # the second advisor request's history carries the first reply's full
+    # content, thinking and tool blocks included, unchanged
+    assert advisor_requests[1]["messages"][-2] == {
+        "role": "assistant",
+        "content": [thinking_block, tool_block],
+    }
+
+
 def test_schema_invalid_output_is_retried_then_fails_after_max_retries(market_lookup, tmp_path):
     ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
     attempts = {"pm": 0}
@@ -182,6 +344,10 @@ def test_violation_line_is_a_system_message_right_before_the_reaction_turn(marke
     result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
 
     advisor_requests = [r for r in fake.requests if "tools" in r]
+    assert advisor_requests[0]["messages"][-2] == {
+        "role": "user",
+        "content": "Feeling good about the book today.",
+    }
     assert advisor_requests[0]["messages"][-1] == {
         "role": "system",
         "content": "Sold half the position without asking.",
@@ -253,6 +419,11 @@ def test_parse_turn_requires_a_text_block():
 def test_parse_turn_rejects_an_invalid_mention():
     response = fake_message([turn_text("hi", mentions=[{"kind": "trade"}])])
     assert parse_turn(response) is None
+
+
+def test_parse_turn_rejects_blank_text():
+    assert parse_turn(fake_message([turn_text("")])) is None
+    assert parse_turn(fake_message([turn_text("   ")])) is None
 
 
 def test_parse_turn_uses_the_last_text_block():
