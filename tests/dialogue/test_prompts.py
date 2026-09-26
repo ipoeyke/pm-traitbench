@@ -21,6 +21,7 @@ from pm_traitbench.dialogue.prompts import (
     narrator_system,
     read_advisor_prompt,
 )
+from pm_traitbench.dialogue.session import parse_turn
 from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS
 from pm_traitbench.enums import (
     InstrumentKind,
@@ -33,14 +34,14 @@ from pm_traitbench.enums import (
 )
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import Idea, Leg, Side, Skeleton, Stance
-from tests.dialogue.conftest import rule, session_context
+from tests.dialogue.conftest import fake_message, rule, session_context, turn_text
 from tests.gates.conftest import DEFAULT_DATE, PM_ID, idea_row, ledger_row
 from tests.signals.conftest import bias_trait, persona, pref_trait
 
 _CONFIG = Config()
 
 
-def test_narrator_request_has_exactly_the_binding_keys(market_lookup):
+def test_narrator_request_has_only_the_allowed_keys(market_lookup):
     ctx = session_context(market_lookup)
     messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
 
@@ -63,7 +64,7 @@ def test_narrator_request_has_exactly_the_binding_keys(market_lookup):
     assert request["cache_control"] == {"type": "ephemeral"}
 
 
-def test_advisor_request_has_exactly_the_binding_keys():
+def test_advisor_request_has_only_the_allowed_keys():
     messages = [{"role": "user", "content": "hi"}]
 
     request = advisor_request("system prompt", messages, _CONFIG.dialogue)
@@ -91,6 +92,79 @@ def test_two_builds_from_equal_inputs_give_the_same_request_key(market_lookup):
     assert request_1 == request_2
     scope = ctx_1.skeleton.session_id
     assert request_key(request_1, scope) == request_key(request_2, scope)
+
+
+def test_turn_schema_mention_enums_come_from_the_enum_classes():
+    trade_schema, level_schema = TURN_SCHEMA["properties"]["mentions"]["items"]["anyOf"]
+
+    assert trade_schema["properties"]["kind"] == {"const": "trade"}
+    assert level_schema["properties"]["kind"] == {"const": "level"}
+    tenor_enum = [t.value for t in Tenor] + [None]
+    assert trade_schema["properties"]["tenor"]["enum"] == tenor_enum
+    assert level_schema["properties"]["tenor"]["enum"] == tenor_enum
+    assert trade_schema["properties"]["side"]["enum"] == [s.value for s in Side]
+    assert level_schema["properties"]["side"] == {"type": "null"}
+    assert trade_schema["properties"]["field"] == {"type": "null"}
+    assert trade_schema["properties"]["value"] == {"type": "null"}
+    assert level_schema["properties"]["field"] == {"type": "string"}
+    assert level_schema["properties"]["value"] == {"type": "number"}
+    for mention_schema in (trade_schema, level_schema):
+        assert mention_schema["additionalProperties"] is False
+        assert set(mention_schema["required"]) == set(mention_schema["properties"])
+
+
+def test_turn_schema_shapes_match_what_parse_turn_accepts():
+    trade_mention = {
+        "kind": "trade",
+        "instrument_id": "EQ-0001",
+        "trade_idea_id": "ti_001",
+        "tenor": None,
+        "side": "buy",
+        "size": 100.0,
+        "field": None,
+        "value": None,
+    }
+    level_mention = {
+        "kind": "level",
+        "instrument_id": "EQ-0001",
+        "trade_idea_id": None,
+        "tenor": Tenor.Y10.value,
+        "side": None,
+        "size": None,
+        "field": "price",
+        "value": 101.25,
+    }
+    response = fake_message([turn_text("hi", mentions=[trade_mention, level_mention])])
+
+    output = parse_turn(response)
+
+    assert output is not None
+    assert len(output.mentions) == 2
+
+
+def test_turn_schema_rejects_an_off_enum_tenor():
+    mention = {
+        "kind": "level",
+        "instrument_id": "EQ-0001",
+        "trade_idea_id": None,
+        "tenor": "10y",
+        "side": None,
+        "size": None,
+        "field": "price",
+        "value": 101.25,
+    }
+    response = fake_message([turn_text("hi", mentions=[mention])])
+
+    assert parse_turn(response) is None
+
+
+def test_advisor_system_appends_the_mentions_instruction_before_the_date():
+    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE)
+
+    assert "AUTHORED PROMPT TEXT" in system
+    assert "mentions" in system
+    assert system.index("AUTHORED PROMPT TEXT") < system.rindex("mentions")
+    assert system.rindex("mentions") < system.index(f"Today is {DEFAULT_DATE.isoformat()}")
 
 
 def test_narrator_system_contains_voice_rules_and_avoid_lines(market_lookup):

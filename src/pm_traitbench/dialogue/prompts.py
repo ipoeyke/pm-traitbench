@@ -17,48 +17,74 @@ from pm_traitbench.config import DialogueConfig
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS
 from pm_traitbench.dialogue.turns import Opening
+from pm_traitbench.enums import Side, Tenor
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import LedgerRow
 
 NARRATOR_OPENING_MESSAGE = "The advisor is ready for your first message."
 
-_NULLABLE_STRING = {"type": ["string", "null"]}
-_NULLABLE_NUMBER = {"type": ["number", "null"]}
+_MENTION_REQUIRED_KEYS = [
+    "kind",
+    "instrument_id",
+    "trade_idea_id",
+    "tenor",
+    "side",
+    "size",
+    "field",
+    "value",
+]
+_TENOR_ENUM: list[str | None] = [tenor.value for tenor in Tenor] + [None]
+_SIDE_ENUM: list[str] = [side.value for side in Side]
+_NULL = {"type": "null"}
+
+_TRADE_MENTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "kind": {"const": "trade"},
+        "instrument_id": {"type": "string"},
+        "trade_idea_id": {"type": "string"},
+        "tenor": {"enum": _TENOR_ENUM},
+        "side": {"enum": _SIDE_ENUM},
+        "size": {"type": "number"},
+        "field": _NULL,
+        "value": _NULL,
+    },
+    "required": _MENTION_REQUIRED_KEYS,
+    "additionalProperties": False,
+}
+_LEVEL_MENTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "kind": {"const": "level"},
+        "instrument_id": {"type": "string"},
+        "trade_idea_id": _NULL,
+        "tenor": {"enum": _TENOR_ENUM},
+        "side": _NULL,
+        "size": _NULL,
+        "field": {"type": "string"},
+        "value": {"type": "number"},
+    },
+    "required": _MENTION_REQUIRED_KEYS,
+    "additionalProperties": False,
+}
 TURN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "text": {"type": "string"},
         "mentions": {
             "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "kind": {"type": "string", "enum": ["trade", "level"]},
-                    "instrument_id": {"type": "string"},
-                    "trade_idea_id": _NULLABLE_STRING,
-                    "tenor": _NULLABLE_STRING,
-                    "side": _NULLABLE_STRING,
-                    "size": _NULLABLE_NUMBER,
-                    "field": _NULLABLE_STRING,
-                    "value": _NULLABLE_NUMBER,
-                },
-                "required": [
-                    "kind",
-                    "instrument_id",
-                    "trade_idea_id",
-                    "tenor",
-                    "side",
-                    "size",
-                    "field",
-                    "value",
-                ],
-                "additionalProperties": False,
-            },
+            "items": {"anyOf": [_TRADE_MENTION_SCHEMA, _LEVEL_MENTION_SCHEMA]},
         },
     },
     "required": ["text", "mentions"],
     "additionalProperties": False,
 }
+
+_ADVISOR_MENTIONS_INSTRUCTION = (
+    "Return your reply as `text` and `mentions`. For every market number you state, add "
+    'a mention with kind "level", using the instrument_id and field name a tool '
+    "returned, the tenor a tool gave or null, and the value you stated."
+)
 
 
 def read_advisor_prompt(path: Path | None) -> str:
@@ -179,8 +205,12 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
 
 
 def advisor_system(advisor_prompt: str, day: date) -> str:
-    """The advisor prompt plus the session date, stable for the whole session."""
-    return f"{advisor_prompt}\n\nToday is {day.isoformat()}."
+    """The advisor prompt, the mentions instruction, then the session date.
+
+    The mentions instruction is appended here rather than living in the
+    authored prompt file, so swapping that file can never drop it.
+    """
+    return f"{advisor_prompt}\n\n{_ADVISOR_MENTIONS_INSTRUCTION}\n\nToday is {day.isoformat()}."
 
 
 def narrator_request(
@@ -189,7 +219,11 @@ def narrator_request(
     config: DialogueConfig,
     feedback: str | None,
 ) -> dict[str, Any]:
-    """The narrator's Messages API request body: exactly the binding keys, no more."""
+    """The narrator's Messages API request body.
+
+    Only `model`, `max_tokens`, `system`, `messages`, `output_config` and
+    `cache_control`; never `thinking` or a sampling param.
+    """
     return {
         "model": config.narrator_model,
         "max_tokens": config.max_output_tokens,
@@ -210,7 +244,11 @@ def advisor_request(
     *,
     tools_disabled: bool = False,
 ) -> dict[str, Any]:
-    """The advisor's Messages API request body: the narrator's keys plus `tools`."""
+    """The advisor's Messages API request body.
+
+    The narrator's keys plus `tools`, and `tool_choice` only when tools are
+    disabled; never `thinking` or a sampling param.
+    """
     request: dict[str, Any] = {
         "model": config.advisor_model,
         "max_tokens": config.max_output_tokens,
