@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
+import anthropic
 import pytest
 
 from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, request_key
@@ -125,6 +127,8 @@ def test_budget_error_before_a_fresh_call_once_spent(tmp_path: Path) -> None:
         assert replay.cached is True
 
     asyncio.run(scenario())
+    # The blocked send never reached the inner client.
+    assert len(inner.requests) == 1
 
 
 def test_fresh_totals_exclude_cache_hits(tmp_path: Path) -> None:
@@ -144,9 +148,115 @@ def test_fresh_totals_exclude_cache_hits(tmp_path: Path) -> None:
     assert cached.totals.cache_hits == 1
 
 
-def test_anthropic_client_defers_construction_until_the_first_send() -> None:
-    client = AnthropicClient(max_concurrency=2)
-    assert client._client is None
+def test_fresh_totals_accumulate_cache_read_tokens(tmp_path: Path) -> None:
+    response = fake_message([turn_text("ok")], input_tokens=7, output_tokens=3)
+    response["usage"]["cache_read_input_tokens"] = 40
+    inner = FakeClient(lambda request: response)
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+
+    asyncio.run(cached.send(_REQUEST))
+    assert cached.totals.cache_read_tokens == 40
+
+
+def test_null_usage_fields_count_as_zero(tmp_path: Path) -> None:
+    # `to_dict()` can carry explicit nulls for the cache usage fields; a null
+    # must not blow up token accounting with a `+= None` TypeError.
+    response = fake_message([turn_text("ok")], input_tokens=5, output_tokens=2)
+    response["usage"]["cache_read_input_tokens"] = None
+    response["usage"]["cache_creation_input_tokens"] = None
+    inner = FakeClient(lambda request: response)
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+
+    reply = asyncio.run(cached.send(_REQUEST))
+
+    assert reply.cached is False
+    assert cached.totals.input_tokens == 5
+    assert cached.totals.output_tokens == 2
+    assert cached.totals.cache_read_tokens == 0
+
+
+def test_unreadable_cache_entry_is_treated_as_a_miss_and_rewritten(tmp_path: Path) -> None:
+    inner = FakeClient(default_responder)
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+    key = request_key(_REQUEST)
+    shard_dir = tmp_path / key[:2]
+    shard_dir.mkdir(parents=True)
+    (shard_dir / f"{key}.json").write_text("{not valid json", encoding="utf-8")
+
+    async def scenario() -> None:
+        reply = await cached.send(_REQUEST)
+        assert reply.cached is False
+        cached.commit(reply)
+        return reply
+
+    reply = asyncio.run(scenario())
+    assert len(inner.requests) == 1
+    stored = json.loads((shard_dir / f"{key}.json").read_text(encoding="utf-8"))
+    assert stored["response"] == reply.response
+
+
+def test_cache_entry_missing_the_response_key_is_treated_as_a_miss(tmp_path: Path) -> None:
+    inner = FakeClient(default_responder)
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+    key = request_key(_REQUEST)
+    shard_dir = tmp_path / key[:2]
+    shard_dir.mkdir(parents=True)
+    (shard_dir / f"{key}.json").write_text(json.dumps({"key": key}), encoding="utf-8")
+
+    reply = asyncio.run(cached.send(_REQUEST))
+    assert reply.cached is False
+    assert len(inner.requests) == 1
+
+
+def test_temp_file_is_removed_when_the_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inner = FakeClient(default_responder)
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+    reply = asyncio.run(cached.send(_REQUEST))
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", _boom)
+
+    with pytest.raises(OSError):
+        cached.commit(reply)
+
+    key = request_key(_REQUEST)
+    shard_dir = tmp_path / key[:2]
+    assert list(shard_dir.iterdir()) == []
+
+
+def test_anthropic_client_builds_the_sdk_client_lazily_on_first_send(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build_count = 0
+
+    class _StubMessage:
+        def to_dict(self) -> dict:
+            return fake_message([turn_text("ok")])
+
+    class _StubMessages:
+        async def create(self, **request: object) -> _StubMessage:
+            return _StubMessage()
+
+    class _StubClient:
+        def __init__(self) -> None:
+            nonlocal build_count
+            build_count += 1
+            self.messages = _StubMessages()
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _StubClient)
+
+    client = AnthropicClient(max_concurrency=1)
+    assert build_count == 0  # not built until the first send
+
+    asyncio.run(client.send(_REQUEST))
+    assert build_count == 1
+
+    asyncio.run(client.send(_REQUEST))
+    assert build_count == 1  # reused, not rebuilt
 
 
 def test_anthropic_client_reports_missing_credentials_as_a_dialogue_error(

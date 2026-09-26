@@ -59,7 +59,10 @@ class CachedClient:
     """Wraps an `LlmClient` with a disk cache keyed on the request body.
 
     A reply is written to disk only once the caller commits it, so a crash or
-    a rejected response never leaves a cached entry a rerun would trust.
+    a rejected response never leaves a cached entry a rerun would trust. The
+    token budget is a soft stop: each in-flight call checks it before its own
+    usage is added, so concurrent sends can overshoot it by up to the
+    concurrency limit's worth of calls.
     """
 
     def __init__(
@@ -86,9 +89,16 @@ class CachedClient:
         self._totals.calls += 1
         path = self._path_for(key)
         if path.exists():
-            self._totals.cache_hits += 1
-            stored = json.loads(path.read_text(encoding="utf-8"))
-            return Reply(key=key, response=stored["response"], cached=True)
+            try:
+                stored = json.loads(path.read_text(encoding="utf-8"))
+                cached_response = stored["response"]
+            except (OSError, json.JSONDecodeError, KeyError):
+                # A partial or corrupt entry (e.g. after a power loss) is
+                # treated as a miss: re-fetch and overwrite it on commit.
+                pass
+            else:
+                self._totals.cache_hits += 1
+                return Reply(key=key, response=cached_response, cached=True)
 
         if self._token_budget is not None:
             spent = self._totals.input_tokens + self._totals.output_tokens
@@ -100,9 +110,10 @@ class CachedClient:
         response = await self._inner.send(request)
 
         usage = response.get("usage", {})
-        self._totals.input_tokens += usage.get("input_tokens", 0)
-        self._totals.output_tokens += usage.get("output_tokens", 0)
-        self._totals.cache_read_tokens += usage.get("cache_read_input_tokens", 0)
+        # `to_dict()` keeps explicit nulls for optional usage fields.
+        self._totals.input_tokens += usage.get("input_tokens") or 0
+        self._totals.output_tokens += usage.get("output_tokens") or 0
+        self._totals.cache_read_tokens += usage.get("cache_read_input_tokens") or 0
 
         return Reply(key=key, response=response, cached=False)
 
@@ -129,8 +140,9 @@ class CachedClient:
 
 
 class AnthropicClient:
-    """Live Anthropic backend: bounds concurrency and maps credential and 400 errors to
-    `DialogueError`. Built lazily so a fully cached run never needs credentials.
+    """Live Anthropic backend, built lazily so a fully cached run never needs credentials.
+
+    Bounds concurrency and maps credential and 400 errors to `DialogueError`.
     """
 
     def __init__(self, max_concurrency: int) -> None:
@@ -154,8 +166,5 @@ class AnthropicClient:
             except TypeError as e:
                 # With nothing configured, the SDK signals missing credentials with a bare
                 # TypeError at request time (header resolution runs before any network call).
-                raise DialogueError(
-                    f"could not resolve Anthropic credentials: run `ant auth login` or set "
-                    f"ANTHROPIC_API_KEY ({e})"
-                ) from e
+                raise DialogueError(f"{_NO_CREDENTIALS_MESSAGE} ({e})") from e
         return message.to_dict()
