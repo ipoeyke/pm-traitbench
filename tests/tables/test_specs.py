@@ -1,5 +1,5 @@
 from pm_traitbench.tables.schema import PositionDay
-from pm_traitbench.tables.specs import ENGINE_TABLES, HIDDEN_COLUMNS, POSITION_DAYS
+from pm_traitbench.tables.specs import ENGINE_TABLES, HIDDEN_COLUMNS, PLAN_TABLES, POSITION_DAYS
 
 _EXPECTED_ENGINE_TABLES = {
     "ideas": ("pm_id", "trade_idea_id"),
@@ -15,7 +15,7 @@ def test_engine_tables_names_and_keys() -> None:
 
 
 def test_hidden_columns_names_real_columns() -> None:
-    models_by_table = {spec.name: spec.model for spec in ENGINE_TABLES}
+    models_by_table = {spec.name: spec.model for spec in (*ENGINE_TABLES, *PLAN_TABLES)}
     for table_name, hidden in HIDDEN_COLUMNS.items():
         model = models_by_table[table_name]
         for column in hidden:
@@ -25,3 +25,7 @@ def test_hidden_columns_names_real_columns() -> None:
 def test_position_days_hidden_columns_equal_non_key_columns() -> None:
     expected = set(PositionDay.model_fields) - set(POSITION_DAYS.key)
     assert set(HIDDEN_COLUMNS["position_days"]) == expected
+
+
+def test_chased_trend_is_a_hidden_ideas_column() -> None:
+    assert "chased_trend" in HIDDEN_COLUMNS["ideas"]

@@ -589,6 +589,172 @@ class Gate1Config(BaseModel):
         return value
 
 
+class PlanConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    bias_signals_min: int = Field(
+        8,
+        ge=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "fewest planted carriers per active bias that a full-context "
+                "reader can still pick up"
+            ),
+        },
+    )
+    bias_signals_max: int = Field(
+        10,
+        ge=1,
+        json_schema_extra={"basis": "guess", "note": "upper end of the per-bias carrier range"},
+    )
+    pref_signals: int = Field(
+        3,
+        ge=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "a preference is stated or shown about three times a year",
+        },
+    )
+    bias_revealed_weight: float = Field(
+        0.65,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": "most bias evidence is visible only in decisions",
+        },
+    )
+    bias_stated_weight: float = Field(
+        0.175,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": "a minority of bias evidence is the PM describing it",
+        },
+    )
+    bias_contradiction_weight: float = Field(
+        0.10,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": "about one in ten bias signals sets a stated view against a later act",
+        },
+    )
+    pref_stated_weight: float = Field(
+        0.65,
+        gt=0,
+        json_schema_extra={"basis": "guess", "note": "preferences are mostly said outright"},
+    )
+    pref_revealed_weight: float = Field(
+        0.35,
+        gt=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "the rest show as a reaction or an instrument choice",
+        },
+    )
+    retracted_share: float = Field(
+        0.075,
+        ge=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "a few statements are taken back in the same session and must not count as evidence"
+            ),
+        },
+    )
+    third_party_share: float = Field(
+        0.10,
+        ge=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "about one signal in ten belongs to a colleague or client, as an "
+                "ownership distractor"
+            ),
+        },
+    )
+    claim_lead_days: tuple[int, int] = Field(
+        (10, 40),
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "the earlier claim is its own session yet inside a quarter of "
+                "the act it contradicts"
+            ),
+        },
+    )
+    ledger_session_percentile: float = Field(
+        75.0,
+        gt=0,
+        le=100,
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "orders at or above the PM's own upper quartile of risk are "
+                "large enough that the PM mentions them"
+            ),
+        },
+    )
+    signal_session_cap: float = Field(
+        0.40,
+        gt=0,
+        le=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                'most sessions carry no planted signal, so "links nothing" '
+                "stays a common correct outcome"
+            ),
+        },
+    )
+    filler_silence_share: float = Field(
+        0.5,
+        ge=0,
+        le=1,
+        json_schema_extra={"basis": "guess", "note": "half of filler is a pure market question"},
+    )
+    drift_min_per_side: int = Field(
+        6,
+        ge=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "enough evidence on each side of a drift event to tell the old value from the new"
+            ),
+        },
+    )
+    max_signals_per_session: int = Field(
+        2,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "two stances per session keeps planted signals from crowding one short "
+                "exchange while holding signal-carrying sessions near the share cap"
+            ),
+        },
+    )
+
+    @field_validator("claim_lead_days")
+    @classmethod
+    def _check_claim_lead_days(cls, value: tuple[int, int]) -> tuple[int, int]:
+        first, last = value
+        if first < 1:
+            raise ValueError("claim_lead_days[0] must be at least 1")
+        if first > last:
+            raise ValueError("claim_lead_days must have first <= second")
+        return value
+
+    @model_validator(mode="after")
+    def _check_bias_signals_range(self) -> "PlanConfig":
+        if self.bias_signals_min > self.bias_signals_max:
+            raise ValueError("bias_signals_min must not be greater than bias_signals_max")
+        return self
+
+
 class OutputConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -1687,6 +1853,7 @@ class Config(BaseModel):
     market: MarketConfig = Field(default_factory=MarketConfig)
     engine: EngineConfig = Field(default_factory=EngineConfig)
     gate1: Gate1Config = Field(default_factory=Gate1Config)
+    plan: PlanConfig = Field(default_factory=PlanConfig)
 
     @model_validator(mode="after")
     def _check_week_ranges_within_calendar(self) -> "Config":

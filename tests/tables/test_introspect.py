@@ -4,7 +4,7 @@ import pytest
 from pydantic import BaseModel
 
 from pm_traitbench.tables.introspect import ColumnInfo, columns
-from pm_traitbench.tables.schema import DriftEvent, Idea, Leg, Mandate, Persona, Trait
+from pm_traitbench.tables.schema import DriftEvent, Idea, Leg, Mandate, Persona, Skeleton, Trait
 
 
 def _by_name(infos: list[ColumnInfo]) -> dict[str, ColumnInfo]:
@@ -63,6 +63,12 @@ def test_tuple_of_non_model_raises_type_error() -> None:
 
     with pytest.raises(TypeError):
         columns(_Unsupported)
+
+
+def test_skeleton_trade_idea_ids_is_list_str_non_nullable() -> None:
+    by_name = _by_name(columns(Skeleton))
+    assert by_name["trade_idea_ids"].kind == "list_str"
+    assert by_name["trade_idea_ids"].nullable is False
 
 
 def test_supported_scalar_and_date_kinds() -> None:

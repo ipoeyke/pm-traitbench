@@ -6,6 +6,7 @@ from pm_traitbench.errors import (
     EngineError,
     Gate1Error,
     MarketCheckError,
+    PlanError,
     PmTraitbenchError,
     SamplingError,
     StageIOError,
@@ -24,6 +25,7 @@ from pm_traitbench.errors import (
         (MarketCheckError, 1),
         (EngineError, 1),
         (Gate1Error, 1),
+        (PlanError, 1),
     ],
 )
 def test_subclass_is_pm_traitbench_error_with_exit_code(

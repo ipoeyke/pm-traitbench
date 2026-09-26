@@ -411,6 +411,10 @@ def attempt_entry(
         else tuple(leg.model_copy(update={"tenor": None}) for leg in position_legs)
     )
 
+    entered_after_run = extrapolation.entered_after_run(
+        trailing_move, draw.sd_h, side_sign, series.bullish_sign
+    )
+
     idea_row = Idea(
         pm_id=persona.pm_id,
         trade_idea_id=trade_idea_id,
@@ -434,6 +438,7 @@ def attempt_entry(
         followed_street=decision.followed_street,
         conviction=draw.conviction,
         size_rank=rank,
+        chased_trend=entered_after_run,
     )
 
     size_at_entry, _ = adapter.size_and_risk(
@@ -475,10 +480,6 @@ def attempt_entry(
         t=t,
         bias_flag=join_flags([decision.flag, overconfidence_flag, conviction_flag]),
         rule_id=None,
-    )
-
-    entered_after_run = extrapolation.entered_after_run(
-        trailing_move, draw.sd_h, side_sign, series.bullish_sign
     )
 
     new_state = replace(

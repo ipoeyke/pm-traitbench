@@ -53,3 +53,11 @@ class Gate1Error(PmTraitbenchError):
     """Raised when Gate 1 cannot run or a blocking recovery test fails."""
 
     exit_code = 1
+
+
+class PlanError(PmTraitbenchError):
+    """Raised when the signal plan's inputs are inconsistent or its stance bank cannot serve a
+    request.
+    """
+
+    exit_code = 1

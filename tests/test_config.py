@@ -15,6 +15,7 @@ from pm_traitbench.config import (
     EngineConfig,
     EventSpec,
     MarketConfig,
+    PlanConfig,
     RealSeedSpec,
     RegimeParams,
     load_config,
@@ -930,6 +931,60 @@ def test_dump_with_basis_covers_every_gate1_leaf() -> None:
     gate1_paths = [path for path in rows if path.startswith("gate1.")]
     assert set(gate1_paths) == {f"gate1.{name}" for name in type(config.gate1).model_fields}
     for path in gate1_paths:
+        row = rows[path]
+        assert row.basis in ("sourced", "design", "guess")
+        assert row.note.strip()
+
+
+def test_plan_config_defaults() -> None:
+    config = Config().plan
+    assert config.bias_signals_min == 8
+    assert config.bias_signals_max == 10
+    assert config.pref_signals == 3
+    assert config.bias_revealed_weight == 0.65
+    assert config.bias_stated_weight == 0.175
+    assert config.bias_contradiction_weight == 0.10
+    assert config.pref_stated_weight == 0.65
+    assert config.pref_revealed_weight == 0.35
+    assert config.retracted_share == 0.075
+    assert config.third_party_share == 0.10
+    assert config.claim_lead_days == (10, 40)
+    assert config.ledger_session_percentile == 75.0
+    assert config.signal_session_cap == 0.40
+    assert config.filler_silence_share == 0.5
+    assert config.drift_min_per_side == 6
+    assert config.max_signals_per_session == 2
+
+
+def test_yaml_override_of_plan_leaf_keeps_siblings(tmp_path: Path) -> None:
+    path = _write_yaml(tmp_path, {"plan": {"max_signals_per_session": 3}})
+    config = load_config(path)
+    assert config.plan.max_signals_per_session == 3
+    assert config.plan.bias_signals_min == Config().plan.bias_signals_min
+    assert config.plan.claim_lead_days == Config().plan.claim_lead_days
+
+
+def test_plan_bias_signals_min_greater_than_max_raises() -> None:
+    with pytest.raises(ValidationError, match="bias_signals_min"):
+        PlanConfig(bias_signals_min=11, bias_signals_max=10)
+
+
+def test_plan_claim_lead_days_descending_raises() -> None:
+    with pytest.raises(ValidationError, match="claim_lead_days"):
+        PlanConfig(claim_lead_days=(40, 10))
+
+
+def test_plan_claim_lead_days_below_one_raises() -> None:
+    with pytest.raises(ValidationError, match="claim_lead_days"):
+        PlanConfig(claim_lead_days=(0, 5))
+
+
+def test_dump_with_basis_covers_every_plan_leaf() -> None:
+    config = Config()
+    rows = {row.path: row for row in config.dump_with_basis()}
+    plan_paths = [path for path in rows if path.startswith("plan.")]
+    assert set(plan_paths) == {f"plan.{name}" for name in type(config.plan).model_fields}
+    for path in plan_paths:
         row = rows[path]
         assert row.basis in ("sourced", "design", "guess")
         assert row.note.strip()
