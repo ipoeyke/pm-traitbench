@@ -1005,6 +1005,7 @@ def test_dialogue_defaults() -> None:
     assert config.turns_by_kind.decision == (4, 6, 8)
     assert config.max_tool_rounds == 3
     assert config.max_retries == 3
+    assert config.api_max_retries == 4
     assert config.max_concurrency == 8
     assert config.max_output_tokens == 4000
     assert config.token_budget is None
@@ -1065,6 +1066,11 @@ def test_dialogue_config_rejects_max_output_tokens_below_256() -> None:
 def test_dialogue_config_rejects_zero_max_tool_rounds() -> None:
     with pytest.raises(ValidationError):
         DialogueConfig(max_tool_rounds=0)
+
+
+def test_dialogue_config_rejects_negative_api_max_retries() -> None:
+    with pytest.raises(ValidationError):
+        DialogueConfig(api_max_retries=-1)
 
 
 def test_dialogue_config_rejects_unknown_key() -> None:

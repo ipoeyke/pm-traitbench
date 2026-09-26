@@ -34,6 +34,7 @@ from pm_traitbench.tables.schema import (
     ToolCall,
     Turn,
     TurnLog,
+    canonical_json,
 )
 
 _ADVISOR_TOOL_NAMES = frozenset(tool.value for tool in AdvisorTool)
@@ -52,11 +53,14 @@ class TurnOutput:
 
 @dataclass(frozen=True)
 class SessionResult:
-    """One narrated session: its public row, hidden log, and any tool-round-cap warnings."""
+    """One narrated session: its public row, hidden log, any tool-round-cap warnings, and
+    how many rejected replies it took to produce them.
+    """
 
     session: Session
     log: DialogueLog
     warnings: tuple[str, ...]
+    rejected_replies: int
 
 
 def parse_turn(response: Mapping[str, Any]) -> TurnOutput | None:
@@ -133,14 +137,23 @@ async def _send_accepted(
     session_id: str,
     *,
     allow_tool_use: bool,
-) -> tuple[Reply, _Accepted]:
-    """Send `request`, retrying the same body on a rejected reply up to `max_retries` times."""
+) -> tuple[Reply, _Accepted, int]:
+    """Send `request`, retrying a rejected reply up to `max_retries` times.
+
+    A rejected reply that came from the cache makes the next attempt bypass
+    the cache, so a cache entry that no longer validates is never replayed
+    forever. Returns the accepted reply alongside how many attempts it took.
+    """
+    refresh = False
+    rejected = 0
     for _ in range(1 + config.max_retries):
-        reply = await client.send(request, scope=session_id)
+        reply = await client.send(request, scope=session_id, refresh=refresh)
         accepted, reason = _classify(reply.response, allow_tool_use)
         if accepted is not None:
             client.commit(reply)
-            return reply, accepted
+            return reply, accepted, rejected
+        refresh = reply.cached
+        rejected += 1
     raise DialogueError(f"session {session_id}: {reason}")
 
 
@@ -164,10 +177,6 @@ def _sum_usage(totals: CallUsage, response: Mapping[str, Any]) -> CallUsage:
             totals.cache_creation_input_tokens + added.cache_creation_input_tokens
         ),
     )
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
 def _pm_directive_text(ctx: SessionContext, pm_index: int) -> str | None:
@@ -199,13 +208,15 @@ async def narrate_session(
     advisor_messages: list[dict[str, Any]] = []
     warnings: list[str] = []
     turn_logs: list[TurnLog] = []
+    rejected_replies = 0
 
     for i in range(n_pm):
         narrator_messages.append({"role": "system", "content": narrator_directive(ctx, i)})
         pm_request = narrator_request(ctx, narrator_messages, config, feedback)
-        pm_reply, pm_accepted = await _send_accepted(
+        pm_reply, pm_accepted, pm_rejected = await _send_accepted(
             client, pm_request, config, session_id, allow_tool_use=False
         )
+        rejected_replies += pm_rejected
         narrator_messages.append({"role": "assistant", "content": pm_reply.response["content"]})
         pm_output = pm_accepted.output
         if pm_output is None:
@@ -240,9 +251,10 @@ async def narrate_session(
             advisor_body = advisor_request(
                 system_advisor, advisor_messages, config, tools_disabled=tools_disabled
             )
-            reply, accepted = await _send_accepted(
+            reply, accepted, turn_rejected = await _send_accepted(
                 client, advisor_body, config, session_id, allow_tool_use=not tools_disabled
             )
+            rejected_replies += turn_rejected
             request_hashes.append(reply.key)
             usage = _sum_usage(usage, reply.response)
 
@@ -253,11 +265,12 @@ async def narrate_session(
                 for block in accepted.tool_blocks:
                     tool_input = block.get("input") or {}
                     outcome = run_tool(ctx.lookup, block["name"], tool_input, ctx.skeleton.date)
+                    result_json = canonical_json(outcome.result)
                     tool_calls.append(
                         ToolCall(
                             name=AdvisorTool(block["name"]),
-                            input_json=_canonical_json(tool_input),
-                            result_json=_canonical_json(outcome.result),
+                            input_json=canonical_json(tool_input),
+                            result_json=result_json,
                             is_error=outcome.is_error,
                         )
                     )
@@ -265,7 +278,7 @@ async def narrate_session(
                         {
                             "type": "tool_result",
                             "tool_use_id": block["id"],
-                            "content": json.dumps(outcome.result, sort_keys=True),
+                            "content": result_json,
                             "is_error": outcome.is_error,
                         }
                     )
@@ -313,4 +326,6 @@ async def narrate_session(
         voice_id=ctx.voice.voice_id,
         turns=tuple(turn_logs),
     )
-    return SessionResult(session=session, log=log, warnings=tuple(warnings))
+    return SessionResult(
+        session=session, log=log, warnings=tuple(warnings), rejected_replies=rejected_replies
+    )

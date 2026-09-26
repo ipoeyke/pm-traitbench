@@ -61,10 +61,12 @@ def _intercept_by_scope(monkeypatch: pytest.MonkeyPatch, outcomes: dict[str, Any
     """
     real_send = CachedClient.send
 
-    async def patched_send(self: CachedClient, request: dict, *, scope: str) -> Reply:
+    async def patched_send(
+        self: CachedClient, request: dict, *, scope: str, refresh: bool = False
+    ) -> Reply:
         outcome = outcomes.get(scope)
         if outcome is None:
-            return await real_send(self, request, scope=scope)
+            return await real_send(self, request, scope=scope, refresh=refresh)
         if isinstance(outcome, BaseException):
             raise outcome
         return Reply(key=request_key(request, scope), response=outcome, cached=False)
@@ -315,6 +317,114 @@ def test_second_run_from_cache_is_byte_identical_with_zero_inner_calls(
 
     assert store.path(SESSIONS).read_bytes() == sessions_before
     assert store.path(DIALOGUE_LOGS).read_bytes() == logs_before
+
+
+def test_pm_filter_matching_no_pm_raises_before_any_call_and_writes_nothing(
+    tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config = config.model_copy(
+        update={
+            "dialogue": config.dialogue.model_copy(
+                update={"pm_filter": PmFilter(pm_ids=("no_such_pm",))}
+            )
+        }
+    )
+
+    with pytest.raises(DialogueError, match="dialogue.pm_filter selects no PMs"):
+        run_stage(make_stage(_raising_factory), config, store)
+
+    assert not store.exists(SESSIONS)
+    assert not store.exists(DIALOGUE_LOGS)
+
+
+def test_run_metadata_totals_rejected_replies_across_sessions(
+    tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    calls = {"n": 0}
+
+    def responder(request: dict) -> dict:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _refusal()
+        return default_responder(request)
+
+    run_stage(make_stage(lambda c: FakeClient(responder)), config, store)
+
+    metadata = store.read_run_metadata("dialogue")
+    assert metadata is not None
+    assert metadata["rejected_replies"] == 1
+
+
+def test_transient_and_rejected_failures_are_both_listed(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient SDK error, already mapped to a `DialogueError` by the client, must be
+    grouped by session alongside a plain rejected-reply failure, not silently dropped.
+    """
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config = config.model_copy(
+        update={
+            "dialogue": config.dialogue.model_copy(
+                update={"pm_filter": PmFilter(pm_ids=(_MANY_SESSIONS_PM_ID,))}
+            )
+        }
+    )
+    session_ids = _sorted_skeleton_ids(store, _MANY_SESSIONS_PM_ID)
+    assert len(session_ids) >= 3
+    first_id, second_id = session_ids[0], session_ids[1]
+    transient_error = DialogueError("APIStatusError (status 529): overloaded")
+    _intercept_by_scope(monkeypatch, {first_id: transient_error, second_id: _refusal()})
+
+    with pytest.raises(DialogueError) as excinfo:
+        run_stage(make_stage(lambda c: FakeClient(default_responder)), config, store)
+
+    message = str(excinfo.value)
+    assert f"session {first_id}: APIStatusError (status 529): overloaded" in message
+    assert f"session {second_id}: the reply was refused" in message
+    assert not store.exists(SESSIONS)
+    assert not store.exists(DIALOGUE_LOGS)
+
+
+def test_client_is_closed_after_a_successful_run(
+    tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
+) -> None:
+    fake = FakeClient(default_responder)
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+
+    run_stage(make_stage(lambda c: fake), config, store)
+
+    assert fake.closed is True
+
+
+def test_client_is_closed_even_when_the_run_fails(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeClient(default_responder)
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config = config.model_copy(
+        update={
+            "dialogue": config.dialogue.model_copy(
+                update={"pm_filter": PmFilter(pm_ids=(_TARGET_PM_ID,))}
+            )
+        }
+    )
+    session_ids = _sorted_skeleton_ids(store, _TARGET_PM_ID)
+    _intercept_by_scope(monkeypatch, {session_ids[0]: _refusal()})
+
+    with pytest.raises(DialogueError):
+        run_stage(make_stage(lambda c: fake), config, store)
+
+    assert fake.closed is True
 
 
 def test_missing_plan_metadata_raises(

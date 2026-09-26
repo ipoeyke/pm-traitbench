@@ -66,10 +66,14 @@ class FakeClient:
     def __init__(self, responder: Callable[[Mapping[str, Any]], dict]) -> None:
         self._responder = responder
         self.requests: list[Mapping[str, Any]] = []
+        self.closed = False
 
     async def send(self, request: Mapping[str, Any]) -> dict[str, Any]:
         self.requests.append(request)
         return self._responder(request)
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def default_responder(request: Mapping[str, Any]) -> dict:

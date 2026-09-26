@@ -1,25 +1,41 @@
 """Tests for the async session driver that narrates one PM-copilot session."""
 
 import asyncio
+import json
+import re
 
 import pytest
 
-from pm_traitbench.config import Config
+from pm_traitbench.catalogues.loader import load_catalogue
+from pm_traitbench.catalogues.models import Voice
+from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.dialogue.client import CachedClient, request_key
+from pm_traitbench.dialogue.context import PmTables, build_contexts
 from pm_traitbench.dialogue.prompts import opening_line
-from pm_traitbench.dialogue.session import TurnOutput, narrate_session, parse_turn
+from pm_traitbench.dialogue.session import TurnOutput, _send_accepted, narrate_session, parse_turn
 from pm_traitbench.dialogue.turns import Opening, PmDirective, TurnPlan
-from pm_traitbench.enums import AdvisorTool, SignalMode, StanceEntry, TurnRole
+from pm_traitbench.enums import (
+    AdvisorTool,
+    Kind,
+    RuleScope,
+    SessionKind,
+    SignalMode,
+    StanceEntry,
+    TurnRole,
+)
 from pm_traitbench.errors import DialogueError
-from pm_traitbench.tables.schema import Stance
+from pm_traitbench.tables.schema import Skeleton, Stance
 from tests.dialogue.conftest import (
     FakeClient,
     default_responder,
     fake_message,
+    rule,
     session_context,
     tool_use,
     turn_text,
 )
+from tests.gates.conftest import DEFAULT_DATE, idea_row
+from tests.signals.conftest import bias_trait, persona, pref_trait
 
 _CONFIG = Config().dialogue
 _ADVISOR_PROMPT = "You are a market advisor for the PM's book."
@@ -63,6 +79,39 @@ def test_session_alternates_pm_and_advisor_for_the_planned_turn_count(market_loo
         expected = TurnRole.PM if index % 2 == 0 else TurnRole.ADVISOR
         assert turn.role == expected
     assert result.warnings == ()
+    assert result.rejected_replies == 0
+
+
+def test_send_accepted_refreshes_past_a_cached_reply_that_fails_validation(tmp_path):
+    """A cache entry that validated under an older, looser check can fail today's `_classify`;
+    the retry must bypass that entry rather than replaying it forever.
+    """
+    request = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
+    calls = {"n": 0}
+
+    def responder(req):
+        calls["n"] += 1
+        return fake_message([turn_text("Feeling good about the book today.")])
+
+    inner = FakeClient(responder)
+    client = CachedClient(lambda: inner, tmp_path, token_budget=None)
+    key = request_key(request, "s_test")
+    shard = tmp_path / key[:2]
+    shard.mkdir(parents=True)
+    stale = fake_message([turn_text("hi", mentions=[{"kind": "trade"}])])
+    (shard / f"{key}.json").write_text(
+        json.dumps({"key": key, "response": stale}), encoding="utf-8"
+    )
+
+    reply, accepted, rejected = asyncio.run(
+        _send_accepted(client, request, _CONFIG, "s_test", allow_tool_use=False)
+    )
+
+    assert calls["n"] == 1  # exactly one fresh inner call, no wasted retries
+    assert rejected == 1
+    assert accepted.output.text == "Feeling good about the book today."
+    stored = json.loads((shard / f"{key}.json").read_text(encoding="utf-8"))
+    assert stored["response"] == reply.response
 
 
 def test_advisor_tool_round_runs_the_tool_and_logs_the_call(market_lookup, tmp_path):
@@ -138,12 +187,13 @@ def test_refusal_is_retried_and_not_cached(market_lookup, tmp_path):
 
     _, client = _cached_client(responder, tmp_path)
 
-    asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+    result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
 
     assert calls["pm"] == 2
     cache_files = list(tmp_path.rglob("*.json"))
     # one cache file per accepted reply: the retried pm turn plus the advisor turn
     assert len(cache_files) == 2
+    assert result.rejected_replies == 1
 
 
 def test_blank_reply_is_retried_and_never_committed(market_lookup, tmp_path):
@@ -160,12 +210,13 @@ def test_blank_reply_is_retried_and_never_committed(market_lookup, tmp_path):
 
     _, client = _cached_client(responder, tmp_path)
 
-    asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+    result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
 
     assert calls["pm"] == 2
     cache_files = list(tmp_path.rglob("*.json"))
     # one cache file per accepted reply: the blank reply is never cached
     assert len(cache_files) == 2
+    assert result.rejected_replies == 1
 
 
 def test_retry_resends_an_identical_request(market_lookup, tmp_path):
@@ -459,3 +510,92 @@ def test_parse_turn_uses_the_last_text_block():
     output = parse_turn(response)
     assert isinstance(output, TurnOutput)
     assert output.text == "second"
+
+
+def test_session_level_requests_never_leak_across_the_narrator_or_advisor_history(
+    market_lookup, tmp_path
+):
+    """Run `narrate_session` on a context built from real catalogue content, with a
+    violation in play, then scan every recorded narrator and advisor request the driver
+    produced, not just one hand-built request.
+    """
+    catalogue = load_catalogue()
+    idea = idea_row(trade_idea_id="ti_001")
+    pm_persona = persona()
+    asset_class = pm_persona.mandate.asset_class
+
+    loss_aversion = bias_trait("loss_aversion_lambda", trait_id="t_01", value=1.7345)
+    herding = bias_trait("herding_weight", trait_id="t_02", value=0.5137)
+    register_values = next(p.values for p in catalogue.preferences if p.param == "register")
+    register_pref = pref_trait("register", register_values[0], trait_id="t_90")
+
+    pm_rule = rule(rule_id="r_01", text="Cap total book risk at the mandate ceiling.")
+    idea_rule = rule(
+        rule_id="r_02",
+        text="Trim ti_001 by half once it reaches target.",
+        scope=RuleScope.IDEA,
+        trade_idea_id="ti_001",
+    )
+
+    reaction_line = catalogue.stances.lines(
+        "communication", StanceEntry.REVEALED_REACTION, asset_class
+    )[0].format(value=register_values[0])
+    reaction = Stance(
+        signal_id="sg_001",
+        trait_id=register_pref.trait_id,
+        mode=SignalMode.REVEALED,
+        entry=StanceEntry.REVEALED_REACTION,
+        stance=reaction_line,
+    )
+
+    skeleton = Skeleton(
+        session_id="s_pm001_2026-01-05_a",
+        pm_id=pm_persona.pm_id,
+        date=DEFAULT_DATE,
+        kind=SessionKind.DECISION,
+        trade_idea_ids=("ti_001",),
+        stances=(reaction,),
+        advisor_violation="Sold half the position without asking.",
+        forbidden_trait_ids=(loss_aversion.trait_id, herding.trait_id),
+        forbidden_pref_params=("register", "pushback_style"),
+    )
+    pm = PmTables(
+        persona=pm_persona,
+        traits=(loss_aversion, herding, register_pref),
+        drift_events=(),
+        rules=(pm_rule, idea_rule),
+        ideas={"ti_001": idea},
+        ledger=(),
+        position_days=(),
+        skeletons=(skeleton,),
+    )
+    voice = Voice(voice_id="v_01", line="terse trader shorthand, drops articles")
+    ctx = build_contexts(pm, voice, market_lookup, catalogue, Config())[0]
+
+    fake, client = _cached_client(default_responder, tmp_path)
+    asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    narrator_requests = [r for r in fake.requests if "tools" not in r]
+    advisor_requests = [r for r in fake.requests if "tools" in r]
+    assert narrator_requests and advisor_requests
+
+    for request in narrator_requests:
+        serialized = json.dumps(request).lower()
+        for trait in pm.traits:
+            assert trait.trait_id.lower() not in serialized
+        for param in BIAS_PARAMS:
+            assert param.lower() not in serialized
+        for trait in pm.traits:
+            if trait.kind == Kind.BIAS:
+                assert str(trait.value).lower() not in serialized
+        for mode in SignalMode:
+            assert mode.value.lower() not in serialized
+        assert re.search(r"\bbias\b", serialized, re.IGNORECASE) is None
+
+    for request in advisor_requests:
+        serialized = json.dumps(request)
+        assert ctx.persona.stated_profile.self_description not in serialized
+        assert pm_rule.text not in serialized
+        assert idea_rule.text not in serialized
+        assert idea.thesis not in serialized
+        assert reaction.stance not in serialized

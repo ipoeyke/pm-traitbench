@@ -91,11 +91,17 @@ class CachedClient:
     def _path_for(self, key: str) -> Path:
         return self._cache_dir / key[:2] / f"{key}.json"
 
-    async def send(self, request: Mapping[str, Any], *, scope: str) -> Reply:
+    async def send(self, request: Mapping[str, Any], *, scope: str, refresh: bool = False) -> Reply:
+        """Send `request`; `refresh=True` skips the cache read, forcing a fresh inner call.
+
+        A caller sets `refresh` after a cached reply it read failed its own
+        validation, so a cache entry that no longer validates is never
+        replayed forever; a valid fresh reply then overwrites it on commit.
+        """
         key = request_key(request, scope)
         self._totals.calls += 1
         path = self._path_for(key)
-        if path.exists():
+        if not refresh and path.exists():
             try:
                 stored = json.loads(path.read_text(encoding="utf-8"))
                 if not isinstance(stored, dict):
@@ -147,21 +153,31 @@ class CachedClient:
             os.unlink(tmp_path)
             raise
 
+    async def aclose(self) -> None:
+        """Close the inner client's resources, if it was built and it supports closing."""
+        if self._inner is not None:
+            aclose = getattr(self._inner, "aclose", None)
+            if aclose is not None:
+                await aclose()
+
 
 class AnthropicClient:
     """Live Anthropic backend, built lazily so a fully cached run never needs credentials.
 
-    Bounds concurrency and maps credential and 400 errors to `DialogueError`.
+    Bounds concurrency; maps credential and 400 errors, and, once the SDK's
+    own retries are exhausted, other API status and connection errors, to
+    `DialogueError`.
     """
 
-    def __init__(self, max_concurrency: int) -> None:
+    def __init__(self, max_concurrency: int, max_retries: int = 2) -> None:
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._client: anthropic.AsyncAnthropic | None = None
+        self._max_retries = max_retries
 
     async def send(self, request: Mapping[str, Any]) -> dict[str, Any]:
         if self._client is None:
             try:
-                self._client = anthropic.AsyncAnthropic()
+                self._client = anthropic.AsyncAnthropic(max_retries=self._max_retries)
             except anthropic.CredentialsError as e:
                 raise DialogueError(_NO_CREDENTIALS_MESSAGE) from e
 
@@ -172,8 +188,27 @@ class AnthropicClient:
                 raise DialogueError(_NO_CREDENTIALS_MESSAGE) from e
             except anthropic.BadRequestError as e:
                 raise DialogueError(e.message) from e
+            except anthropic.APIStatusError as e:
+                # Anything past a mapped 4xx above: rate limits, overloads and other
+                # 5xxs, once the SDK's own retries are spent.
+                raise DialogueError(
+                    f"{type(e).__name__} (status {e.status_code}): {e.message}"
+                ) from e
+            except anthropic.APIConnectionError as e:
+                # Covers `APITimeoutError`, its subclass.
+                raise DialogueError(f"{type(e).__name__}: {e.message}") from e
             except TypeError as e:
                 # With nothing configured, the SDK signals missing credentials with a bare
-                # TypeError at request time (header resolution runs before any network call).
-                raise DialogueError(f"{_NO_CREDENTIALS_MESSAGE} ({e})") from e
+                # TypeError at request time (header resolution runs before any network call);
+                # an unexpected keyword from a request-builder change raises the same way, so
+                # this is worded to not assert credentials are the cause.
+                raise DialogueError(
+                    f"request could not be built: {e}; if no credentials are configured, "
+                    "run `ant auth login` or set ANTHROPIC_API_KEY"
+                ) from e
         return message.to_dict()
+
+    async def aclose(self) -> None:
+        """Close the SDK client's HTTP connections, if one was ever built."""
+        if self._client is not None:
+            await self._client.close()

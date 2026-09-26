@@ -1977,7 +1977,18 @@ class DialogueConfig(BaseModel):
         ge=0,
         json_schema_extra={
             "basis": "guess",
-            "note": "enough attempts to ride out a transient failure without stalling a run",
+            "note": (
+                "re-sends of a reply the pipeline rejected (refusal, truncation or invalid "
+                "output); transport errors are retried separately, by the SDK"
+            ),
+        },
+    )
+    api_max_retries: int = Field(
+        4,
+        ge=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "SDK retries for rate limits, overloads and dropped connections, with backoff",
         },
     )
     max_concurrency: int = Field(

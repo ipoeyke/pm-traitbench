@@ -6,11 +6,26 @@ import os
 from pathlib import Path
 
 import anthropic
+import httpx2
 import pytest
 
 from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, request_key
 from pm_traitbench.errors import DialogueBudgetError, DialogueError
 from tests.dialogue.conftest import FakeClient, default_responder, fake_message, turn_text
+
+_API_URL = "https://api.anthropic.com/v1/messages"
+
+
+def _status_error(cls: type[anthropic.APIStatusError], status: int) -> anthropic.APIStatusError:
+    response = httpx2.Response(status, request=httpx2.Request("POST", _API_URL))
+    return cls("boom", response=response, body=None)
+
+
+def _connection_error(
+    cls: type[anthropic.APIConnectionError],
+) -> anthropic.APIConnectionError:
+    return cls(request=httpx2.Request("POST", _API_URL))
+
 
 _REQUEST = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
 _SCOPE = "s_pm001_2026-01-05_a"
@@ -283,35 +298,78 @@ def test_temp_file_is_removed_when_the_write_fails(
     assert list(shard_dir.iterdir()) == []
 
 
-def test_anthropic_client_builds_the_sdk_client_lazily_on_first_send(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    build_count = 0
+def test_refresh_bypasses_the_cache_and_the_commit_overwrites_the_entry(tmp_path: Path) -> None:
+    calls = {"n": 0}
 
-    class _StubMessage:
-        def to_dict(self) -> dict:
-            return fake_message([turn_text("ok")])
+    def responder(request: dict) -> dict:
+        calls["n"] += 1
+        return fake_message([turn_text(f"reply {calls['n']}")])
 
+    inner = FakeClient(responder)
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+
+    async def scenario() -> tuple:
+        first = await cached.send(_REQUEST, scope=_SCOPE)
+        cached.commit(first)
+        second = await cached.send(_REQUEST, scope=_SCOPE, refresh=True)
+        cached.commit(second)
+        return first, second
+
+    first, second = asyncio.run(scenario())
+    assert second.cached is False
+    assert second.response != first.response
+    assert len(inner.requests) == 2
+    stored = json.loads((tmp_path / second.key[:2] / f"{second.key}.json").read_text())
+    assert stored["response"] == second.response
+
+
+class _StubMessage:
+    def to_dict(self) -> dict:
+        return fake_message([turn_text("ok")])
+
+
+def _stub_client_factory(build_count: dict[str, int], captured_kwargs: dict[str, object]) -> type:
     class _StubMessages:
         async def create(self, **request: object) -> _StubMessage:
             return _StubMessage()
 
     class _StubClient:
-        def __init__(self) -> None:
-            nonlocal build_count
-            build_count += 1
+        def __init__(self, **kwargs: object) -> None:
+            build_count["n"] += 1
+            captured_kwargs.update(kwargs)
             self.messages = _StubMessages()
 
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", _StubClient)
+    return _StubClient
+
+
+def test_anthropic_client_builds_the_sdk_client_lazily_on_first_send(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build_count = {"n": 0}
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _stub_client_factory(build_count, {}))
 
     client = AnthropicClient(max_concurrency=1)
-    assert build_count == 0  # not built until the first send
+    assert build_count["n"] == 0  # not built until the first send
 
     asyncio.run(client.send(_REQUEST))
-    assert build_count == 1
+    assert build_count["n"] == 1
 
     asyncio.run(client.send(_REQUEST))
-    assert build_count == 1  # reused, not rebuilt
+    assert build_count["n"] == 1  # reused, not rebuilt
+
+
+def test_anthropic_client_passes_max_retries_to_the_sdk_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+    monkeypatch.setattr(
+        anthropic, "AsyncAnthropic", _stub_client_factory({"n": 0}, captured_kwargs)
+    )
+
+    client = AnthropicClient(max_concurrency=1, max_retries=7)
+    asyncio.run(client.send(_REQUEST))
+
+    assert captured_kwargs["max_retries"] == 7
 
 
 def test_anthropic_client_reports_missing_credentials_as_a_dialogue_error(
@@ -331,5 +389,116 @@ def test_anthropic_client_reports_missing_credentials_as_a_dialogue_error(
         "messages": [{"role": "user", "content": "hi"}],
     }
 
-    with pytest.raises(DialogueError, match="ant auth login"):
+    with pytest.raises(DialogueError, match="request could not be built"):
         asyncio.run(client.send(minimal_request))
+
+
+@pytest.mark.parametrize(
+    ("build_error", "expected_status"),
+    [
+        (lambda: _status_error(anthropic.RateLimitError, 429), 429),
+        (lambda: _status_error(anthropic.InternalServerError, 529), 529),
+        (lambda: _status_error(anthropic.NotFoundError, 404), 404),
+        (lambda: _connection_error(anthropic.APIConnectionError), None),
+        (lambda: _connection_error(anthropic.APITimeoutError), None),
+    ],
+)
+def test_transient_sdk_errors_map_to_a_dialogue_error(
+    monkeypatch: pytest.MonkeyPatch, build_error, expected_status: int | None
+) -> None:
+    error = build_error()
+
+    class _StubMessages:
+        async def create(self, **request: object) -> None:
+            raise error
+
+    class _StubClient:
+        def __init__(self, **kwargs: object) -> None:
+            self.messages = _StubMessages()
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _StubClient)
+    client = AnthropicClient(max_concurrency=1)
+
+    with pytest.raises(DialogueError) as excinfo:
+        asyncio.run(client.send(_REQUEST))
+
+    message = str(excinfo.value)
+    assert type(error).__name__ in message
+    if expected_status is not None:
+        assert str(expected_status) in message
+
+
+def test_anthropic_client_aclose_closes_the_sdk_client_if_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed = {"n": 0}
+
+    class _StubMessages:
+        async def create(self, **request: object) -> _StubMessage:
+            return _StubMessage()
+
+    class _StubClient:
+        def __init__(self, **kwargs: object) -> None:
+            self.messages = _StubMessages()
+
+        async def close(self) -> None:
+            closed["n"] += 1
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _StubClient)
+    client = AnthropicClient(max_concurrency=1)
+    asyncio.run(client.send(_REQUEST))
+
+    asyncio.run(client.aclose())
+
+    assert closed["n"] == 1
+
+
+def test_anthropic_client_aclose_is_a_noop_when_never_built() -> None:
+    client = AnthropicClient(max_concurrency=1)
+
+    asyncio.run(client.aclose())  # must not raise
+
+
+class _NoAcloseClient:
+    """A minimal `LlmClient` with no `aclose`, to check `CachedClient.aclose` tolerates that."""
+
+    async def send(self, request: dict) -> dict:
+        return default_responder(request)
+
+
+def test_cached_client_aclose_closes_the_inner_client_if_it_was_built_and_supports_it(
+    tmp_path: Path,
+) -> None:
+    class _ClosingFakeClient(FakeClient):
+        def __init__(self, responder) -> None:
+            super().__init__(responder)
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    inner = _ClosingFakeClient(default_responder)
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+    asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
+
+    asyncio.run(cached.aclose())
+
+    assert inner.closed is True
+
+
+def test_cached_client_aclose_is_a_noop_when_the_inner_client_was_never_built(
+    tmp_path: Path,
+) -> None:
+    cached = CachedClient(_failing_factory, tmp_path, token_budget=None)
+
+    asyncio.run(cached.aclose())  # must not call the factory or raise
+
+
+def test_cached_client_aclose_is_a_noop_when_the_inner_client_has_no_aclose(
+    tmp_path: Path,
+) -> None:
+    inner = _NoAcloseClient()
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+    asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
+
+    asyncio.run(cached.aclose())  # must not raise despite no aclose method

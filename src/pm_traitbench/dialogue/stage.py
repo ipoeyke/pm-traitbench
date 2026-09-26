@@ -117,10 +117,16 @@ async def _narrate_all(
     # Bounding sessions in flight, not just letting `gather` start them all,
     # caps the budget's overshoot and memory use at the concurrency limit.
     semaphore = asyncio.Semaphore(config.dialogue.max_concurrency)
-    return await asyncio.gather(
-        *(_narrate_one(ctx, client, config, advisor_prompt, semaphore) for ctx in contexts),
-        return_exceptions=True,
-    )
+    try:
+        return await asyncio.gather(
+            *(_narrate_one(ctx, client, config, advisor_prompt, semaphore) for ctx in contexts),
+            return_exceptions=True,
+        )
+    finally:
+        # Closed here, inside the loop `asyncio.run` owns, whether the run
+        # succeeded or failed: the SDK client's HTTP pool cannot be closed
+        # once that loop has torn down.
+        await client.aclose()
 
 
 def _reason_of(ctx: SessionContext, error: DialogueError) -> str:
@@ -183,6 +189,8 @@ def _run(
 
     all_pm_tables = _partition_pm_tables(store)
     selected = select_pms(all_pm_tables, config.dialogue.pm_filter)
+    if not selected:
+        raise DialogueError("dialogue.pm_filter selects no PMs")
 
     instruments = store.read(MARKET_INSTRUMENTS)
     prices = store.read(MARKET_PRICES)
@@ -217,6 +225,7 @@ def _run(
     sessions = [r.session for r in session_results]
     logs = [r.log for r in session_results]
     warnings = [w for r in session_results for w in r.warnings]
+    rejected_replies = sum(r.rejected_replies for r in session_results)
     session_counts: dict[str, int] = {}
     for result in session_results:
         kind = result.session.kind.value
@@ -240,6 +249,7 @@ def _run(
         "output_tokens": totals.output_tokens,
         "cache_read_tokens": totals.cache_read_tokens,
         "warnings": warnings,
+        "rejected_replies": rejected_replies,
     }
 
 
@@ -274,7 +284,7 @@ def make_stage(client_factory: Callable[[Config], LlmClient]) -> Stage:
 
 
 def anthropic_client_factory(config: Config) -> LlmClient:
-    return AnthropicClient(config.dialogue.max_concurrency)
+    return AnthropicClient(config.dialogue.max_concurrency, config.dialogue.api_max_retries)
 
 
 DIALOGUE_STAGE = make_stage(anthropic_client_factory)
