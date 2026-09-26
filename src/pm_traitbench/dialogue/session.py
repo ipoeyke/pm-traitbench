@@ -115,7 +115,8 @@ def _classify(response: Mapping[str, Any], allow_tool_use: bool) -> tuple[_Accep
         )
         if not blocks:
             return None, "the reply set stop_reason tool_use but named no tool"
-        unknown = sorted({block.get("name") for block in blocks} - _ADVISOR_TOOL_NAMES)
+        names = {str(block.get("name")) for block in blocks}
+        unknown = sorted(names - _ADVISOR_TOOL_NAMES)
         if unknown:
             return None, f"the reply named an unknown tool: {', '.join(unknown)}"
         return _Accepted(output=None, tool_blocks=blocks), ""
@@ -135,7 +136,7 @@ async def _send_accepted(
 ) -> tuple[Reply, _Accepted]:
     """Send `request`, retrying the same body on a rejected reply up to `max_retries` times."""
     for _ in range(1 + config.max_retries):
-        reply = await client.send(request)
+        reply = await client.send(request, scope=session_id)
         accepted, reason = _classify(reply.response, allow_tool_use)
         if accepted is not None:
             client.commit(reply)

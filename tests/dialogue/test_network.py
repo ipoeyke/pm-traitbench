@@ -31,9 +31,12 @@ def test_one_real_two_turn_session(market_lookup, tmp_path) -> None:
     result = asyncio.run(narrate_session(ctx, client, Config().dialogue, advisor_prompt))
 
     assert len(result.session.turns) == 2
-    assert result.session.turns[0].role == TurnRole.PM
-    assert result.session.turns[0].text.strip()
+    pm_turn, advisor_turn = result.session.turns
+    assert pm_turn.role == TurnRole.PM and pm_turn.text.strip()
+    assert advisor_turn.role == TurnRole.ADVISOR and advisor_turn.text.strip()
+
+    assert len(result.log.turns) == 2
     advisor_log = result.log.turns[1]
     assert advisor_log.role == TurnRole.ADVISOR
-    # The advisor either made at least one tool call, or answered directly with text.
-    assert advisor_log.tool_calls or advisor_log.text.strip()
+    assert advisor_log.text.strip()
+    print(f"advisor made {len(advisor_log.tool_calls)} tool call(s)")

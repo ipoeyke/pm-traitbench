@@ -211,6 +211,33 @@ def test_unknown_tool_name_is_rejected_and_retried(market_lookup, tmp_path):
     assert len(advisor_log.request_hashes) == 1
 
 
+def test_tool_use_block_with_a_missing_name_is_rejected_without_crashing(market_lookup, tmp_path):
+    """A block with no `name` key mixed with a known-bad string name must not raise
+    `TypeError` from sorting `None` against `str` while building the rejection reason.
+    """
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
+    calls = {"advisor": 0}
+
+    def responder(request):
+        if "tools" not in request:
+            return fake_message([turn_text("Quick check-in.")])
+        calls["advisor"] += 1
+        if calls["advisor"] == 1:
+            nameless_block = {"type": "tool_use", "id": "tu_1", "input": {}}
+            return fake_message(
+                [nameless_block, tool_use("not_a_real_tool", {}, "tu_2")], stop_reason="tool_use"
+            )
+        return fake_message([turn_text("All set.")])
+
+    _, client = _cached_client(responder, tmp_path)
+
+    result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    assert calls["advisor"] == 2
+    advisor_log = result.log.turns[1]
+    assert advisor_log.tool_calls == ()
+
+
 def test_no_narrator_feed_after_the_last_advisor_reply(market_lookup, tmp_path):
     ctx = session_context(market_lookup, turn_plan=_turn_plan(3))
     fake, client = _cached_client(default_responder, tmp_path)
@@ -257,7 +284,8 @@ def test_usage_sums_and_request_hashes_are_ordered_across_a_tool_round(market_lo
     assert advisor_log.usage.input_tokens == 35
     assert advisor_log.usage.output_tokens == 14
     advisor_requests = [r for r in fake.requests if "tools" in r]
-    assert advisor_log.request_hashes == tuple(request_key(r) for r in advisor_requests)
+    scope = ctx.skeleton.session_id
+    assert advisor_log.request_hashes == tuple(request_key(r, scope) for r in advisor_requests)
 
 
 def test_pm_directive_is_stance_then_opening_then_none(market_lookup, tmp_path):

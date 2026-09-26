@@ -1,9 +1,11 @@
 """Dialogue stage: narrates every session the plan stage skeletoned, one PM at a time,
 and writes the public `sessions` table and the hidden `dialogue_logs` table.
 
-Every session narrates concurrently through one shared `CachedClient`, so a
-crash or a rejected reply on one session never blocks the others; the whole
-run still writes both tables or neither.
+Every session narrates through one shared `CachedClient`, with at most
+`config.dialogue.max_concurrency` sessions in flight at once, so a crash or a
+rejected reply on one session never blocks the others and only that many
+sessions' growing histories sit in memory; the whole run still writes both
+tables or neither.
 """
 
 import asyncio
@@ -98,21 +100,54 @@ def _partition_pm_tables(store: DataStore) -> tuple[PmTables, ...]:
     )
 
 
+async def _narrate_one(
+    ctx: SessionContext,
+    client: CachedClient,
+    config: Config,
+    advisor_prompt: str,
+    semaphore: asyncio.Semaphore,
+) -> SessionResult:
+    async with semaphore:
+        return await narrate_session(ctx, client, config.dialogue, advisor_prompt)
+
+
 async def _narrate_all(
     contexts: tuple[SessionContext, ...], client: CachedClient, config: Config, advisor_prompt: str
 ) -> list[SessionResult | BaseException]:
+    # Bounding how many sessions run at once, rather than letting `gather` start
+    # every session's first call together, is what keeps the token budget's
+    # overshoot down to the concurrency limit and caps how many growing
+    # histories sit in memory at once.
+    semaphore = asyncio.Semaphore(config.dialogue.max_concurrency)
     return await asyncio.gather(
-        *(narrate_session(ctx, client, config.dialogue, advisor_prompt) for ctx in contexts),
+        *(_narrate_one(ctx, client, config, advisor_prompt, semaphore) for ctx in contexts),
         return_exceptions=True,
     )
 
 
-def _raise_on_failure(results: list[SessionResult | BaseException], client: CachedClient) -> None:
+def _reason_of(ctx: SessionContext, error: DialogueError) -> str:
+    """The failure reason for one session, stripped of a `session {id}: ` prefix if present.
+
+    An error raised inside `narrate_session` already carries that prefix; one
+    raised by the inner client (a credential or 400 error) does not, so this
+    normalises both to a plain reason before regrouping by session.
+    """
+    message = str(error)
+    prefix = f"session {ctx.skeleton.session_id}: "
+    return message[len(prefix) :] if message.startswith(prefix) else message
+
+
+def _raise_on_failure(
+    contexts: tuple[SessionContext, ...],
+    results: list[SessionResult | BaseException],
+    client: CachedClient,
+) -> None:
     """Raise a budget error, else a combined dialogue error, else re-raise any other exception.
 
     A budget error takes priority since it means the whole run should stop
-    spending; a combined `DialogueError` names every failed session so a
-    rerun's cache can skip the sessions that already succeeded.
+    spending. Otherwise every failed session is named, in session order,
+    with sessions that failed for the identical reason collapsed onto one
+    line, so a rerun's cache can skip the sessions that already succeeded.
     """
     if any(isinstance(r, DialogueBudgetError) for r in results):
         totals = client.totals
@@ -120,9 +155,18 @@ def _raise_on_failure(results: list[SessionResult | BaseException], client: Cach
             f"dialogue token budget spent: {totals.input_tokens} input, "
             f"{totals.output_tokens} output tokens across {totals.calls} calls"
         )
-    dialogue_errors = [r for r in results if isinstance(r, DialogueError)]
-    if dialogue_errors:
-        raise DialogueError("; ".join(str(e) for e in dialogue_errors))
+
+    ids_by_reason: dict[str, list[str]] = {}
+    for ctx, result in zip(contexts, results, strict=True):
+        if isinstance(result, DialogueError):
+            ids_by_reason.setdefault(_reason_of(ctx, result), []).append(ctx.skeleton.session_id)
+    if ids_by_reason:
+        lines = []
+        for reason, ids in ids_by_reason.items():
+            who = f"session {ids[0]}" if len(ids) == 1 else f"sessions {', '.join(ids)}"
+            lines.append(f"{who}: {reason}")
+        raise DialogueError("\n".join(lines))
+
     for result in results:
         if isinstance(result, BaseException):
             raise result
@@ -162,11 +206,15 @@ def _run(
 
     cache_dir = store.data_dir / "cache" / "llm"
     client = CachedClient(lambda: client_factory(config), cache_dir, config.dialogue.token_budget)
-    results = asyncio.run(_narrate_all(tuple(contexts), client, config, advisor_prompt))
-    _raise_on_failure(results, client)
+    frozen_contexts = tuple(contexts)
+    results = asyncio.run(_narrate_all(frozen_contexts, client, config, advisor_prompt))
+    _raise_on_failure(frozen_contexts, results, client)
 
-    # `_raise_on_failure` already returned normally, so every result is a `SessionResult`.
     session_results = [r for r in results if isinstance(r, SessionResult)]
+    if len(session_results) != len(frozen_contexts):
+        raise DialogueError(
+            f"expected {len(frozen_contexts)} session results but got {len(session_results)}"
+        )
 
     sessions = [r.session for r in session_results]
     logs = [r.log for r in session_results]

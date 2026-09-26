@@ -34,7 +34,7 @@ from pm_traitbench.enums import (
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import Idea, Leg, Side, Skeleton, Stance
 from tests.dialogue.conftest import rule, session_context
-from tests.gates.conftest import DEFAULT_DATE, idea_row, ledger_row
+from tests.gates.conftest import DEFAULT_DATE, PM_ID, idea_row, ledger_row
 from tests.signals.conftest import bias_trait, persona, pref_trait
 
 _CONFIG = Config()
@@ -89,7 +89,8 @@ def test_two_builds_from_equal_inputs_give_the_same_request_key(market_lookup):
     request_2 = narrator_request(ctx_2, list(messages), _CONFIG.dialogue, None)
 
     assert request_1 == request_2
-    assert request_key(request_1) == request_key(request_2)
+    scope = ctx_1.skeleton.session_id
+    assert request_key(request_1, scope) == request_key(request_2, scope)
 
 
 def test_narrator_system_contains_voice_rules_and_avoid_lines(market_lookup):
@@ -262,7 +263,51 @@ def test_feedback_changes_the_narrator_request_key(market_lookup):
     )
 
     assert base["system"] != changed["system"]
-    assert request_key(base) != request_key(changed)
+    scope = ctx.skeleton.session_id
+    assert request_key(base, scope) != request_key(changed, scope)
+
+
+def test_two_same_date_check_ins_of_one_pm_get_distinct_cache_keys(market_lookup):
+    """Two check-in sessions of one PM, same date, no stances or day trades, render the
+    identical narrator turn-0 request body; real plan output does put several sessions
+    on one date, so only the session-scoped cache key, never the body, may tell them apart.
+    """
+    catalogue = load_catalogue()
+    pm_persona = persona()
+    voice = Voice(voice_id="v_01", line="terse trader shorthand, drops articles")
+    pm_prefix = f"s_{PM_ID.replace('_', '')}_{DEFAULT_DATE.isoformat()}"
+    skeleton_a = Skeleton(
+        session_id=f"{pm_prefix}_a",
+        pm_id=PM_ID,
+        date=DEFAULT_DATE,
+        kind=SessionKind.CHECK_IN,
+        trade_idea_ids=(),
+        stances=(),
+        advisor_violation=None,
+        forbidden_trait_ids=(),
+        forbidden_pref_params=(),
+    )
+    skeleton_b = skeleton_a.model_copy(update={"session_id": f"{pm_prefix}_b"})
+    pm = PmTables(
+        persona=pm_persona,
+        traits=(),
+        drift_events=(),
+        rules=(),
+        ideas={},
+        ledger=(),
+        position_days=(),
+        skeletons=(skeleton_a, skeleton_b),
+    )
+
+    ctx_a, ctx_b = build_contexts(pm, voice, market_lookup, catalogue, Config())
+    messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
+    body_a = narrator_request(ctx_a, messages, _CONFIG.dialogue, None)
+    body_b = narrator_request(ctx_b, messages, _CONFIG.dialogue, None)
+
+    assert body_a == body_b
+    assert request_key(body_a, ctx_a.skeleton.session_id) != request_key(
+        body_b, ctx_b.skeleton.session_id
+    )
 
 
 def test_advisor_request_contains_no_persona_rules_ideas_or_skeleton_text(market_lookup):

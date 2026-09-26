@@ -13,6 +13,7 @@ from pm_traitbench.errors import DialogueBudgetError, DialogueError
 from tests.dialogue.conftest import FakeClient, default_responder, fake_message, turn_text
 
 _REQUEST = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
+_SCOPE = "s_pm001_2026-01-05_a"
 
 _CREDENTIAL_ENV_VARS = (
     "ANTHROPIC_API_KEY",
@@ -33,13 +34,41 @@ def _failing_factory() -> FakeClient:
 def test_request_key_ignores_dict_order() -> None:
     a = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
     b = {"messages": [{"content": "hi", "role": "user"}], "model": "claude-opus-5-5"}
-    assert request_key(a) == request_key(b)
+    assert request_key(a, _SCOPE) == request_key(b, _SCOPE)
 
 
 def test_request_key_changes_with_model() -> None:
     a = {**_REQUEST, "model": "claude-opus-5-5"}
     b = {**_REQUEST, "model": "claude-sonnet-5"}
-    assert request_key(a) != request_key(b)
+    assert request_key(a, _SCOPE) != request_key(b, _SCOPE)
+
+
+def test_request_key_changes_with_scope() -> None:
+    """Two sessions that build the byte-identical request must never share a cache entry."""
+    assert request_key(_REQUEST, "session_a") != request_key(_REQUEST, "session_b")
+
+
+def test_byte_identical_requests_under_different_scopes_use_distinct_cache_files(
+    tmp_path: Path,
+) -> None:
+    inner = FakeClient(default_responder)
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+
+    async def scenario() -> None:
+        first = await cached.send(_REQUEST, scope="session_a")
+        cached.commit(first)
+        second = await cached.send(_REQUEST, scope="session_b")
+        cached.commit(second)
+        return first, second
+
+    first, second = asyncio.run(scenario())
+    assert first.key != second.key
+    assert (tmp_path / first.key[:2] / f"{first.key}.json").exists()
+    assert (tmp_path / second.key[:2] / f"{second.key}.json").exists()
+    # Neither send was a hit: the second one must not have reused the first's reply.
+    assert first.cached is False
+    assert second.cached is False
+    assert len(inner.requests) == 2
 
 
 def test_miss_calls_inner_and_commit_makes_the_next_send_a_hit(tmp_path: Path) -> None:
@@ -47,10 +76,10 @@ def test_miss_calls_inner_and_commit_makes_the_next_send_a_hit(tmp_path: Path) -
     cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
 
     async def scenario() -> None:
-        first = await cached.send(_REQUEST)
+        first = await cached.send(_REQUEST, scope=_SCOPE)
         assert first.cached is False
         cached.commit(first)
-        second = await cached.send(_REQUEST)
+        second = await cached.send(_REQUEST, scope=_SCOPE)
         assert second.cached is True
         assert second.response == first.response
 
@@ -65,8 +94,8 @@ def test_uncommitted_reply_is_not_cached(tmp_path: Path) -> None:
     cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
 
     async def scenario() -> None:
-        first = await cached.send(_REQUEST)
-        second = await cached.send(_REQUEST)
+        first = await cached.send(_REQUEST, scope=_SCOPE)
+        second = await cached.send(_REQUEST, scope=_SCOPE)
         assert first.cached is False
         assert second.cached is False
 
@@ -79,12 +108,12 @@ def test_cache_file_is_written_atomically_under_a_two_char_shard(tmp_path: Path)
     cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
 
     async def scenario() -> None:
-        reply = await cached.send(_REQUEST)
+        reply = await cached.send(_REQUEST, scope=_SCOPE)
         cached.commit(reply)
         return reply
 
     reply = asyncio.run(scenario())
-    key = request_key(_REQUEST)
+    key = request_key(_REQUEST, _SCOPE)
     shard_dir = tmp_path / key[:2]
     expected_file = shard_dir / f"{key}.json"
     assert expected_file.exists()
@@ -98,7 +127,7 @@ def test_inner_factory_is_not_called_when_every_request_hits(tmp_path: Path) -> 
     warm = CachedClient(lambda: FakeClient(default_responder), tmp_path, token_budget=None)
 
     async def prime() -> None:
-        reply = await warm.send(_REQUEST)
+        reply = await warm.send(_REQUEST, scope=_SCOPE)
         warm.commit(reply)
 
     asyncio.run(prime())
@@ -106,7 +135,7 @@ def test_inner_factory_is_not_called_when_every_request_hits(tmp_path: Path) -> 
     cached = CachedClient(_failing_factory, tmp_path, token_budget=None)
 
     async def scenario() -> None:
-        reply = await cached.send(_REQUEST)
+        reply = await cached.send(_REQUEST, scope=_SCOPE)
         assert reply.cached is True
 
     asyncio.run(scenario())
@@ -118,12 +147,12 @@ def test_budget_error_before_a_fresh_call_once_spent(tmp_path: Path) -> None:
     other_request = {**_REQUEST, "messages": [{"role": "user", "content": "bye"}]}
 
     async def scenario() -> None:
-        first = await cached.send(_REQUEST)
+        first = await cached.send(_REQUEST, scope=_SCOPE)
         cached.commit(first)
         with pytest.raises(DialogueBudgetError):
-            await cached.send(other_request)
+            await cached.send(other_request, scope=_SCOPE)
         # A cached send still succeeds once the budget is spent.
-        replay = await cached.send(_REQUEST)
+        replay = await cached.send(_REQUEST, scope=_SCOPE)
         assert replay.cached is True
 
     asyncio.run(scenario())
@@ -138,9 +167,9 @@ def test_fresh_totals_exclude_cache_hits(tmp_path: Path) -> None:
     cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
 
     async def scenario() -> None:
-        first = await cached.send(_REQUEST)
+        first = await cached.send(_REQUEST, scope=_SCOPE)
         cached.commit(first)
-        await cached.send(_REQUEST)
+        await cached.send(_REQUEST, scope=_SCOPE)
 
     asyncio.run(scenario())
     assert cached.totals.input_tokens == 7
@@ -154,7 +183,7 @@ def test_fresh_totals_accumulate_cache_read_tokens(tmp_path: Path) -> None:
     inner = FakeClient(lambda request: response)
     cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
 
-    asyncio.run(cached.send(_REQUEST))
+    asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
     assert cached.totals.cache_read_tokens == 40
 
 
@@ -167,7 +196,7 @@ def test_null_usage_fields_count_as_zero(tmp_path: Path) -> None:
     inner = FakeClient(lambda request: response)
     cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
 
-    reply = asyncio.run(cached.send(_REQUEST))
+    reply = asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
 
     assert reply.cached is False
     assert cached.totals.input_tokens == 5
@@ -178,13 +207,13 @@ def test_null_usage_fields_count_as_zero(tmp_path: Path) -> None:
 def test_unreadable_cache_entry_is_treated_as_a_miss_and_rewritten(tmp_path: Path) -> None:
     inner = FakeClient(default_responder)
     cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
-    key = request_key(_REQUEST)
+    key = request_key(_REQUEST, _SCOPE)
     shard_dir = tmp_path / key[:2]
     shard_dir.mkdir(parents=True)
     (shard_dir / f"{key}.json").write_text("{not valid json", encoding="utf-8")
 
     async def scenario() -> None:
-        reply = await cached.send(_REQUEST)
+        reply = await cached.send(_REQUEST, scope=_SCOPE)
         assert reply.cached is False
         cached.commit(reply)
         return reply
@@ -195,15 +224,41 @@ def test_unreadable_cache_entry_is_treated_as_a_miss_and_rewritten(tmp_path: Pat
     assert stored["response"] == reply.response
 
 
+def test_cache_entry_with_invalid_utf8_bytes_is_treated_as_a_miss(tmp_path: Path) -> None:
+    inner = FakeClient(default_responder)
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+    key = request_key(_REQUEST, _SCOPE)
+    shard_dir = tmp_path / key[:2]
+    shard_dir.mkdir(parents=True)
+    (shard_dir / f"{key}.json").write_bytes(b"\xff\xfe not valid utf-8")
+
+    reply = asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
+    assert reply.cached is False
+    assert len(inner.requests) == 1
+
+
+def test_cache_entry_that_is_not_a_json_object_is_treated_as_a_miss(tmp_path: Path) -> None:
+    inner = FakeClient(default_responder)
+    cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
+    key = request_key(_REQUEST, _SCOPE)
+    shard_dir = tmp_path / key[:2]
+    shard_dir.mkdir(parents=True)
+    (shard_dir / f"{key}.json").write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+
+    reply = asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
+    assert reply.cached is False
+    assert len(inner.requests) == 1
+
+
 def test_cache_entry_missing_the_response_key_is_treated_as_a_miss(tmp_path: Path) -> None:
     inner = FakeClient(default_responder)
     cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
-    key = request_key(_REQUEST)
+    key = request_key(_REQUEST, _SCOPE)
     shard_dir = tmp_path / key[:2]
     shard_dir.mkdir(parents=True)
     (shard_dir / f"{key}.json").write_text(json.dumps({"key": key}), encoding="utf-8")
 
-    reply = asyncio.run(cached.send(_REQUEST))
+    reply = asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
     assert reply.cached is False
     assert len(inner.requests) == 1
 
@@ -213,7 +268,7 @@ def test_temp_file_is_removed_when_the_write_fails(
 ) -> None:
     inner = FakeClient(default_responder)
     cached = CachedClient(lambda: inner, tmp_path, token_budget=None)
-    reply = asyncio.run(cached.send(_REQUEST))
+    reply = asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
 
     def _boom(*args: object, **kwargs: object) -> None:
         raise OSError("disk full")
@@ -223,7 +278,7 @@ def test_temp_file_is_removed_when_the_write_fails(
     with pytest.raises(OSError):
         cached.commit(reply)
 
-    key = request_key(_REQUEST)
+    key = request_key(_REQUEST, _SCOPE)
     shard_dir = tmp_path / key[:2]
     assert list(shard_dir.iterdir()) == []
 

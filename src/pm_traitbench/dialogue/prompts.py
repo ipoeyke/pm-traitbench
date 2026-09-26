@@ -96,6 +96,7 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
         "preference. Mention a trade only when a turn's directive lists it, and never "
         "invent one. Fill `mentions` for every trade and every market level you state, "
         "using the ids given.",
+        f"Today is {ctx.skeleton.date.isoformat()}.",
         f"Asset class: {mandate.asset_class.value}. Sub-style: {mandate.sub_style}. "
         f"Book size: {mandate.book_size}. Risk unit: {mandate.risk_unit}. "
         f"Benchmark: {mandate.benchmark}.",
@@ -138,6 +139,7 @@ _NO_OPEN_POSITIONS = (
 
 
 def opening_line(ctx: SessionContext, opening: Opening) -> str:
+    """The free-text instruction for turn 0's opening, one line per `Opening` kind."""
     if opening == Opening.SESSION_IDEAS:
         return "Open the conversation about today's decision on your ideas listed above."
     if opening == Opening.OPEN_POSITIONS:

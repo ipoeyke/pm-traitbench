@@ -1,12 +1,15 @@
 """Tests for the dialogue stage: table I/O, run metadata and its response cache."""
 
+import asyncio
+import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config, DialogueConfig, PmFilter
-from pm_traitbench.dialogue.client import LlmClient
+from pm_traitbench.dialogue.client import CachedClient, LlmClient, Reply, request_key
 from pm_traitbench.dialogue.stage import make_stage
 from pm_traitbench.engine.stage import ENGINE_STAGE
 from pm_traitbench.errors import DialogueBudgetError, DialogueError
@@ -24,6 +27,53 @@ from tests.engine.conftest import (  # noqa: F401
 )
 
 _TARGET_PM_ID = "pm_003"
+_MANY_SESSIONS_PM_ID = "pm_001"
+
+
+class _ConcurrencyTrackingClient:
+    """A fake `LlmClient` that yields control on every send, to exercise real interleaving.
+
+    Without an `await` inside `send`, asyncio never has a chance to let a
+    second coroutine's send overlap this one's, even if many are scheduled.
+    """
+
+    def __init__(self) -> None:
+        self.max_in_flight = 0
+        self._in_flight = 0
+
+    async def send(self, request: dict) -> dict:
+        self._in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self._in_flight)
+        await asyncio.sleep(0)
+        try:
+            return default_responder(request)
+        finally:
+            self._in_flight -= 1
+
+
+def _intercept_by_scope(monkeypatch: pytest.MonkeyPatch, outcomes: dict[str, Any]) -> None:
+    """Patch `CachedClient.send` so a call scoped to a session id in `outcomes` is replaced.
+
+    An `Exception` value is raised as-is; any other value is returned as an
+    uncached `Reply`. Every other scope goes through the real cache and inner
+    client unchanged. This targets one exact session regardless of whether
+    its rendered request body happens to collide with another session's.
+    """
+    real_send = CachedClient.send
+
+    async def patched_send(self: CachedClient, request: dict, *, scope: str) -> Reply:
+        outcome = outcomes.get(scope)
+        if outcome is None:
+            return await real_send(self, request, scope=scope)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return Reply(key=request_key(request, scope), response=outcome, cached=False)
+
+    monkeypatch.setattr(CachedClient, "send", patched_send)
+
+
+def _refusal(text: str = "no") -> dict:
+    return fake_message([{"type": "text", "text": text}], stop_reason="refusal")
 
 
 def _run_engine_and_plan(
@@ -77,8 +127,16 @@ def test_pm_filter_limits_the_sessions_written(
     assert {s.pm_id for s in sessions} == {_TARGET_PM_ID}
 
 
+def _sorted_skeleton_ids(store: DataStore, pm_id: str) -> list[str]:
+    return sorted(s.session_id for s in store.read(SKELETONS) if s.pm_id == pm_id)
+
+
 def test_failed_session_writes_no_tables_and_raises(
-    tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
@@ -88,24 +146,145 @@ def test_failed_session_writes_no_tables_and_raises(
             )
         }
     )
-    target_skeletons = sorted(
-        (s for s in store.read(SKELETONS) if s.pm_id == _TARGET_PM_ID), key=lambda s: s.session_id
-    )
-    assert len(target_skeletons) >= 2  # a session unaffected by the refusal must still exist
-    target = target_skeletons[-1]
-    target_marker = f"Today is {target.date.isoformat()}."
+    session_ids = _sorted_skeleton_ids(store, _TARGET_PM_ID)
+    assert len(session_ids) >= 2  # a session unaffected by the refusal must still exist
+    target_id = session_ids[-1]
+    _intercept_by_scope(monkeypatch, {target_id: _refusal()})
 
-    def refusing_responder(request):
-        system = request.get("system") or ""
-        if target_marker in system:
-            return fake_message([{"type": "text", "text": "no"}], stop_reason="refusal")
-        return default_responder(request)
-
-    with pytest.raises(DialogueError, match=target.session_id):
-        run_stage(make_stage(lambda c: FakeClient(refusing_responder)), config, store)
+    with pytest.raises(DialogueError, match=f"session {target_id}: the reply was refused"):
+        run_stage(make_stage(lambda c: FakeClient(default_responder)), config, store)
 
     assert not store.exists(SESSIONS)
     assert not store.exists(DIALOGUE_LOGS)
+
+
+def test_several_failed_sessions_are_listed_in_session_order(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config = config.model_copy(
+        update={
+            "dialogue": config.dialogue.model_copy(
+                update={"pm_filter": PmFilter(pm_ids=(_MANY_SESSIONS_PM_ID,))}
+            )
+        }
+    )
+    session_ids = _sorted_skeleton_ids(store, _MANY_SESSIONS_PM_ID)
+    assert len(session_ids) >= 3  # at least one session must survive unrefused
+    first_id, second_id = session_ids[0], session_ids[1]
+    _intercept_by_scope(monkeypatch, {first_id: _refusal(), second_id: _refusal()})
+
+    with pytest.raises(DialogueError) as excinfo:
+        run_stage(make_stage(lambda c: FakeClient(default_responder)), config, store)
+
+    # One reason, shared by both sessions, collapses onto a single line naming both ids
+    # in session order.
+    assert str(excinfo.value) == f"sessions {first_id}, {second_id}: the reply was refused"
+    assert not store.exists(SESSIONS)
+    assert not store.exists(DIALOGUE_LOGS)
+
+
+def test_client_raised_error_is_prefixed_with_its_session_id(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An error the inner client raises directly (missing credentials, a 400) carries no
+    'session {id}: ' prefix of its own; the stage must add one so a rerun can be pointed
+    at the right session.
+    """
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config = config.model_copy(
+        update={
+            "dialogue": config.dialogue.model_copy(
+                update={"pm_filter": PmFilter(pm_ids=(_TARGET_PM_ID,))}
+            )
+        }
+    )
+    session_ids = _sorted_skeleton_ids(store, _TARGET_PM_ID)
+    target_id = session_ids[0]
+    credentials_error = DialogueError("no Anthropic credentials: run `ant auth login`")
+    _intercept_by_scope(monkeypatch, {target_id: credentials_error})
+
+    expected = f"session {target_id}: no Anthropic credentials: run `ant auth login`"
+    with pytest.raises(DialogueError, match=re.escape(expected)):
+        run_stage(make_stage(lambda c: FakeClient(default_responder)), config, store)
+
+    assert not store.exists(SESSIONS)
+
+
+def test_budget_error_takes_precedence_over_a_plain_dialogue_error(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config = config.model_copy(
+        update={
+            "dialogue": config.dialogue.model_copy(
+                update={"pm_filter": PmFilter(pm_ids=(_TARGET_PM_ID,)), "token_budget": 1}
+            )
+        }
+    )
+    session_ids = _sorted_skeleton_ids(store, _TARGET_PM_ID)
+    assert len(session_ids) >= 2
+    # This session's every send bypasses the real budget-tracking client entirely, so
+    # it always fails with a plain refusal; the other session runs for real and is
+    # certain to exceed the token_budget of 1 on its second call.
+    _intercept_by_scope(monkeypatch, {session_ids[0]: _refusal()})
+
+    with pytest.raises(DialogueBudgetError):
+        run_stage(make_stage(lambda c: FakeClient(default_responder)), config, store)
+
+    assert not store.exists(SESSIONS)
+    assert not store.exists(DIALOGUE_LOGS)
+
+
+def test_non_dialogue_exception_is_re_raised_and_writes_no_tables(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config = config.model_copy(
+        update={
+            "dialogue": config.dialogue.model_copy(
+                update={"pm_filter": PmFilter(pm_ids=(_TARGET_PM_ID,))}
+            )
+        }
+    )
+    session_ids = _sorted_skeleton_ids(store, _TARGET_PM_ID)
+    _intercept_by_scope(monkeypatch, {session_ids[0]: ValueError("boom")})
+
+    with pytest.raises(ValueError, match="boom"):
+        run_stage(make_stage(lambda c: FakeClient(default_responder)), config, store)
+
+    assert not store.exists(SESSIONS)
+    assert not store.exists(DIALOGUE_LOGS)
+
+
+def test_session_concurrency_never_exceeds_max_concurrency(
+    tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config = config.model_copy(
+        update={"dialogue": config.dialogue.model_copy(update={"max_concurrency": 2})}
+    )
+    tracker = _ConcurrencyTrackingClient()
+
+    run_stage(make_stage(lambda c: tracker), config, store)
+
+    assert tracker.max_in_flight == 2
 
 
 def test_budget_error_writes_no_tables(
@@ -161,7 +340,7 @@ def test_run_metadata_records_models_prompt_hash_voices_and_usage(
     assert set(metadata["pms"]) == pm_ids
     assert set(metadata["voices"]) == pm_ids
     assert metadata["calls"] > 0
-    assert 0 <= metadata["cache_hits"] <= metadata["calls"]
+    assert metadata["cache_hits"] == 0
     assert metadata["input_tokens"] > 0
     assert metadata["output_tokens"] > 0
     assert sum(metadata["sessions"].values()) == len(store.read(SESSIONS))

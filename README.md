@@ -553,40 +553,49 @@ skipped, and are listed under `skipped` in the plan's own run metadata.
 
 The `dialogue` stage reads `personas`, `rules`, `traits`, `drift_events`, the
 engine's `ideas`, `ledger` and `position_days`, the plan's `skeletons`, and
-the market's `instruments`, `prices`, `curves`, `consensus` and `calendar`,
-plus the plan's run metadata for the PMs it must skip. It narrates every
-skeleton into a two-agent session and writes two tables: `sessions`, the
-public transcript of text-only turns, and `dialogue_logs`, a hidden table
-carrying each turn's voice, its directive, its `mentions`, any tool calls,
-the model that produced it, the cache keys of the requests behind it, and
-its token usage.
+the market's `instruments`, `prices`, `curves`, `consensus` and `calendar`.
+A PM with no skeleton (the same multi-asset PMs the earlier stages already
+skip) is skipped here too; the plan's own `skipped` list is copied into this
+stage's run metadata, not used to decide the skip itself. The stage narrates
+every skeleton into a two-agent session and writes two tables: `sessions`,
+the public transcript of text-only turns, and `dialogue_logs`, a hidden
+table carrying each turn's voice, its directive, its `mentions`, any tool
+calls, the model that produced it, the cache keys of the requests behind it,
+and its token usage.
 
 Both agents are `claude-opus-5-5` at low reasoning effort. The advisor
-never sees the PM's persona, rules, ideas or plan; it reads market data only
-through five tools, each capped to dates on or before the session's own
-date, so it can never state a fact from memory or from the future. The
-narrator is one model across every PM, so no model choice can leak a
-signal; each PM instead draws one voice, independently of every trait and
-preference, that colours every session it narrates. Each session's turn
-count is drawn per session kind and then raised just enough to fit every
-stance the skeleton schedules; a stance, an opening line or a scripted
-advisor violation reaches the narrator as a system message partway through
-the conversation, never folded into the first turn.
+never sees the PM's persona, rules, ideas or plan; it is instructed to
+answer market questions only through five tools, each capped to dates on or
+before the session's own date, rather than from memory - whether it
+actually follows that instruction is checked by a later stage, not
+enforced here. The narrator is one model across every PM, so no model
+choice can leak a signal; each PM instead draws one voice, independently of
+every trait and preference, that colours every session it narrates. Each
+session's turn count is drawn per session kind and then raised just enough
+to fit every stance the skeleton schedules; a stance and the opening line
+reach the narrator, and a scripted advisor violation reaches the advisor,
+each as a system message partway through the conversation, never folded
+into the first turn.
 
 Every request goes through a response cache under `<data-dir>/cache/llm/`,
-keyed on the full request body, which doubles as the run's resume manifest:
-a crash, a rejected reply or widening `dialogue.pm_filter` to cover more PMs
-is a rerun with `--force` that only calls the API for the turns still
-missing from the cache. Credentials (`ant auth login` or
-`ANTHROPIC_API_KEY`) are needed only on a cache miss, so a fully cached
-rerun works offline. The advisor's system prompt is
+keyed on the session id plus the full request body - so two sessions whose
+requests happen to render identically never share a cached reply - which
+doubles as the run's resume manifest: a crash, a rejected reply or widening
+`dialogue.pm_filter` to cover more PMs is a rerun with `--force` that only
+calls the API for the turns still missing from the cache. Credentials
+(`ant auth login` or `ANTHROPIC_API_KEY`) are needed only on a cache miss,
+so a fully cached rerun works offline. The advisor's system prompt is
 `src/pm_traitbench/catalogues/advisor_prompt.md` unless
 `dialogue.advisor_prompt_path` names another file. Like every other stage,
-it writes both tables or neither. Before a full run, measure cost with
-`dialogue.pm_filter` restricted to 2-3 PMs and set `dialogue.token_budget`
-to cap spend. Checking whether a session actually holds up (its `mentions`
-against the ledger, leakage, forbidden traits) is a later stage's job, not
-this one's.
+it writes both tables or neither. `dialogue.token_budget` caps fresh input
+plus output tokens spent in one run of the stage; it is a soft stop (an
+already in-flight batch of sessions can overshoot it by up to
+`dialogue.max_concurrency` calls) and a resumed run's count starts back at
+zero, so it caps each run's own spend, not a cumulative total. Before a
+full run, measure cost with `dialogue.pm_filter` restricted to 2-3 PMs and
+set `dialogue.token_budget` accordingly. Checking whether a session
+actually holds up (its `mentions` against the ledger, leakage, forbidden
+traits) is a later stage's job, not this one's.
 
 ## Development
 

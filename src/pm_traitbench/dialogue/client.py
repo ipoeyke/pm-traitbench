@@ -1,9 +1,11 @@
 """The single seam every Anthropic API request passes through.
 
 `LlmClient` is the protocol every backend implements. `CachedClient` wraps a
-backend with a disk cache keyed on the request body; because prompts are
-built deterministically, that cache also serves as the resume manifest for a
-crash-resumed or retried run. `AnthropicClient` is the live backend.
+backend with a disk cache keyed on the session id plus the request body, so
+two sessions that happen to build byte-identical requests never share a
+reply; because prompts are built deterministically within one session, that
+cache also serves as the resume manifest for a crash-resumed or retried run.
+`AnthropicClient` is the live backend.
 """
 
 import asyncio
@@ -29,10 +31,14 @@ class LlmClient(Protocol):
     async def send(self, request: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
-def request_key(request: Mapping[str, Any]) -> str:
-    """sha256 hex of the request serialised with sorted keys and no whitespace."""
+def request_key(request: Mapping[str, Any], scope: str) -> str:
+    """sha256 hex of `scope` plus the request serialised with sorted keys and no whitespace.
+
+    `scope` is the session id: two sessions whose requests happen to render
+    byte-identical must still land in distinct cache entries.
+    """
     body = json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{scope}\n{body}".encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -56,13 +62,14 @@ class UsageTotals:
 
 
 class CachedClient:
-    """Wraps an `LlmClient` with a disk cache keyed on the request body.
+    """Wraps an `LlmClient` with a disk cache keyed on the caller's scope plus the request body.
 
     A reply is written to disk only once the caller commits it, so a crash or
     a rejected response never leaves a cached entry a rerun would trust. The
-    token budget is a soft stop: each in-flight call checks it before its own
-    usage is added, so concurrent sends can overshoot it by up to the
-    concurrency limit's worth of calls.
+    token budget is a soft stop, and counts only fresh tokens spent in this
+    run (a resumed run starts back at zero): each in-flight call checks it
+    before its own usage is added, so concurrent sends can overshoot it by up
+    to the caller's own concurrency limit's worth of calls.
     """
 
     def __init__(
@@ -84,17 +91,21 @@ class CachedClient:
     def _path_for(self, key: str) -> Path:
         return self._cache_dir / key[:2] / f"{key}.json"
 
-    async def send(self, request: Mapping[str, Any]) -> Reply:
-        key = request_key(request)
+    async def send(self, request: Mapping[str, Any], *, scope: str) -> Reply:
+        key = request_key(request, scope)
         self._totals.calls += 1
         path = self._path_for(key)
         if path.exists():
             try:
                 stored = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(stored, dict):
+                    raise ValueError("cached entry is not a JSON object")
                 cached_response = stored["response"]
-            except (OSError, json.JSONDecodeError, KeyError):
-                # A partial or corrupt entry (e.g. after a power loss) is
-                # treated as a miss: re-fetch and overwrite it on commit.
+            except (OSError, ValueError, TypeError, KeyError):
+                # A partial, corrupt or non-dict entry (e.g. after a power
+                # loss) is treated as a miss: re-fetch and overwrite it on
+                # commit. `ValueError` also covers `UnicodeDecodeError` and
+                # `json.JSONDecodeError`.
                 pass
             else:
                 self._totals.cache_hits += 1
