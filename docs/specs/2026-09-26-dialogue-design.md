@@ -57,7 +57,7 @@ src/pm_traitbench/catalogues/advisor_prompt.md
 
 - `LlmClient` protocol: `async send(request: dict) -> dict`. The request is the full Messages API body (model, system, messages, tools, `output_config`); the response is the SDK message serialised to a dict.
 - `AnthropicClient`: wraps `AsyncAnthropic` behind an `asyncio.Semaphore(max_concurrency)`. SDK retries handle 429, 5xx and connection errors; errors are handled by typed exception class, never by message text. Built lazily so a fully cached run needs no credentials.
-- `CachedClient(inner, cache_dir, token_budget)`: key is sha256 of the canonical request JSON (sorted keys, no whitespace; model id is part of the body). Hit: read `<cache_dir>/<key[:2]>/<key>.json`. Miss: call `inner`, and write only after the caller accepts the response (`commit(key, response)`), via a temp file and rename, so an invalid or refused response is never cached and a crash never leaves a partial entry. Counts calls, hits and fresh `input`, `output` and cache-read tokens; raises `DialogueBudgetError` before a fresh call once fresh input plus output tokens reach `token_budget`.
+- `CachedClient(inner, cache_dir, token_budget)`: key is sha256 of the canonical request JSON (sorted keys, no whitespace; model id is part of the body). Hit: read `<cache_dir>/<key[:2]>/<key>.json`. Miss: call `inner`, and write only after the caller accepts the response (`commit(key, response)`), via a temp file and rename, so an invalid or refused response is never cached and a crash never leaves a partial entry. Counts calls, hits and fresh `input`, `output` and cache-read tokens; raises `DialogueBudgetError` before a fresh call once fresh input plus output tokens reach `token_budget`; the budget is a soft stop, since calls already in flight can overshoot it by up to the concurrency limit. An unreadable cache entry (for example after a power loss) is treated as a miss and rewritten on commit.
 - Cache root: `<data-dir>/cache/llm/`, under the already gitignored `data/`.
 
 ## Tools (`tools.py`)
@@ -84,10 +84,10 @@ An unknown instrument, a missing field or an out-of-range window returns an `is_
 - Totals drawn uniformly per kind (config `turns_by_kind`, **guess**): `silence` {2, 4}, `check_in` {2, 4, 6}, `decision` {4, 6, 8}; mean about 4.5. Within the plan's 2-8 range (section 4).
 - Raised to the stances' minimum: at least one PM turn per stance; a `revealed_reaction` stance sits on PM turn 2 or later, so its session has at least 4 turns. If the raised total would exceed 8, the stage raises `DialogueError` naming the session, since stage 5 caps a session at 2 signals and this cannot happen with a valid skeleton.
 - Stances are placed on PM turns in a random order drawn on `stream(root, "dialogue", pm_id, session_id)`; a `revealed_reaction` is placed first among turns 2 and later, and the skeleton's `advisor_violation` line goes on the advisor reply immediately before it. A `claim` stance (the earlier half of a contradiction) is an ordinary stance on its own session.
-- The session day's ledger rows for the session's ideas go on PM turn 1.
+- The session day's ledger rows for the session's ideas go on PM turn 1, each with its leg's tenor when set.
 - Output: `TurnPlan(n_turns, pm_directives: tuple[PmDirective, ...], violation_turn: int | None)`, where each `PmDirective` carries the turn's stance line (or none), the ledger rows to mention (turn 1 only), and the session-opening instruction (turn 1 only).
 
-Opening instruction by kind, when turn 1 carries no stance that already sets the topic: `decision` opens on the day's trades; `check_in` opens as a routine check on the PM's open positions on that date (from `position_days`); `silence` opens with a pure market or factual question about one instrument drawn on the session stream from the PM's asset-class universe, and the directive forbids talking about the PM's own positions, rules or habits (the silence set of plan section 4).
+Opening instruction by kind, when turn 1 carries no stance that already sets the topic: `decision` opens on the day's trades; `check_in` opens as a routine check on the PM's open positions on that date (from `position_days`), or, when none are open, as a routine check-in about the markets the PM trades without naming a position; `silence` opens with a pure market or factual question about one instrument drawn on the session stream from the PM's asset-class universe, and the directive forbids talking about the PM's own positions, rules or habits (the silence set of plan section 4).
 
 ## Prompts (`prompts.py`)
 
@@ -95,7 +95,7 @@ Opening instruction by kind, when turn 1 carries no stance that already sets the
 - `system` (stable for the whole session, cache-marked): role instruction (write only the PM's side, in the given voice, never name a psychological bias or trait); mandate facts; `stated_profile.self_description`; PM-scope rule texts and the idea-scope rule texts of the session's ideas; those ideas (instrument name, side, entry, target, stop, thesis template); the voice line; the forbidden list rendered from `avoid.yaml` for the skeleton's `forbidden_trait_ids` (by the trait's param) and `forbidden_pref_params`; the instruction to mention only the trades listed in a turn's directive and never to invent a trade.
 - Per PM turn: a mid-conversation `system` message with that turn's directive (stance line, trades to mention with their `trade_idea_id`, side, size, instrument and price, or opening instruction; "continue naturally" when the turn carries nothing).
 - `output_config.format`: JSON schema `{text: string, mentions: [Mention]}`.
-- The narrator never sees a trait id, param, value, mode, or which directive lines are signals (plan section 4).
+- The narrator never sees a trait id, bias param, bias trait value, mode, or which directive lines are signals (plan section 4). A preference value reaches it only inside the stance line that plants it, since that stance is the PM stating or reacting to the preference.
 
 **Advisor request.**
 - `system`: the advisor prompt file, then "Today is {date}." (cache-marked).
