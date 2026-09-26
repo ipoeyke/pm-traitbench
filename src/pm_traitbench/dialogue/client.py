@@ -102,10 +102,8 @@ class CachedClient:
                     raise ValueError("cached entry is not a JSON object")
                 cached_response = stored["response"]
             except (OSError, ValueError, TypeError, KeyError):
-                # A partial, corrupt or non-dict entry (e.g. after a power
-                # loss) is treated as a miss: re-fetch and overwrite it on
-                # commit. `ValueError` also covers `UnicodeDecodeError` and
-                # `json.JSONDecodeError`.
+                # A partial or corrupt entry is a miss, rewritten on commit;
+                # `ValueError` also covers `UnicodeDecodeError`/`JSONDecodeError`.
                 pass
             else:
                 self._totals.cache_hits += 1

@@ -284,6 +284,8 @@ def test_session_concurrency_never_exceeds_max_concurrency(
 
     run_stage(make_stage(lambda c: tracker), config, store)
 
+    # Exact, not just bounded: single-threaded asyncio plus `send`'s own yield means two
+    # sessions always overlap here, since there are far more than two to run.
     assert tracker.max_in_flight == 2
 
 

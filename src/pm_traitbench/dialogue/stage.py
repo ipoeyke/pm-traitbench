@@ -1,5 +1,5 @@
-"""Dialogue stage: narrates every session the plan stage skeletoned, one PM at a time,
-and writes the public `sessions` table and the hidden `dialogue_logs` table.
+"""Dialogue stage: narrates every session the plan stage skeletoned and writes the public
+`sessions` table and the hidden `dialogue_logs` table.
 
 Every session narrates through one shared `CachedClient`, with at most
 `config.dialogue.max_concurrency` sessions in flight at once, so a crash or a
@@ -114,10 +114,8 @@ async def _narrate_one(
 async def _narrate_all(
     contexts: tuple[SessionContext, ...], client: CachedClient, config: Config, advisor_prompt: str
 ) -> list[SessionResult | BaseException]:
-    # Bounding how many sessions run at once, rather than letting `gather` start
-    # every session's first call together, is what keeps the token budget's
-    # overshoot down to the concurrency limit and caps how many growing
-    # histories sit in memory at once.
+    # Bounding sessions in flight, not just letting `gather` start them all,
+    # caps the budget's overshoot and memory use at the concurrency limit.
     semaphore = asyncio.Semaphore(config.dialogue.max_concurrency)
     return await asyncio.gather(
         *(_narrate_one(ctx, client, config, advisor_prompt, semaphore) for ctx in contexts),
