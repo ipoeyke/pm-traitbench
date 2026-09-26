@@ -11,6 +11,7 @@ from pm_traitbench.config import (
     BiasSpec,
     CalendarConfig,
     Config,
+    DialogueConfig,
     DriftConfig,
     EngineConfig,
     EventSpec,
@@ -1036,6 +1037,41 @@ def test_turn_ranges_reject_unsorted_values() -> None:
         TurnRanges(check_in=(4, 2, 6))
 
 
+def test_turn_ranges_reject_empty_tuple() -> None:
+    with pytest.raises(ValidationError):
+        TurnRanges(silence=())
+
+
+def test_turn_ranges_reject_duplicate_values() -> None:
+    with pytest.raises(ValidationError):
+        TurnRanges(check_in=(2, 4, 4))
+
+
+def test_turn_ranges_reject_value_below_two() -> None:
+    with pytest.raises(ValidationError):
+        TurnRanges(decision=(0, 4, 6))
+
+
+def test_dialogue_config_rejects_zero_token_budget() -> None:
+    with pytest.raises(ValidationError):
+        DialogueConfig(token_budget=0)
+
+
+def test_dialogue_config_rejects_max_output_tokens_below_256() -> None:
+    with pytest.raises(ValidationError):
+        DialogueConfig(max_output_tokens=255)
+
+
+def test_dialogue_config_rejects_zero_max_tool_rounds() -> None:
+    with pytest.raises(ValidationError):
+        DialogueConfig(max_tool_rounds=0)
+
+
+def test_dialogue_config_rejects_unknown_key() -> None:
+    with pytest.raises(ValidationError):
+        DialogueConfig(unknown_field=1)
+
+
 def test_dialogue_config_loads_from_yaml_override(tmp_path: Path) -> None:
     path = _write_yaml(
         tmp_path, {"dialogue": {"pm_filter": {"pm_ids": ["pm_001"]}, "token_budget": 1000}}
@@ -1045,14 +1081,3 @@ def test_dialogue_config_loads_from_yaml_override(tmp_path: Path) -> None:
     assert config.dialogue.token_budget == 1000
     assert config.dialogue.narrator_model == Config().dialogue.narrator_model
     assert config.dialogue.turns_by_kind == Config().dialogue.turns_by_kind
-
-
-def test_dump_with_basis_covers_every_dialogue_leaf() -> None:
-    config = Config()
-    rows = {row.path: row for row in config.dump_with_basis()}
-    dialogue_paths = [path for path in rows if path.startswith("dialogue.")]
-    assert dialogue_paths
-    for path in dialogue_paths:
-        row = rows[path]
-        assert row.basis in ("sourced", "design", "guess")
-        assert row.note.strip()

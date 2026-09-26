@@ -1898,19 +1898,35 @@ class PmFilter(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     split: Split | None = Field(
-        None, json_schema_extra={"basis": "design", "note": "restrict to one split, or all"}
+        None,
+        json_schema_extra={
+            "basis": "design",
+            "note": "restrict to one split so a first run can measure cost before scaling up",
+        },
     )
     typicality: Typicality | None = Field(
         None,
-        json_schema_extra={"basis": "design", "note": "restrict to one typicality, or all"},
+        json_schema_extra={
+            "basis": "design",
+            "note": "restrict to one typicality so a first run can measure cost before scaling up",
+        },
     )
     drift: DriftStatus | None = Field(
         None,
-        json_schema_extra={"basis": "design", "note": "restrict to drift status, or all"},
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "restrict to static or drift PMs, so narration can go static pilot PMs "
+                "first, then drift PMs once dialogue recovery is checked"
+            ),
+        },
     )
     pm_ids: tuple[str, ...] = Field(
         (),
-        json_schema_extra={"basis": "design", "note": "restrict to named PMs, or all when empty"},
+        json_schema_extra={
+            "basis": "design",
+            "note": "restrict to a few named PMs so a first run can measure cost before scaling up",
+        },
     )
 
 
@@ -1930,7 +1946,10 @@ class DialogueConfig(BaseModel):
         "claude-opus-5-5",
         json_schema_extra={
             "basis": "design",
-            "note": "one advisor model so advisor turns stay comparable across sessions",
+            "note": (
+                "same model as the narrator, so one API behaviour to handle; the two "
+                "sides differ by prompt and inputs"
+            ),
         },
     )
     effort: Effort = Field(
