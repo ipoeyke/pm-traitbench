@@ -151,4 +151,11 @@ class AnthropicClient:
                 raise DialogueError(_NO_CREDENTIALS_MESSAGE) from e
             except anthropic.BadRequestError as e:
                 raise DialogueError(e.message) from e
+            except TypeError as e:
+                # With nothing configured, the SDK signals missing credentials with a bare
+                # TypeError at request time (header resolution runs before any network call).
+                raise DialogueError(
+                    f"could not resolve Anthropic credentials: run `ant auth login` or set "
+                    f"ANTHROPIC_API_KEY ({e})"
+                ) from e
         return message.to_dict()

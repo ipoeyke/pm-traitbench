@@ -7,10 +7,21 @@ from pathlib import Path
 import pytest
 
 from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, request_key
-from pm_traitbench.errors import DialogueBudgetError
+from pm_traitbench.errors import DialogueBudgetError, DialogueError
 from tests.dialogue.conftest import FakeClient, default_responder, fake_message, turn_text
 
 _REQUEST = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
+
+_CREDENTIAL_ENV_VARS = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_PROFILE",
+    "ANTHROPIC_CONFIG_DIR",
+    "ANTHROPIC_FEDERATION_RULE_ID",
+    "ANTHROPIC_ORGANIZATION_ID",
+    "ANTHROPIC_IDENTITY_TOKEN",
+    "ANTHROPIC_IDENTITY_TOKEN_FILE",
+)
 
 
 def _failing_factory() -> FakeClient:
@@ -136,3 +147,24 @@ def test_fresh_totals_exclude_cache_hits(tmp_path: Path) -> None:
 def test_anthropic_client_defers_construction_until_the_first_send() -> None:
     client = AnthropicClient(max_concurrency=2)
     assert client._client is None
+
+
+def test_anthropic_client_reports_missing_credentials_as_a_dialogue_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No credentials, no profile pointer file discoverable: the SDK resolves
+    # this at request time (a bare TypeError), never by reaching the network.
+    for name in _CREDENTIAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    client = AnthropicClient(max_concurrency=1)
+    minimal_request = {
+        "model": "claude-opus-5-5",
+        "max_tokens": 10,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+    with pytest.raises(DialogueError, match="ant auth login"):
+        asyncio.run(client.send(minimal_request))
