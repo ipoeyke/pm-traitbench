@@ -3,10 +3,12 @@ from memory.
 
 `MarketLookup` indexes one seed's stage 2 market tables (prices, curves,
 consensus, calendar) for the five `AdvisorTool` lookups. `run_tool` dispatches
-one tool call and never raises: a bad tool name, unknown instrument, empty
-result or out-of-range window all come back as an error `ToolOutcome`. No
-lookup returns a row dated after the session date, except a calendar's own
-future-scheduled rows, whose surprise is masked rather than omitted.
+one tool call and never raises: every handler validates its own input first
+(missing keys, wrong types, out-of-range windows), so a bad tool name,
+unknown instrument or malformed argument all come back as an error
+`ToolOutcome` rather than an exception. No lookup returns a row dated after
+the session date, except a calendar's own future-scheduled rows, whose
+surprise is masked rather than omitted.
 """
 
 import bisect
@@ -23,6 +25,7 @@ from pm_traitbench.tables.schema import CalendarEvent, ConsensusRow, CurvePoint,
 _MAX_CLOSE_MATCHES = 5
 _WINDOW_MIN, _WINDOW_MAX = 0, 20
 _HISTORY_MIN, _HISTORY_MAX = 1, 60
+_CURVE_KINDS = frozenset({InstrumentKind.SOVEREIGN_CURVE, InstrumentKind.COMMODITY})
 
 
 @dataclass(frozen=True)
@@ -64,27 +67,34 @@ class MarketLookup:
         """Build one seed's lookup; rows for other seeds are ignored.
 
         Raises `DialogueError` if a curve row's `curve_id` matches no
-        instrument, since the advisor must never be handed a curve it cannot
-        name back to the PM.
+        instrument, or matches one that is not a sovereign curve or
+        commodity, since the advisor must never be handed a curve it cannot
+        correctly name back to the PM.
         """
         seed_prices = [row for row in prices if row.seed == seed]
         seed_curves = [row for row in curves if row.seed == seed]
         seed_consensus = [row for row in consensus if row.seed == seed]
         seed_calendar = [row for row in calendar if row.seed == seed]
 
-        all_ids = {instrument.instrument_id for instrument in instruments}
+        instrument_by_id = {instrument.instrument_id: instrument for instrument in instruments}
         for curve in seed_curves:
-            if curve.curve_id not in all_ids:
+            instrument = instrument_by_id.get(curve.curve_id)
+            if instrument is None:
                 raise DialogueError(f"curve id '{curve.curve_id}' matches no instrument")
+            if instrument.kind not in _CURVE_KINDS:
+                raise DialogueError(
+                    f"curve id '{curve.curve_id}' names a '{instrument.kind.value}' instrument, "
+                    "expected sovereign_curve or commodity"
+                )
 
         dates = tuple(sorted({row.date for row in seed_prices}))
         covered_ids = {row.instrument_id for row in seed_prices} | {
             row.curve_id for row in seed_curves
         }
         instruments_by_id = {
-            instrument.instrument_id: instrument
-            for instrument in instruments
-            if instrument.instrument_id in covered_ids
+            instrument_id: instrument_by_id[instrument_id]
+            for instrument_id in covered_ids
+            if instrument_id in instrument_by_id
         }
 
         prices_by_instrument: dict[str, list[Price]] = {}
@@ -142,45 +152,82 @@ class MarketLookup:
                 return candidate
         return None
 
-    def _latest_price(self, instrument_id: str, today: date) -> Price | None:
+    def latest_price(self, instrument_id: str, today: date) -> Price | None:
+        """The most recent price row for `instrument_id` on or before `today`, if any."""
         rows = self._prices.get(instrument_id, ())
         idx = bisect.bisect_right(rows, today, key=lambda r: r.date) - 1
         return rows[idx] if idx >= 0 else None
 
-    def _history(self, instrument_id: str, today: date, n_days: int) -> tuple[Price, ...]:
+    def history(self, instrument_id: str, today: date, n_days: int) -> tuple[Price, ...]:
+        """Up to the last `n_days` price rows for `instrument_id` on or before `today`."""
         rows = self._prices.get(instrument_id, ())
         idx = bisect.bisect_right(rows, today, key=lambda r: r.date) - 1
         if idx < 0:
             return ()
         return rows[max(0, idx - n_days + 1) : idx + 1]
 
-    def _latest_consensus(self, instrument_id: str, today: date) -> ConsensusRow | None:
+    def has_curve(self, instrument_id: str) -> bool:
+        """Whether `instrument_id` has any curve row on this seed."""
+        return instrument_id in self._curve_dates
+
+    def curve_on_or_before(
+        self, instrument_id: str, today: date
+    ) -> tuple[date, Mapping[Tenor, float]] | None:
+        """The instrument's curve date and tenor levels on the latest date on or before `today`."""
+        dates = self._curve_dates.get(instrument_id, ())
+        idx = bisect.bisect_right(dates, today) - 1
+        if idx < 0:
+            return None
+        curve_date = dates[idx]
+        return curve_date, self._curve_levels[(instrument_id, curve_date)]
+
+    def has_consensus(self, instrument_id: str) -> bool:
+        """Whether `instrument_id` has any consensus row on this seed."""
+        return instrument_id in self._consensus
+
+    def latest_consensus(self, instrument_id: str, today: date) -> ConsensusRow | None:
+        """The most recent consensus row for `instrument_id` on or before `today`, if any."""
         rows = self._consensus.get(instrument_id, ())
         idx = bisect.bisect_right(rows, today, key=lambda r: r.date) - 1
         return rows[idx] if idx >= 0 else None
 
-    def _latest_curve_date(self, curve_id: str, today: date) -> date | None:
-        dates = self._curve_dates.get(curve_id, ())
-        idx = bisect.bisect_right(dates, today) - 1
-        return dates[idx] if idx >= 0 else None
+    def calendar_events(
+        self, instrument_id: str, today: date, days_back: int, days_forward: int
+    ) -> tuple[CalendarEvent, ...]:
+        """Own and market-wide calendar rows in a trading-day window around `today`.
 
-    def _calendar_window(self, today: date, days_back: int, days_forward: int) -> tuple[date, date]:
-        """Trading-day window spanning `days_back` before through `days_forward` after `today`."""
-        if not self.dates:
-            return today, today
-        idx = bisect.bisect_left(self.dates, today)
-        if idx == len(self.dates) or self.dates[idx] != today:
-            idx = max(0, idx - 1)
-        lo_idx = max(0, idx - days_back)
-        hi_idx = min(len(self.dates) - 1, idx + days_forward)
-        return self.dates[lo_idx], self.dates[hi_idx]
-
-    def _calendar_rows(self, instrument_id: str, lo: date, hi: date) -> tuple[CalendarEvent, ...]:
-        """Own and market-wide calendar rows within `[lo, hi]`, in a deterministic order."""
+        The window spans `days_back` trading days before through
+        `days_forward` trading days after `today` itself. Empty if no
+        trading day in this seed falls in it (e.g. `today` is before every
+        date in the seed and `days_forward` is too small to reach one).
+        """
+        window = self._calendar_window(today, days_back, days_forward)
+        if window is None:
+            return ()
+        lo, hi = window
         own = self._calendar_by_instrument.get(instrument_id, ())
         combined = [row for row in own if lo <= row.date <= hi]
         combined += [row for row in self._calendar_market_wide if lo <= row.date <= hi]
         return tuple(sorted(combined, key=lambda r: (r.date, r.event.value, r.instrument_id or "")))
+
+    def _calendar_window(
+        self, today: date, days_back: int, days_forward: int
+    ) -> tuple[date, date] | None:
+        """Trading-day window including `today`, or None if no trading day falls in it.
+
+        `bisect_left` anchors the back edge and `bisect_right` the forward
+        edge, both directly against `today` (not a shifted anchor), so a
+        `today` that falls on a holiday neither widens the back window nor
+        drops a row dated exactly on `today`.
+        """
+        if not self.dates:
+            return None
+        n = len(self.dates)
+        lo_idx = max(bisect.bisect_left(self.dates, today) - days_back, 0)
+        hi_idx = min(bisect.bisect_right(self.dates, today) - 1 + days_forward, n - 1)
+        if lo_idx > hi_idx:
+            return None
+        return self.dates[lo_idx], self.dates[hi_idx]
 
 
 def _instrument_schema(description: str) -> dict[str, Any]:
@@ -275,6 +322,29 @@ TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
 )
 
 
+def _require_str(tool_input: Mapping[str, Any], key: str) -> str | ToolOutcome:
+    """`tool_input[key]` as a `str`, or an error outcome if missing or the wrong type."""
+    if key not in tool_input:
+        return _error(f"missing required field '{key}'")
+    value = tool_input[key]
+    if not isinstance(value, str):
+        return _error(f"field '{key}' must be a string, got {type(value).__name__}")
+    return value
+
+
+def _require_int(tool_input: Mapping[str, Any], key: str) -> int | ToolOutcome:
+    """`tool_input[key]` as an `int`, or an error outcome if missing or the wrong type.
+
+    `bool` is a subclass of `int` in Python but is never a valid window or count here.
+    """
+    if key not in tool_input:
+        return _error(f"missing required field '{key}'")
+    value = tool_input[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        return _error(f"field '{key}' must be an integer, got {type(value).__name__}")
+    return value
+
+
 def _resolve_or_error(lookup: MarketLookup, instrument: str) -> Instrument | ToolOutcome:
     resolved = lookup.resolve(instrument)
     if resolved is not None:
@@ -290,10 +360,13 @@ def _no_row_error(name: str, today: date) -> ToolOutcome:
 
 
 def _get_quote(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date) -> ToolOutcome:
-    resolved = _resolve_or_error(lookup, tool_input["instrument"])
+    instrument = _require_str(tool_input, "instrument")
+    if isinstance(instrument, ToolOutcome):
+        return instrument
+    resolved = _resolve_or_error(lookup, instrument)
     if isinstance(resolved, ToolOutcome):
         return resolved
-    row = lookup._latest_price(resolved.instrument_id, today)
+    row = lookup.latest_price(resolved.instrument_id, today)
     if row is None:
         return _no_row_error(resolved.name, today)
     return ToolOutcome(
@@ -309,15 +382,18 @@ def _get_quote(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date)
 
 
 def _get_curve(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date) -> ToolOutcome:
-    resolved = _resolve_or_error(lookup, tool_input["instrument"])
+    instrument = _require_str(tool_input, "instrument")
+    if isinstance(instrument, ToolOutcome):
+        return instrument
+    resolved = _resolve_or_error(lookup, instrument)
     if isinstance(resolved, ToolOutcome):
         return resolved
-    if resolved.instrument_id not in lookup._curve_dates:
+    if not lookup.has_curve(resolved.instrument_id):
         return _error(f"'{resolved.name}' has no curve")
-    curve_date = lookup._latest_curve_date(resolved.instrument_id, today)
-    if curve_date is None:
+    found = lookup.curve_on_or_before(resolved.instrument_id, today)
+    if found is None:
         return _no_row_error(resolved.name, today)
-    raw_levels = lookup._curve_levels[(resolved.instrument_id, curve_date)]
+    curve_date, raw_levels = found
     levels = {tenor.value: raw_levels[tenor] for tenor in Tenor if tenor in raw_levels}
     return ToolOutcome(
         result={
@@ -331,12 +407,15 @@ def _get_curve(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date)
 
 
 def _get_consensus(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date) -> ToolOutcome:
-    resolved = _resolve_or_error(lookup, tool_input["instrument"])
+    instrument = _require_str(tool_input, "instrument")
+    if isinstance(instrument, ToolOutcome):
+        return instrument
+    resolved = _resolve_or_error(lookup, instrument)
     if isinstance(resolved, ToolOutcome):
         return resolved
-    if resolved.instrument_id not in lookup._consensus:
+    if not lookup.has_consensus(resolved.instrument_id):
         return _error(f"'{resolved.name}' has no consensus rows")
-    row = lookup._latest_consensus(resolved.instrument_id, today)
+    row = lookup.latest_consensus(resolved.instrument_id, today)
     if row is None:
         return _no_row_error(resolved.name, today)
     return ToolOutcome(
@@ -354,19 +433,25 @@ def _get_consensus(lookup: MarketLookup, tool_input: Mapping[str, Any], today: d
 
 
 def _get_calendar(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date) -> ToolOutcome:
-    days_back = tool_input["days_back"]
-    days_forward = tool_input["days_forward"]
+    instrument = _require_str(tool_input, "instrument")
+    if isinstance(instrument, ToolOutcome):
+        return instrument
+    days_back = _require_int(tool_input, "days_back")
+    if isinstance(days_back, ToolOutcome):
+        return days_back
+    days_forward = _require_int(tool_input, "days_forward")
+    if isinstance(days_forward, ToolOutcome):
+        return days_forward
     if not (_WINDOW_MIN <= days_back <= _WINDOW_MAX):
         return _error(f"days_back must be between {_WINDOW_MIN} and {_WINDOW_MAX}, got {days_back}")
     if not (_WINDOW_MIN <= days_forward <= _WINDOW_MAX):
         return _error(
             f"days_forward must be between {_WINDOW_MIN} and {_WINDOW_MAX}, got {days_forward}"
         )
-    resolved = _resolve_or_error(lookup, tool_input["instrument"])
+    resolved = _resolve_or_error(lookup, instrument)
     if isinstance(resolved, ToolOutcome):
         return resolved
-    lo, hi = lookup._calendar_window(today, days_back, days_forward)
-    rows = lookup._calendar_rows(resolved.instrument_id, lo, hi)
+    rows = lookup.calendar_events(resolved.instrument_id, today, days_back, days_forward)
     events = [
         {
             "date": row.date.isoformat(),
@@ -382,13 +467,18 @@ def _get_calendar(lookup: MarketLookup, tool_input: Mapping[str, Any], today: da
 
 
 def _get_history(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date) -> ToolOutcome:
-    n_days = tool_input["n_days"]
+    instrument = _require_str(tool_input, "instrument")
+    if isinstance(instrument, ToolOutcome):
+        return instrument
+    n_days = _require_int(tool_input, "n_days")
+    if isinstance(n_days, ToolOutcome):
+        return n_days
     if not (_HISTORY_MIN <= n_days <= _HISTORY_MAX):
         return _error(f"n_days must be between {_HISTORY_MIN} and {_HISTORY_MAX}, got {n_days}")
-    resolved = _resolve_or_error(lookup, tool_input["instrument"])
+    resolved = _resolve_or_error(lookup, instrument)
     if isinstance(resolved, ToolOutcome):
         return resolved
-    rows = lookup._history(resolved.instrument_id, today, n_days)
+    rows = lookup.history(resolved.instrument_id, today, n_days)
     if not rows:
         return _no_row_error(resolved.name, today)
     is_credit = resolved.kind == InstrumentKind.CREDIT_ISSUER
@@ -419,11 +509,11 @@ _HANDLERS: dict[str, Callable[[MarketLookup, Mapping[str, Any], date], ToolOutco
 def run_tool(
     lookup: MarketLookup, name: str, tool_input: Mapping[str, Any], today: date
 ) -> ToolOutcome:
-    """Dispatch one advisor tool call; never raises, always returns a `ToolOutcome`."""
+    """Dispatch one advisor tool call; every handler validates its own input, so this never
+    raises for a malformed tool call. A bug elsewhere in the lookup is not caught here and
+    propagates as an exception.
+    """
     handler = _HANDLERS.get(name)
     if handler is None:
         return _error(f"unknown tool '{name}'")
-    try:
-        return handler(lookup, tool_input, today)
-    except (KeyError, TypeError, ValueError) as exc:
-        return _error(f"invalid tool input: {exc}")
+    return handler(lookup, tool_input, today)

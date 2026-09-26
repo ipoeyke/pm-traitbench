@@ -5,10 +5,59 @@ from datetime import date
 import pytest
 
 from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS, MarketLookup, run_tool
-from pm_traitbench.enums import AdvisorTool
+from pm_traitbench.enums import AdvisorTool, EventType, Family, InstrumentKind
 from pm_traitbench.errors import DialogueError
-from pm_traitbench.tables.schema import CurvePoint
-from tests.engine.conftest import fixture_market  # noqa: F401
+from pm_traitbench.tables.schema import CalendarEvent, CurvePoint, Instrument, Price
+
+
+def _mini_calendar_lookup() -> MarketLookup:
+    """A hand-built lookup: 6 trading days (Jan 5-9 and Jan 12 2026, skipping the Jan 10-11
+    weekend) with one earnings event on each day, for exact calendar-window boundary tests.
+    """
+    instrument = Instrument(
+        instrument_id="EQ-TST",
+        family=Family.EQUITIES,
+        kind=InstrumentKind.EQUITY,
+        name="Test Equity",
+        currency="USD",
+        sector="sector_01",
+        rating_band=None,
+        commodity_group=None,
+        duration_years=None,
+        beta=1.0,
+        expiry_rule=None,
+    )
+    days = [
+        date(2026, 1, 5),
+        date(2026, 1, 6),
+        date(2026, 1, 7),
+        date(2026, 1, 8),
+        date(2026, 1, 9),
+        date(2026, 1, 12),
+    ]
+    prices = [
+        Price(seed="T", date=day, instrument_id="EQ-TST", price=100.0, spread_bp=None)
+        for day in days
+    ]
+    calendar = [
+        CalendarEvent(
+            seed="T",
+            date=day,
+            instrument_id="EQ-TST",
+            event=EventType.EARNINGS,
+            surprise=0.1,
+            affected="equities",
+        )
+        for day in days
+    ]
+    return MarketLookup.build(
+        seed="T",
+        instruments=[instrument],
+        prices=prices,
+        curves=[],
+        consensus=[],
+        calendar=calendar,
+    )
 
 
 def test_tool_definitions_are_strict_and_cover_every_advisor_tool():
@@ -63,6 +112,36 @@ def test_get_quote_returns_spread_for_credit_issuer(
     assert outcome.result["spread_bp"] == expected.spread_bp
 
 
+def test_get_quote_with_none_instrument_is_an_error(
+    market_lookup: MarketLookup, fixture_market: dict
+):
+    today = fixture_market["dates"][0]
+
+    outcome = run_tool(market_lookup, "get_quote", {"instrument": None}, today)
+
+    assert outcome.is_error is True
+
+
+def test_get_quote_with_integer_instrument_is_an_error(
+    market_lookup: MarketLookup, fixture_market: dict
+):
+    today = fixture_market["dates"][0]
+
+    outcome = run_tool(market_lookup, "get_quote", {"instrument": 5}, today)
+
+    assert outcome.is_error is True
+
+
+def test_get_quote_missing_instrument_key_is_an_error(
+    market_lookup: MarketLookup, fixture_market: dict
+):
+    today = fixture_market["dates"][0]
+
+    outcome = run_tool(market_lookup, "get_quote", {}, today)
+
+    assert outcome.is_error is True
+
+
 def test_get_history_never_returns_rows_after_today(
     market_lookup: MarketLookup, fixture_market: dict
 ):
@@ -91,6 +170,44 @@ def test_get_history_field_is_spread_bp_for_credit_issuer(
     assert outcome.result["field"] == "spread_bp"
 
 
+def test_get_history_with_bool_n_days_is_an_error(
+    market_lookup: MarketLookup, fixture_market: dict
+):
+    today = fixture_market["dates"][30]
+
+    outcome = run_tool(
+        market_lookup, "get_history", {"instrument": "EQ-0001", "n_days": True}, today
+    )
+
+    assert outcome.is_error is True
+
+
+@pytest.mark.parametrize("n_days", [0, 61])
+def test_history_bounds_reject_out_of_range_values(
+    market_lookup: MarketLookup, fixture_market: dict, n_days: int
+):
+    today = fixture_market["dates"][30]
+
+    outcome = run_tool(
+        market_lookup, "get_history", {"instrument": "EQ-0001", "n_days": n_days}, today
+    )
+
+    assert outcome.is_error is True
+
+
+@pytest.mark.parametrize("n_days", [1, 60])
+def test_history_bounds_accept_inclusive_edges(
+    market_lookup: MarketLookup, fixture_market: dict, n_days: int
+):
+    today = fixture_market["dates"][30]
+
+    outcome = run_tool(
+        market_lookup, "get_history", {"instrument": "EQ-0001", "n_days": n_days}, today
+    )
+
+    assert outcome.is_error is False
+
+
 def test_get_curve_returns_tenors_in_order(market_lookup: MarketLookup, fixture_market: dict):
     today = fixture_market["dates"][7]
 
@@ -111,6 +228,20 @@ def test_get_curve_on_instrument_with_no_curve_is_an_error(
     assert "curve" in outcome.result["error"]
 
 
+def test_get_curve_never_returns_a_date_after_today(
+    market_lookup: MarketLookup, fixture_market: dict
+):
+    dates = fixture_market["dates"]
+    today = dates[7]
+
+    outcome = run_tool(market_lookup, "get_curve", {"instrument": "RT-USD"}, today)
+
+    assert outcome.is_error is False
+    result_date = date.fromisoformat(outcome.result["date"])
+    assert result_date == today
+    assert result_date != dates[-1]
+
+
 def test_get_consensus_with_no_rows_is_an_error(market_lookup: MarketLookup, fixture_market: dict):
     today = fixture_market["dates"][0]
 
@@ -118,6 +249,20 @@ def test_get_consensus_with_no_rows_is_an_error(market_lookup: MarketLookup, fix
 
     assert outcome.is_error is True
     assert "consensus" in outcome.result["error"]
+
+
+def test_get_consensus_never_returns_a_date_after_today(
+    market_lookup: MarketLookup, fixture_market: dict
+):
+    dates = fixture_market["dates"]
+    today = dates[7]
+
+    outcome = run_tool(market_lookup, "get_consensus", {"instrument": "EQ-0001"}, today)
+
+    assert outcome.is_error is False
+    result_date = date.fromisoformat(outcome.result["date"])
+    assert result_date == today
+    assert result_date != dates[-1]
 
 
 def test_get_calendar_hides_surprise_on_future_rows(
@@ -140,6 +285,112 @@ def test_get_calendar_hides_surprise_on_future_rows(
     assert events[(dates[25].isoformat(), "macro_print")] == 0.4
 
 
+def test_get_calendar_with_string_days_back_is_an_error(
+    market_lookup: MarketLookup, fixture_market: dict
+):
+    today = fixture_market["dates"][30]
+
+    outcome = run_tool(
+        market_lookup,
+        "get_calendar",
+        {"instrument": "EQ-0001", "days_back": "5", "days_forward": 0},
+        today,
+    )
+
+    assert outcome.is_error is True
+
+
+@pytest.mark.parametrize("days_back,days_forward", [(-1, 0), (0, -1), (21, 0), (0, 21)])
+def test_calendar_window_bounds_reject_out_of_range_values(
+    market_lookup: MarketLookup, fixture_market: dict, days_back: int, days_forward: int
+):
+    today = fixture_market["dates"][30]
+
+    outcome = run_tool(
+        market_lookup,
+        "get_calendar",
+        {"instrument": "EQ-0001", "days_back": days_back, "days_forward": days_forward},
+        today,
+    )
+
+    assert outcome.is_error is True
+
+
+@pytest.mark.parametrize("days_back,days_forward", [(0, 0), (20, 20)])
+def test_calendar_window_bounds_accept_inclusive_edges(
+    market_lookup: MarketLookup, fixture_market: dict, days_back: int, days_forward: int
+):
+    today = fixture_market["dates"][30]
+
+    outcome = run_tool(
+        market_lookup,
+        "get_calendar",
+        {"instrument": "EQ-0001", "days_back": days_back, "days_forward": days_forward},
+        today,
+    )
+
+    assert outcome.is_error is False
+
+
+def test_get_calendar_on_a_holiday_today_does_not_widen_the_back_window():
+    lookup = _mini_calendar_lookup()
+    holiday = date(2026, 1, 10)  # Saturday: not a trading day
+
+    outcome = run_tool(
+        lookup, "get_calendar", {"instrument": "EQ-TST", "days_back": 1, "days_forward": 0}, holiday
+    )
+
+    assert outcome.is_error is False
+    assert [e["date"] for e in outcome.result["events"]] == [date(2026, 1, 9).isoformat()]
+
+
+def test_get_calendar_on_a_holiday_today_does_not_drop_same_day_rows():
+    lookup = _mini_calendar_lookup()
+    holiday = date(2026, 1, 10)
+
+    outcome = run_tool(
+        lookup, "get_calendar", {"instrument": "EQ-TST", "days_back": 0, "days_forward": 1}, holiday
+    )
+
+    assert outcome.is_error is False
+    assert [e["date"] for e in outcome.result["events"]] == [date(2026, 1, 12).isoformat()]
+
+
+def test_get_calendar_on_a_holiday_today_with_no_window_is_empty():
+    lookup = _mini_calendar_lookup()
+    holiday = date(2026, 1, 10)
+
+    outcome = run_tool(
+        lookup, "get_calendar", {"instrument": "EQ-TST", "days_back": 0, "days_forward": 0}, holiday
+    )
+
+    assert outcome.is_error is False
+    assert outcome.result["events"] == []
+
+
+def test_get_calendar_today_before_the_first_date_only_looks_forward():
+    lookup = _mini_calendar_lookup()
+    before_start = date(2026, 1, 1)
+
+    empty = run_tool(
+        lookup,
+        "get_calendar",
+        {"instrument": "EQ-TST", "days_back": 3, "days_forward": 0},
+        before_start,
+    )
+    assert empty.is_error is False
+    assert empty.result["events"] == []
+
+    forward = run_tool(
+        lookup,
+        "get_calendar",
+        {"instrument": "EQ-TST", "days_back": 0, "days_forward": 1},
+        before_start,
+    )
+    assert forward.is_error is False
+    assert [e["date"] for e in forward.result["events"]] == [date(2026, 1, 5).isoformat()]
+
+
 def test_no_row_on_or_before_today_is_an_error(market_lookup: MarketLookup):
     outcome = run_tool(market_lookup, "get_quote", {"instrument": "EQ-0001"}, date(2020, 1, 1))
 
@@ -158,31 +409,11 @@ def test_unknown_instrument_is_an_error_listing_close_names(
     assert "Equity 0001" in outcome.result["error"]
 
 
-def test_out_of_range_window_is_an_error(market_lookup: MarketLookup, fixture_market: dict):
-    today = fixture_market["dates"][30]
-
-    outcome = run_tool(
-        market_lookup,
-        "get_calendar",
-        {"instrument": "EQ-0001", "days_back": 21, "days_forward": 0},
-        today,
-    )
-
-    assert outcome.is_error is True
-
-
-def test_n_days_out_of_range_is_an_error(market_lookup: MarketLookup, fixture_market: dict):
-    today = fixture_market["dates"][30]
-
-    outcome = run_tool(market_lookup, "get_history", {"instrument": "EQ-0001", "n_days": 61}, today)
-
-    assert outcome.is_error is True
-
-
 def test_unknown_tool_name_is_an_error(market_lookup: MarketLookup, fixture_market: dict):
     outcome = run_tool(market_lookup, "get_weather", {}, fixture_market["dates"][0])
 
     assert outcome.is_error is True
+    assert "get_weather" in outcome.result["error"]
 
 
 def test_build_raises_dialogue_error_for_curve_id_with_no_instrument(fixture_market: dict):
@@ -191,6 +422,22 @@ def test_build_raises_dialogue_error_for_curve_id_with_no_instrument(fixture_mar
     )
 
     with pytest.raises(DialogueError, match="NOPE"):
+        MarketLookup.build(
+            seed="T",
+            instruments=fixture_market["instruments"],
+            prices=fixture_market["prices"],
+            curves=[*fixture_market["curves"], stray_curve],
+            consensus=fixture_market["consensus"],
+            calendar=fixture_market["calendar"],
+        )
+
+
+def test_build_raises_dialogue_error_for_curve_id_naming_the_wrong_kind(fixture_market: dict):
+    stray_curve = CurvePoint(
+        seed="T", date=fixture_market["dates"][0], curve_id="EQ-0001", tenor="2Y", level=1.0
+    )
+
+    with pytest.raises(DialogueError, match="EQ-0001"):
         MarketLookup.build(
             seed="T",
             instruments=fixture_market["instruments"],
