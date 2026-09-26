@@ -20,6 +20,7 @@ uv run pm-traitbench market --config configs/demo.yaml --data-dir data
 uv run pm-traitbench engine --config configs/demo.yaml --data-dir data
 uv run pm-traitbench gate1 --config configs/demo.yaml --data-dir data
 uv run pm-traitbench plan --config configs/demo.yaml --data-dir data
+uv run pm-traitbench dialogue --config configs/demo.yaml --data-dir data
 ```
 
 The `sample` stage writes four tables to `data`: `personas`, `traits`,
@@ -44,8 +45,10 @@ non-report-only parameter, pooled over every direct asset class of the
 synthetic seeds. Per-class and report-only rows are judged but never block.
 Both tables and its run metadata land on disk either way. The `plan` stage
 plants trait signals on dated sessions and writes `signals` and `skeletons`,
-never blocking on a shortfall. Pass `--force` to overwrite a table that
-already exists. Run `uv run pm-traitbench --help` for the full command list.
+never blocking on a shortfall. The `dialogue` stage narrates every planted
+session and writes `sessions` and the hidden `dialogue_logs`. Pass `--force`
+to overwrite a table that already exists. Run `uv run pm-traitbench --help`
+for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
 market seed, as the default and demo configs both do for their pilot seed;
@@ -545,6 +548,45 @@ than `plan.drift_min_per_side`, or the session cap that could not be met for
 lack of free trading days are all warnings in `run_metadata/plan.json`, in
 PM order. Multi-asset PMs are skipped, the same PMs the engine stage already
 skipped, and are listed under `skipped` in the plan's own run metadata.
+
+## Dialogue
+
+The `dialogue` stage reads `personas`, `rules`, `traits`, `drift_events`, the
+engine's `ideas`, `ledger` and `position_days`, the plan's `skeletons`, and
+the market's `instruments`, `prices`, `curves`, `consensus` and `calendar`,
+plus the plan's run metadata for the PMs it must skip. It narrates every
+skeleton into a two-agent session and writes two tables: `sessions`, the
+public transcript of text-only turns, and `dialogue_logs`, a hidden table
+carrying each turn's voice, its directive, its `mentions`, any tool calls,
+the model that produced it, the cache keys of the requests behind it, and
+its token usage.
+
+Both agents are `claude-opus-5-5` at low reasoning effort. The advisor
+never sees the PM's persona, rules, ideas or plan; it reads market data only
+through five tools, each capped to dates on or before the session's own
+date, so it can never state a fact from memory or from the future. The
+narrator is one model across every PM, so no model choice can leak a
+signal; each PM instead draws one voice, independently of every trait and
+preference, that colours every session it narrates. Each session's turn
+count is drawn per session kind and then raised just enough to fit every
+stance the skeleton schedules; a stance, an opening line or a scripted
+advisor violation reaches the narrator as a system message partway through
+the conversation, never folded into the first turn.
+
+Every request goes through a response cache under `<data-dir>/cache/llm/`,
+keyed on the full request body, which doubles as the run's resume manifest:
+a crash, a rejected reply or widening `dialogue.pm_filter` to cover more PMs
+is a rerun with `--force` that only calls the API for the turns still
+missing from the cache. Credentials (`ant auth login` or
+`ANTHROPIC_API_KEY`) are needed only on a cache miss, so a fully cached
+rerun works offline. The advisor's system prompt is
+`src/pm_traitbench/catalogues/advisor_prompt.md` unless
+`dialogue.advisor_prompt_path` names another file. Like every other stage,
+it writes both tables or neither. Before a full run, measure cost with
+`dialogue.pm_filter` restricted to 2-3 PMs and set `dialogue.token_budget`
+to cap spend. Checking whether a session actually holds up (its `mentions`
+against the ledger, leakage, forbidden traits) is a later stage's job, not
+this one's.
 
 ## Development
 
