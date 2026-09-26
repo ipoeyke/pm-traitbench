@@ -753,6 +753,17 @@ def _session_prefix(pm_id: str, date: datetime.date) -> str:
     return f"{_session_pm_prefix(pm_id)}{date.isoformat()}_"
 
 
+def _check_idea_id_tuple(trade_idea_ids: tuple[str, ...]) -> None:
+    """Raise unless every id matches the idea-id pattern and the tuple is sorted and unique."""
+    for trade_idea_id in trade_idea_ids:
+        if not _IDEA_ID_RE.fullmatch(trade_idea_id):
+            raise ValueError(
+                f"trade_idea_ids must match {_IDEA_ID_PATTERN!r}, got '{trade_idea_id}'"
+            )
+    if list(trade_idea_ids) != sorted(set(trade_idea_ids)):
+        raise ValueError("trade_idea_ids must be sorted and unique")
+
+
 def _session_date(session_id: str) -> datetime.date:
     """Parse the YYYY-MM-DD segment out of a session id."""
     return datetime.date.fromisoformat(session_id.split("_")[2])
@@ -897,20 +908,14 @@ class Skeleton(BaseModel):
 
     @model_validator(mode="after")
     def _check_trade_idea_ids(self) -> "Skeleton":
-        for trade_idea_id in self.trade_idea_ids:
-            if not _IDEA_ID_RE.fullmatch(trade_idea_id):
-                raise ValueError(
-                    f"trade_idea_ids must match {_IDEA_ID_PATTERN!r}, got '{trade_idea_id}'"
-                )
-        if list(self.trade_idea_ids) != sorted(set(self.trade_idea_ids)):
-            raise ValueError("trade_idea_ids must be sorted and unique")
+        _check_idea_id_tuple(self.trade_idea_ids)
         return self
 
 
 _REQUEST_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
-def _check_turns_alternate(turns: tuple) -> None:
+def _check_turns_alternate(turns: "tuple[Turn, ...] | tuple[TurnLog, ...]") -> None:
     """Raise unless turns has an even length in [2, 8] and alternates pm, advisor, pm, ..."""
     if len(turns) % 2 != 0 or not (2 <= len(turns) <= 8):
         raise ValueError("turns must have an even length between 2 and 8")
@@ -942,7 +947,9 @@ class Session(BaseModel):
     )
     date: datetime.date = Field(description="Date of the session.")
     kind: SessionKind = Field(description="Kind of session.")
-    trade_idea_ids: tuple[str, ...] = Field(description="Trade ideas raised in the session.")
+    trade_idea_ids: tuple[str, ...] = Field(
+        description="Trade ideas raised in the session, sorted and unique."
+    )
     turns: tuple[Turn, ...] = Field(description="The session's public transcript.")
 
     @model_validator(mode="after")
@@ -956,6 +963,11 @@ class Session(BaseModel):
         _check_turns_alternate(self.turns)
         return self
 
+    @model_validator(mode="after")
+    def _check_trade_idea_ids(self) -> "Session":
+        _check_idea_id_tuple(self.trade_idea_ids)
+        return self
+
 
 class Mention(BaseModel):
     """A single trade or market level mentioned in a turn."""
@@ -965,7 +977,7 @@ class Mention(BaseModel):
     kind: MentionKind = Field(description="Whether the mention is a trade or a market level.")
     instrument_id: str = Field(description="Instrument the mention refers to.")
     trade_idea_id: str | None = Field(
-        description="Trade idea mentioned; set only for a trade mention."
+        pattern=_IDEA_ID_PATTERN, description="Trade idea mentioned; set only for a trade mention."
     )
     tenor: Tenor | None = Field(description="Tenor mentioned, if any.")
     side: Side | None = Field(description="Side mentioned; set only for a trade mention.")
@@ -994,8 +1006,18 @@ class ToolCall(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: AdvisorTool = Field(description="Tool invoked.")
-    input: dict[str, Any] = Field(description="Input the tool was called with.")
-    result: dict[str, Any] = Field(description="Result the tool returned.")
+    input_json: str = Field(
+        description=(
+            "Tool call input, as canonical JSON: "
+            "json.dumps(value, sort_keys=True, separators=(',', ':'))."
+        )
+    )
+    result_json: str = Field(
+        description=(
+            "Tool call result, as canonical JSON: "
+            "json.dumps(value, sort_keys=True, separators=(',', ':'))."
+        )
+    )
     is_error: bool = Field(description="Whether the tool call resulted in an error.")
 
 
@@ -1041,6 +1063,12 @@ class TurnLog(BaseModel):
                 )
         return self
 
+    @model_validator(mode="after")
+    def _check_pm_turn(self) -> "TurnLog":
+        if self.role == TurnRole.PM and (self.tool_calls != () or self.scripted_violation):
+            raise ValueError("pm turn requires empty tool_calls and scripted_violation False")
+        return self
+
 
 class DialogueLog(BaseModel):
     """The hidden per-turn log of a session: voice, mentions, tool use and call metadata."""
@@ -1065,6 +1093,13 @@ class DialogueLog(BaseModel):
     @model_validator(mode="after")
     def _check_turns(self) -> "DialogueLog":
         _check_turns_alternate(self.turns)
+        return self
+
+    @model_validator(mode="after")
+    def _check_scripted_violation_count(self) -> "DialogueLog":
+        count = sum(turn.scripted_violation for turn in self.turns)
+        if count > 1:
+            raise ValueError("at most one turn may have scripted_violation True")
         return self
 
 

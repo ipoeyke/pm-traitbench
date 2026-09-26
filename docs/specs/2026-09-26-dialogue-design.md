@@ -126,7 +126,7 @@ Opening instruction by kind, when turn 1 carries no stance that already sets the
 | Table | Key | Columns | Visibility |
 |---|---|---|---|
 | `sessions` | `(pm_id, session_id)` | `date, kind, trade_idea_ids, turns` (tuple of `{role, text}`, `role` in `pm`, `advisor`) | Public (plan section 8) |
-| `dialogue_logs` | `(pm_id, session_id)` | `voice_id, turns`: one entry per turn with `role, text, mentions, directive` (the stance or violation line carried, or null), `scripted_violation` (bool), `tool_calls` (tuple of `{name, input, result, is_error}`), `model, request_hashes, usage` | Hidden in full; added to `HIDDEN_COLUMNS` |
+| `dialogue_logs` | `(pm_id, session_id)` | `voice_id, turns`: one entry per turn with `role, text, mentions, directive` (the stance or violation line carried, or null), `scripted_violation` (bool), `tool_calls` (tuple of `{name, input_json, result_json, is_error}`, input and result as canonical JSON strings so the table writes as parquet too), `model, request_hashes, usage` | Hidden in full; added to `HIDDEN_COLUMNS` |
 
 `session_id`, `date`, `kind` and `trade_idea_ids` are copied from the skeleton. The stage checks one `sessions` row and one `dialogue_logs` row per skeleton in the filtered PM set before writing.
 

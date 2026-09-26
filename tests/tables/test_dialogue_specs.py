@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from pm_traitbench.config import OutputConfig
-from pm_traitbench.enums import MentionKind, SessionKind, Side, TurnRole
+from pm_traitbench.enums import AdvisorTool, MentionKind, SessionKind, Side, TurnRole
 from pm_traitbench.tables.schema import (
     CallUsage,
     DialogueLog,
@@ -52,6 +52,17 @@ def _usage(**overrides: object) -> CallUsage:
     }
     fields.update(overrides)
     return CallUsage(**fields)
+
+
+def _tool_call(**overrides: object) -> ToolCall:
+    fields = {
+        "name": AdvisorTool.GET_QUOTE,
+        "input_json": '{"instrument":"EQ-001"}',
+        "result_json": '{"price":100.0}',
+        "is_error": False,
+    }
+    fields.update(overrides)
+    return ToolCall(**fields)
 
 
 def _turn_log(**overrides: object) -> TurnLog:
@@ -175,10 +186,16 @@ def test_dialogue_logs_is_hidden_in_full() -> None:
     assert "sessions" not in HIDDEN_COLUMNS
 
 
-def test_session_round_trips_through_the_store(tmp_path: Path) -> None:
-    store = DataStore(tmp_path, OutputConfig(format="jsonl"))
+@pytest.mark.parametrize("format_name", ["jsonl", "parquet"])
+def test_session_round_trips_through_the_store(tmp_path: Path, format_name: str) -> None:
+    store = DataStore(tmp_path, OutputConfig(format=format_name))
     session = _session()
-    dialogue_log = _dialogue_log()
+    dialogue_log = _dialogue_log(
+        turns=(
+            _turn_log(role=TurnRole.PM),
+            _turn_log(role=TurnRole.ADVISOR, tool_calls=(_tool_call(),)),
+        )
+    )
     store.write(SESSIONS, [session])
     store.write(DIALOGUE_LOGS, [dialogue_log])
     assert store.read(SESSIONS) == [session]
@@ -186,13 +203,116 @@ def test_session_round_trips_through_the_store(tmp_path: Path) -> None:
 
 
 def test_tool_call_and_dialogue_log_build() -> None:
-    tool_call = ToolCall(
-        name="get_quote", input={"instrument": "EQ-001"}, result={"price": 100.0}, is_error=False
-    )
+    tool_call = _tool_call()
     log = _dialogue_log(
         turns=(
             _turn_log(role=TurnRole.PM),
             _turn_log(role=TurnRole.ADVISOR, tool_calls=(tool_call,)),
         )
     )
-    assert log.turns[1].tool_calls[0].name == "get_quote"
+    assert log.turns[1].tool_calls[0].name == AdvisorTool.GET_QUOTE
+
+
+def test_dialogue_log_rejects_session_id_of_another_pm() -> None:
+    with pytest.raises(ValidationError):
+        _dialogue_log(session_id="s_pm002_2026-03-02_a")
+
+
+def test_dialogue_log_rejects_odd_turn_count() -> None:
+    with pytest.raises(ValidationError):
+        _dialogue_log(
+            turns=(
+                _turn_log(role=TurnRole.PM),
+                _turn_log(role=TurnRole.ADVISOR),
+                _turn_log(role=TurnRole.PM),
+            )
+        )
+
+
+def test_dialogue_log_rejects_more_than_eight_turns() -> None:
+    turns = tuple(
+        _turn_log(role=TurnRole.PM if i % 2 == 0 else TurnRole.ADVISOR) for i in range(10)
+    )
+    with pytest.raises(ValidationError):
+        _dialogue_log(turns=turns)
+
+
+def test_dialogue_log_rejects_turns_not_alternating_from_pm() -> None:
+    with pytest.raises(ValidationError):
+        _dialogue_log(
+            turns=(
+                _turn_log(role=TurnRole.ADVISOR),
+                _turn_log(role=TurnRole.PM),
+            )
+        )
+
+
+def test_turn_log_request_hashes_rejects_non_hex() -> None:
+    with pytest.raises(ValidationError):
+        _turn_log(request_hashes=("g" * 64,))
+
+
+def test_turn_log_request_hashes_rejects_uppercase() -> None:
+    with pytest.raises(ValidationError):
+        _turn_log(request_hashes=("A" * 64,))
+
+
+def test_turn_log_request_hashes_rejects_empty_tuple() -> None:
+    with pytest.raises(ValidationError):
+        _turn_log(request_hashes=())
+
+
+def test_session_rejects_zero_turns() -> None:
+    with pytest.raises(ValidationError):
+        _session(turns=())
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"],
+)
+def test_call_usage_rejects_negative_values(field: str) -> None:
+    with pytest.raises(ValidationError):
+        _usage(**{field: -1})
+
+
+def test_turn_log_pm_turn_forbids_tool_calls() -> None:
+    with pytest.raises(ValidationError):
+        _turn_log(role=TurnRole.PM, tool_calls=(_tool_call(),))
+
+
+def test_turn_log_pm_turn_forbids_scripted_violation() -> None:
+    with pytest.raises(ValidationError):
+        _turn_log(role=TurnRole.PM, scripted_violation=True)
+
+
+def test_dialogue_log_rejects_more_than_one_scripted_violation() -> None:
+    with pytest.raises(ValidationError):
+        _dialogue_log(
+            turns=(
+                _turn_log(role=TurnRole.PM),
+                _turn_log(role=TurnRole.ADVISOR, scripted_violation=True),
+                _turn_log(role=TurnRole.PM),
+                _turn_log(role=TurnRole.ADVISOR, scripted_violation=True),
+            )
+        )
+
+
+def test_session_rejects_unsorted_trade_idea_ids() -> None:
+    with pytest.raises(ValidationError):
+        _session(trade_idea_ids=("ti_002", "ti_001"))
+
+
+def test_session_rejects_duplicate_trade_idea_ids() -> None:
+    with pytest.raises(ValidationError):
+        _session(trade_idea_ids=("ti_001", "ti_001"))
+
+
+def test_session_rejects_trade_idea_id_failing_pattern() -> None:
+    with pytest.raises(ValidationError):
+        _session(trade_idea_ids=("bad_id",))
+
+
+def test_mention_trade_idea_id_must_match_pattern() -> None:
+    with pytest.raises(ValidationError):
+        _mention(kind=MentionKind.TRADE, trade_idea_id="bad_id")
