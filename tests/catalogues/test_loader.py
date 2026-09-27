@@ -752,7 +752,7 @@ def test_bias_labels_empty_list_raises(tmp_path: Path) -> None:
     data["labels"]["exit_deficiency"] = []
     _dump_yaml(path, data)
     catalogue = load_catalogue(tmp_path)
-    with pytest.raises(CatalogueError, match="exit_deficiency"):
+    with pytest.raises(CatalogueError, match="exit_deficiency.*no phrases"):
         check_validate_catalogue(catalogue)
 
 
@@ -784,6 +784,16 @@ def test_bias_labels_param_string_as_phrase_raises(tmp_path: Path) -> None:
     catalogue = load_catalogue(tmp_path)
     with pytest.raises(CatalogueError, match="disposition ratio"):
         check_validate_catalogue(catalogue)
+
+
+def test_bias_labels_own_param_spaced_form_is_allowed(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_labels.yaml"
+    data = _load_yaml(path)
+    data["labels"]["anchoring_rho"].append("anchoring rho")
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    check_validate_catalogue(catalogue)
 
 
 def test_bias_labels_upper_case_phrase_raises(tmp_path: Path) -> None:
