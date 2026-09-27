@@ -132,7 +132,7 @@ Validators: `status == pass` iff all `*_ok` are true; `reasons` non-empty iff `s
 - Missing inputs or `run_metadata/dialogue.json`: `StageIOError` / `ValidateError` before any call.
 - Budget exhaustion: `DialogueBudgetError` wins over other failures; nothing written.
 - Judge or narrator API failure past retries: `ValidateError` naming the session ids, grouped by reason; nothing written.
-- `validation` exists and no `--force`: refused by `run_stage`. Under `--force` the stage re-validates the current `sessions` rows; attempt numbering restarts at 1.
+- `validation` exists and no `--force`: refused by `run_stage`. Under `--force` the stage re-validates the current `sessions` rows; attempt numbering restarts at 1. A skeleton with no session row was dropped by an earlier run: it is skipped, counted in `dropped_session_ids` and the void-signal keys again, and its rows in the existing `validation` table are carried forward unchanged, so a rerun after drops neither fails nor forgets them.
 
 ## Testing
 
