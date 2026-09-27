@@ -73,3 +73,9 @@ class DialogueBudgetError(DialogueError):
     """Raised when the dialogue stage's fresh-token budget is spent."""
 
     exit_code = 1
+
+
+class ValidateError(PmTraitbenchError):
+    """Raised when the validate stage cannot run or a session cannot be judged or regenerated."""
+
+    exit_code = 1

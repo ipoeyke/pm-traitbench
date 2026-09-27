@@ -295,6 +295,12 @@ class MentionKind(StrEnum):
     LEVEL = "level"
 
 
+class ValidationStatus(StrEnum):
+    PASS = "pass"
+    REGENERATE = "regenerate"
+    DROPPED = "dropped"
+
+
 class DriftStatus(StrEnum):
     STATIC = "static"
     DRIFT = "drift"

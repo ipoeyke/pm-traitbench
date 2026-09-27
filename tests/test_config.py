@@ -21,6 +21,7 @@ from pm_traitbench.config import (
     RealSeedSpec,
     RegimeParams,
     TurnRanges,
+    ValidateConfig,
     load_config,
 )
 from pm_traitbench.distributions import BetaSpec, LogNormalSpec
@@ -1087,3 +1088,26 @@ def test_dialogue_config_loads_from_yaml_override(tmp_path: Path) -> None:
     assert config.dialogue.token_budget == 1000
     assert config.dialogue.narrator_model == Config().dialogue.narrator_model
     assert config.dialogue.turns_by_kind == Config().dialogue.turns_by_kind
+
+
+def test_validate_config_defaults_and_basis() -> None:
+    config = Config().validate
+    assert config.judge_model == "claude-opus-5-5"
+    assert config.effort == Effort.LOW
+    assert config.max_output_tokens == 1000
+    assert config.size_tolerance == 0.05
+    assert config.level_tolerance == 0.01
+    assert config.max_attempts == 3
+    assert config.max_concurrency == 8
+    assert config.token_budget is None
+
+    paths = {row.path for row in Config().dump_with_basis()}
+    for name in ValidateConfig.model_fields:
+        assert f"validate.{name}" in paths
+
+
+def test_validate_config_rejects_out_of_range() -> None:
+    with pytest.raises(ValidationError):
+        ValidateConfig(size_tolerance=1.0)
+    with pytest.raises(ValidationError):
+        ValidateConfig(max_attempts=0)

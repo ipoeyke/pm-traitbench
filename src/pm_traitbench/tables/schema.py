@@ -50,6 +50,7 @@ from pm_traitbench.enums import (
     TurnRole,
     Typicality,
     Valence,
+    ValidationStatus,
 )
 
 __all__ = [
@@ -117,6 +118,7 @@ __all__ = [
     "CallUsage",
     "TurnLog",
     "DialogueLog",
+    "ValidationRow",
     "to_record",
     "multiplier_field",
 ]
@@ -1122,6 +1124,56 @@ class DialogueLog(BaseModel):
         count = sum(turn.scripted_violation for turn in self.turns)
         if count > 1:
             raise ValueError("at most one turn may have scripted_violation True")
+        return self
+
+
+class ValidationRow(BaseModel):
+    """A judged validation outcome for one narrated dialogue session attempt."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM the session belongs to."
+    )
+    session_id: str = Field(pattern=_SESSION_ID_PATTERN, description="Session the row validates.")
+    attempt: int = Field(ge=1, description="Attempt number the row validates, starting at 1.")
+    status: ValidationStatus = Field(description="Overall validation outcome for the attempt.")
+    ledger_ok: bool = Field(
+        description="Whether the session's mentions are consistent with the ledger."
+    )
+    grep_ok: bool = Field(description="Whether the session passed the deterministic grep checks.")
+    leak_judged: bool = Field(description="Whether a judge assessed the session for a trait leak.")
+    leak_ok: bool = Field(description="Whether the session passed the leak check.")
+    forbidden_ok: bool = Field(description="Whether the session avoided its forbidden traits.")
+    level_warnings: int = Field(
+        ge=0, description="Number of level-mention tolerance warnings raised."
+    )
+    reasons: tuple[str, ...] = Field(description="Free-text reasons the attempt did not pass.")
+    judge_model: str = Field(min_length=1, description="Model that judged the attempt.")
+
+    @model_validator(mode="after")
+    def _check_session_id(self) -> "ValidationRow":
+        if not self.session_id.startswith(_session_pm_prefix(self.pm_id)):
+            raise ValueError("session_id must belong to the row's own pm")
+        return self
+
+    @model_validator(mode="after")
+    def _check_status(self) -> "ValidationRow":
+        all_ok = self.ledger_ok and self.grep_ok and self.leak_ok and self.forbidden_ok
+        if (self.status == ValidationStatus.PASS) != all_ok:
+            raise ValueError("status must be 'pass' exactly when every check passes")
+        return self
+
+    @model_validator(mode="after")
+    def _check_reasons(self) -> "ValidationRow":
+        if (self.status != ValidationStatus.PASS) != bool(self.reasons):
+            raise ValueError("reasons must be non-empty exactly when status is not 'pass'")
+        return self
+
+    @model_validator(mode="after")
+    def _check_unjudged_leak(self) -> "ValidationRow":
+        if not self.leak_judged and not self.leak_ok:
+            raise ValueError("leak_ok must be true when leak_judged is false")
         return self
 
 

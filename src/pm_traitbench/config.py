@@ -2015,6 +2015,65 @@ class DialogueConfig(BaseModel):
     pm_filter: PmFilter = Field(default_factory=PmFilter)
 
 
+class ValidateConfig(BaseModel):
+    """Settings for the validate stage: the judge model, tolerances and attempt budget."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    judge_model: str = Field(
+        "claude-opus-5-5",
+        json_schema_extra={
+            "basis": "design",
+            "note": "strongest current model, one judge",
+        },
+    )
+    effort: Effort = Field(
+        Effort.LOW,
+        json_schema_extra={"basis": "design", "note": "a yes/no reading task"},
+    )
+    max_output_tokens: int = Field(
+        1000,
+        gt=0,
+        json_schema_extra={"basis": "design", "note": "two short JSON objects"},
+    )
+    size_tolerance: float = Field(
+        0.05,
+        ge=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "the narrator sees raw floats and may round to a desk-sized figure",
+        },
+    )
+    level_tolerance: float = Field(
+        0.01,
+        ge=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "quoted levels are rounded to display precision",
+        },
+    )
+    max_attempts: int = Field(
+        3,
+        ge=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "one original plus two regenerations, a third failure is a prompt problem",
+        },
+    )
+    max_concurrency: int = Field(
+        8,
+        ge=1,
+        json_schema_extra={"basis": "design", "note": "same as dialogue"},
+    )
+    token_budget: int | None = Field(
+        None,
+        gt=0,
+        json_schema_extra={"basis": "design", "note": "same semantics as dialogue"},
+    )
+
+
 class Config(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -2032,6 +2091,7 @@ class Config(BaseModel):
     gate1: Gate1Config = Field(default_factory=Gate1Config)
     plan: PlanConfig = Field(default_factory=PlanConfig)
     dialogue: DialogueConfig = Field(default_factory=DialogueConfig)
+    validate: ValidateConfig = Field(default_factory=ValidateConfig)
 
     @model_validator(mode="after")
     def _check_week_ranges_within_calendar(self) -> "Config":
