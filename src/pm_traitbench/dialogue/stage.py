@@ -21,7 +21,7 @@ from pm_traitbench.dialogue.prompts import read_advisor_prompt
 from pm_traitbench.dialogue.session import SessionResult, narrate_session
 from pm_traitbench.dialogue.tools import MarketLookup
 from pm_traitbench.dialogue.voices import draw_voice
-from pm_traitbench.errors import DialogueBudgetError, DialogueError
+from pm_traitbench.errors import DialogueBudgetError, DialogueError, PmTraitbenchError
 from pm_traitbench.stages import Stage
 from pm_traitbench.tables.schema import (
     DriftEvent,
@@ -53,7 +53,7 @@ from pm_traitbench.tables.specs import (
 from pm_traitbench.tables.store import DataStore
 
 
-def _partition_pm_tables(store: DataStore) -> tuple[PmTables, ...]:
+def partition_pm_tables(store: DataStore) -> tuple[PmTables, ...]:
     """Group every dialogue input table by PM, keeping only PMs with at least one skeleton."""
     personas = {p.pm_id: p for p in store.read(PERSONAS)}
 
@@ -129,7 +129,7 @@ async def _narrate_all(
         await client.aclose()
 
 
-def _reason_of(ctx: SessionContext, error: DialogueError) -> str:
+def _reason_of(ctx: SessionContext, error: PmTraitbenchError) -> str:
     """The failure reason for one session, stripped of a `session {id}: ` prefix if present.
 
     An error raised inside `narrate_session` already carries that prefix; one
@@ -141,9 +141,9 @@ def _reason_of(ctx: SessionContext, error: DialogueError) -> str:
     return message[len(prefix) :] if message.startswith(prefix) else message
 
 
-def _raise_on_failure(
+def raise_on_failure(
     contexts: tuple[SessionContext, ...],
-    results: list[SessionResult | BaseException],
+    results: list[Any],
     client: CachedClient,
 ) -> None:
     """Raise a budget error, else a combined dialogue error, else re-raise any other exception.
@@ -152,6 +152,9 @@ def _raise_on_failure(
     spending. Otherwise every failed session is named, in session order,
     with sessions that failed for the identical reason collapsed onto one
     line, so a rerun's cache can skip the sessions that already succeeded.
+    Any `PmTraitbenchError` result is grouped this way, not only a
+    `DialogueError`, so the validate stage's `ValidateError` results group
+    the same way as a narration failure.
     """
     if any(isinstance(r, DialogueBudgetError) for r in results):
         totals = client.totals
@@ -162,7 +165,7 @@ def _raise_on_failure(
 
     ids_by_reason: dict[str, list[str]] = {}
     for ctx, result in zip(contexts, results, strict=True):
-        if isinstance(result, DialogueError):
+        if isinstance(result, PmTraitbenchError):
             ids_by_reason.setdefault(_reason_of(ctx, result), []).append(ctx.skeleton.session_id)
     if ids_by_reason:
         lines = []
@@ -187,7 +190,7 @@ def _run(
     check_dialogue_catalogue(catalogue)
     advisor_prompt = read_advisor_prompt(config.dialogue.advisor_prompt_path)
 
-    all_pm_tables = _partition_pm_tables(store)
+    all_pm_tables = partition_pm_tables(store)
     selected = select_pms(all_pm_tables, config.dialogue.pm_filter)
     if not selected:
         raise DialogueError("dialogue.pm_filter selects no PMs")
@@ -214,7 +217,7 @@ def _run(
     client = CachedClient(lambda: client_factory(config), cache_dir, config.dialogue.token_budget)
     frozen_contexts = tuple(contexts)
     results = asyncio.run(_narrate_all(frozen_contexts, client, config, advisor_prompt))
-    _raise_on_failure(frozen_contexts, results, client)
+    raise_on_failure(frozen_contexts, results, client)
 
     session_results = [r for r in results if isinstance(r, SessionResult)]
     if len(session_results) != len(frozen_contexts):

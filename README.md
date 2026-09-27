@@ -21,6 +21,7 @@ uv run pm-traitbench engine --config configs/demo.yaml --data-dir data
 uv run pm-traitbench gate1 --config configs/demo.yaml --data-dir data
 uv run pm-traitbench plan --config configs/demo.yaml --data-dir data
 uv run pm-traitbench dialogue --config configs/demo.yaml --data-dir data
+uv run pm-traitbench validate --config configs/demo.yaml --data-dir data
 ```
 
 The `sample` stage writes four tables to `data`: `personas`, `traits`,
@@ -46,9 +47,12 @@ synthetic seeds. Per-class and report-only rows are judged but never block.
 Both tables and its run metadata land on disk either way. The `plan` stage
 plants trait signals on dated sessions and writes `signals` and `skeletons`,
 never blocking on a shortfall. The `dialogue` stage narrates every planted
-session and writes `sessions` and the hidden `dialogue_logs`. Pass `--force`
-to overwrite a table that already exists. Run `uv run pm-traitbench --help`
-for the full command list.
+session and writes `sessions` and the hidden `dialogue_logs`. The `validate`
+stage checks every narrated session against the ledger, the leakage rule and
+the forbidden set, regenerating or dropping a session that keeps failing,
+and writes the hidden `validation` table while rewriting `sessions` and
+`dialogue_logs` in place. Pass `--force` to overwrite a table that already
+exists. Run `uv run pm-traitbench --help` for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
 market seed, as the default and demo configs both do for their pilot seed;

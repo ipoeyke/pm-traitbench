@@ -1,0 +1,373 @@
+"""Tests for the validate stage: table I/O, run metadata and the per-session attempt loop
+wired through a real (but scripted) dialogue corpus.
+"""
+
+from collections import Counter
+from collections.abc import Callable
+from contextvars import ContextVar
+from pathlib import Path
+
+import pytest
+
+from pm_traitbench import pipeline
+from pm_traitbench.catalogues.models import Catalogue
+from pm_traitbench.config import Config
+from pm_traitbench.dialogue.client import CachedClient
+from pm_traitbench.dialogue.stage import make_stage
+from pm_traitbench.dialogue.validate.stage import make_stage as make_validate_stage
+from pm_traitbench.engine.stage import ENGINE_STAGE
+from pm_traitbench.enums import Ownership, SignalMode, Valence, ValidationStatus
+from pm_traitbench.errors import DialogueBudgetError, ValidateError
+from pm_traitbench.signals.stage import PLAN_STAGE
+from pm_traitbench.stages import Stage, run_stage
+from pm_traitbench.tables.schema import Signal, to_record
+from pm_traitbench.tables.specs import (
+    DIALOGUE_LOGS,
+    LEDGER,
+    SESSIONS,
+    SIGNALS,
+    SKELETONS,
+    VALIDATION,
+)
+from pm_traitbench.tables.store import DataStore
+from tests.dialogue.conftest import FakeClient, default_responder, fake_message, turn_text
+from tests.dialogue.validate.conftest import (
+    forbidden_reply,
+    is_forbidden_request,
+    is_leak_request,
+    leak_reply,
+    trade_mention,
+)
+from tests.engine.conftest import (  # noqa: F401
+    fixture_market,
+    neutral_pm,
+    stage_config,
+    write_stage_inputs,
+)
+
+_CLEAN_TEXT = "all clear on the book"
+_current_scope: ContextVar[str] = ContextVar("validate_test_scope")
+
+
+def _mentions_by_session(store: DataStore) -> dict[str, list[dict]]:
+    """Every session's PM-turn trade mentions, built exactly from its own ledger day-trades."""
+    ledger = store.read(LEDGER)
+    skeletons = store.read(SKELETONS)
+    result: dict[str, list[dict]] = {}
+    for sk in skeletons:
+        rows = [
+            row
+            for row in ledger
+            if row.pm_id == sk.pm_id
+            and row.date == sk.date
+            and row.trade_idea_id in sk.trade_idea_ids
+        ]
+        result[sk.session_id] = [trade_mention(row).model_dump(mode="json") for row in rows]
+    return result
+
+
+def _intercept_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch `CachedClient.send` to record its scope for the current task.
+
+    Every other behaviour (caching, budget, usage totals) is untouched: the
+    patched method only stashes `scope` before delegating to the real one, so
+    a scope-blind `LlmClient` responder can still answer per session.
+    """
+    real_send = CachedClient.send
+
+    async def patched_send(self: CachedClient, request: dict, *, scope: str, refresh: bool = False):
+        _current_scope.set(scope)
+        return await real_send(self, request, scope=scope, refresh=refresh)
+
+    monkeypatch.setattr(CachedClient, "send", patched_send)
+
+
+def _faithful_responder(
+    store: DataStore, bad_text_by_session: dict[str, str] | None = None
+) -> Callable[[dict], dict]:
+    """A responder whose narrator turns mention exactly the session's own ledger day-trades.
+
+    A session named in `bad_text_by_session` gets that text on its first
+    narration only; a regeneration (its request carries validator feedback)
+    always gets clean text, so a session can be made to fail once and then
+    pass without needing a second override.
+    """
+    mentions_by_session = _mentions_by_session(store)
+    bad_text_by_session = bad_text_by_session or {}
+
+    def responder(request: dict) -> dict:
+        if is_leak_request(request):
+            return leak_reply(False, None)
+        if is_forbidden_request(request):
+            return forbidden_reply([])
+        if "tools" in request:
+            return default_responder(request)
+        scope = _current_scope.get()
+        is_regeneration = "A validator rejected the previous version" in request.get("system", "")
+        text = bad_text_by_session.get(scope, _CLEAN_TEXT) if not is_regeneration else _CLEAN_TEXT
+        mentions = mentions_by_session.get(scope, [])
+        return fake_message([turn_text(text, mentions)])
+
+    return responder
+
+
+def faithful_dialogue_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    store: DataStore,
+    *,
+    bad_text_by_session: dict[str, str] | None = None,
+) -> Stage:
+    """The dialogue stage wired to a responder whose sessions all match their own ledger."""
+    _intercept_scope(monkeypatch)
+    return make_stage(lambda c: FakeClient(_faithful_responder(store, bad_text_by_session)))
+
+
+def _clean_validate_stage(store: DataStore) -> Stage:
+    """The validate stage wired to a responder that judges every session clean."""
+    return make_validate_stage(lambda c: FakeClient(_faithful_responder(store)))
+
+
+def _run_engine_and_plan(
+    tmp_path: Path, fixture_market: dict, neutral_pm
+) -> tuple[Config, DataStore]:
+    config = stage_config()
+    store = DataStore(tmp_path, config.output)
+    write_stage_inputs(store, fixture_market, neutral_pm)
+    run_stage(ENGINE_STAGE, config, store)
+    run_stage(PLAN_STAGE, config, store)
+    return config, store
+
+
+def _run_clean_corpus(
+    tmp_path: Path, fixture_market: dict, neutral_pm, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Config, DataStore]:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
+    run_stage(_clean_validate_stage(store), config, store)
+    return config, store
+
+
+def _raising_factory(_config: Config):
+    raise AssertionError("the client must not be constructed here")
+
+
+def test_clean_run_writes_one_pass_row_per_session_and_keeps_tables(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
+    sessions_before = [to_record(s) for s in store.read(SESSIONS)]
+    logs_before = [to_record(log) for log in store.read(DIALOGUE_LOGS)]
+
+    run_stage(_clean_validate_stage(store), config, store)
+
+    validation = store.read(VALIDATION)
+    session_ids = {s.session_id for s in store.read(SKELETONS)}
+    assert {row.session_id for row in validation} == session_ids
+    assert all(row.status == ValidationStatus.PASS for row in validation)
+    assert all(n == 1 for n in Counter(row.session_id for row in validation).values())
+
+    assert [to_record(s) for s in store.read(SESSIONS)] == sessions_before
+    assert [to_record(log) for log in store.read(DIALOGUE_LOGS)] == logs_before
+
+
+def test_grep_failure_regenerates_and_replaces_the_session(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    target_id = sorted(sk.session_id for sk in store.read(SKELETONS))[0]
+    dialogue_stage = faithful_dialogue_stage(
+        monkeypatch, store, bad_text_by_session={target_id: "my herding_weight is showing today"}
+    )
+    run_stage(dialogue_stage, config, store)
+    turns_before = {s.session_id: s.turns for s in store.read(SESSIONS)}[target_id]
+
+    run_stage(_clean_validate_stage(store), config, store)
+
+    rows = [r for r in store.read(VALIDATION) if r.session_id == target_id]
+    assert [r.status for r in rows] == [ValidationStatus.REGENERATE, ValidationStatus.PASS]
+    turns_after = {s.session_id: s.turns for s in store.read(SESSIONS)}[target_id]
+    assert turns_after != turns_before
+
+
+def test_drop_removes_session_and_log_and_reports_void_signals(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    skeleton = sorted(store.read(SKELETONS), key=lambda s: s.session_id)[0]
+    target_id = skeleton.session_id
+    signal = Signal(
+        signal_id="sg_001",
+        pm_id=skeleton.pm_id,
+        session_id=target_id,
+        date=skeleton.date,
+        trait_id="t_01",
+        mode=SignalMode.STATED,
+        trade_idea_id=None,
+        valence=Valence.CONFIRM,
+        ownership=Ownership.SELF,
+        third_party_value=None,
+        claim_session_id=None,
+    )
+    store.write(SIGNALS, [signal])
+
+    dialogue_stage = faithful_dialogue_stage(
+        monkeypatch, store, bad_text_by_session={target_id: "my herding_weight is showing today"}
+    )
+    run_stage(dialogue_stage, config, store)
+    other_session_ids = {s.session_id for s in store.read(SESSIONS)} - {target_id}
+    other_rows_before = {
+        s.session_id: to_record(s) for s in store.read(SESSIONS) if s.session_id != target_id
+    }
+
+    config_one_attempt = config.model_copy(
+        update={"validation": config.validation.model_copy(update={"max_attempts": 1})}
+    )
+    run_stage(_clean_validate_stage(store), config_one_attempt, store)
+
+    session_ids_after = {s.session_id for s in store.read(SESSIONS)}
+    log_ids_after = {log.session_id for log in store.read(DIALOGUE_LOGS)}
+    assert target_id not in session_ids_after
+    assert target_id not in log_ids_after
+    assert other_session_ids <= session_ids_after
+    other_rows_after = {
+        s.session_id: to_record(s) for s in store.read(SESSIONS) if s.session_id != target_id
+    }
+    assert other_rows_after == other_rows_before
+
+    metadata = store.read_run_metadata("validate")
+    assert metadata is not None
+    assert metadata["dropped_session_ids"] == [target_id]
+    assert metadata["void_signal_ids"] == ["sg_001"]
+
+
+def test_missing_dialogue_metadata_raises_validate_error_before_any_call(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
+    (tmp_path / "run_metadata" / "dialogue.json").unlink()
+
+    with pytest.raises(ValidateError, match="dialogue run metadata is missing"):
+        run_stage(make_validate_stage(_raising_factory), config, store)
+
+
+def test_advisor_prompt_hash_mismatch_raises(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
+
+    other_prompt = tmp_path / "other_prompt.md"
+    other_prompt.write_text("A different advisor system prompt.", encoding="utf-8")
+    config = config.model_copy(
+        update={
+            "dialogue": config.dialogue.model_copy(update={"advisor_prompt_path": other_prompt})
+        }
+    )
+
+    with pytest.raises(ValidateError, match="advisor prompt"):
+        run_stage(make_validate_stage(_raising_factory), config, store)
+
+
+def test_budget_error_writes_nothing(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
+    sessions_before = store.path(SESSIONS).read_bytes()
+
+    config = config.model_copy(
+        update={"validation": config.validation.model_copy(update={"token_budget": 1})}
+    )
+
+    with pytest.raises(DialogueBudgetError):
+        run_stage(_clean_validate_stage(store), config, store)
+
+    assert not store.exists(VALIDATION)
+    assert store.path(SESSIONS).read_bytes() == sessions_before
+
+
+def test_rerun_from_cache_is_byte_identical_with_zero_inner_calls(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_clean_corpus(tmp_path, fixture_market, neutral_pm, monkeypatch)
+    validation_before = store.path(VALIDATION).read_bytes()
+    sessions_before = store.path(SESSIONS).read_bytes()
+    logs_before = store.path(DIALOGUE_LOGS).read_bytes()
+
+    run_stage(make_validate_stage(_raising_factory), config, store, force=True)
+
+    assert store.path(VALIDATION).read_bytes() == validation_before
+    assert store.path(SESSIONS).read_bytes() == sessions_before
+    assert store.path(DIALOGUE_LOGS).read_bytes() == logs_before
+
+
+def test_run_metadata_keys_and_typicality_rate(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, store = _run_clean_corpus(tmp_path, fixture_market, neutral_pm, monkeypatch)
+
+    metadata = store.read_run_metadata("validate")
+    assert metadata is not None
+    for key in (
+        "judge_model",
+        "pms",
+        "sessions_checked",
+        "fails_by_layer",
+        "regenerated",
+        "dropped",
+        "dropped_session_ids",
+        "void_signal_ids",
+        "void_signals_by_pm",
+        "regeneration_rate_by_typicality",
+        "warnings",
+        "calls",
+        "cache_hits",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "rejected_replies",
+    ):
+        assert key in metadata
+
+    assert metadata["regeneration_rate_by_typicality"] == {"typical": 0.0}
+    assert metadata["dropped"] == 0
+    assert metadata["regenerated"] == 0
+
+
+def test_pipeline_lists_validate_seventh() -> None:
+    assert pipeline.STAGES[-1].number == 7
+    assert pipeline.STAGES[-1].name == "validate"
