@@ -5,6 +5,7 @@ Consumed by every validate-stage test module, so a fixture's shape only has
 to match `schema.py` in one place.
 """
 
+import json
 from collections.abc import Sequence
 from datetime import date
 
@@ -19,7 +20,7 @@ from pm_traitbench.tables.schema import (
     ToolCall,
     TurnLog,
 )
-from tests.dialogue.conftest import fixture_market, market_lookup  # noqa: F401
+from tests.dialogue.conftest import fake_message, fixture_market, market_lookup  # noqa: F401
 
 _MODEL = "claude-opus-5-5"
 _REQUEST_HASH = "0" * 64
@@ -120,6 +121,30 @@ def ledger_row(
         bias_flag=None,
         rule_id=None,
     )
+
+
+def leak_reply(explicit: bool, label: str | None, quote: str = "") -> dict:
+    """A `fake_message` body whose single text block is a leak verdict JSON object."""
+    payload = json.dumps({"explicit": explicit, "label": label, "quote": quote})
+    return fake_message([{"type": "text", "text": payload}])
+
+
+def forbidden_reply(violations: list[tuple[int, str]]) -> dict:
+    """A `fake_message` body whose single text block is a forbidden verdict JSON object."""
+    payload = json.dumps(
+        {"violations": [{"index": index, "quote": quote} for index, quote in violations]}
+    )
+    return fake_message([{"type": "text", "text": payload}])
+
+
+def is_leak_request(request) -> bool:
+    """True when `request` is a leakage judge request, by its schema's title."""
+    return request["output_config"]["format"]["schema"]["title"] == "leak_verdict"
+
+
+def is_forbidden_request(request) -> bool:
+    """True when `request` is a forbidden-trait judge request, by its schema's title."""
+    return request["output_config"]["format"]["schema"]["title"] == "forbidden_verdict"
 
 
 def skeleton_of(
