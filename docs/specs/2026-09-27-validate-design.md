@@ -14,7 +14,7 @@ Out of scope: Gate 2 (recovery, cross-PM n-gram overlap); probes; re-planning a 
 
 ## Decisions
 
-1. **Results live in place, plus a `validation` table.** Stage 7 appends to `sessions` and `dialogue_logs` (`Append` with `owned = record["pm_id"] in validated PMs`): passing sessions are kept, regenerated ones replaced, dropped ones removed. A new hidden `validation` table records one row per session per attempt. Downstream stages keep reading `sessions` as the corpus. Rejected: separate `sessions_validated` tables (every later stage would have to know which table is the corpus, and stage 6's raw output would sit next to the real one).
+1. **Results live in place, plus a `validation` table.** Stage 7 appends to `sessions` and `dialogue_logs` (`Append` declarations owning every row, since stage 7 validates every PM stage 6 narrated): passing sessions are kept, regenerated ones replaced, dropped ones removed. A new hidden `validation` table records one row per session per attempt. Downstream stages keep reading `sessions` as the corpus. Rejected: separate `sessions_validated` tables (every later stage would have to know which table is the corpus, and stage 6's raw output would sit next to the real one).
 2. **A dropped session voids its signals by join, not by a column.** The session's rows are removed; its signals stay in `signals.jsonl` untouched. Plan section 8 already fixes the join direction (`signals.session_id` -> `sessions`), so a signal whose session no longer exists is void by construction and Gate 2 and probes filter by that join. Void signal ids and the per-PM shortfall are reported in run metadata. Rejected: a `status` column on `signals` (stage 5 would have to write it too, `Signal` is `extra="forbid"`); re-planning inside stage 7 (stage 7 would own stage 5's carrier allocation and the skeleton table; a re-plan is a rerun of stages 5-7 for that PM); failing the run (a handful of stubborn sessions would block the whole corpus). Cost: the signal mix per PM can fall short of plan section 4's targets; accepted because the shortfall is reported and Gate 2 measures the result directly.
 3. **One judge model, no agreement rate.** `judge_model` defaults to `claude-opus-5-5`. Plan section 9 asked for two models with a logged agreement rate; changed here to one judge to halve judge cost and keep the loop simple. Cost: the plan 9.1 "judges judging judges" bound (agreement below 0.8 means tighten the layer) cannot be reported; accepted because the deterministic layers carry the hard rules (ledger, grep) and the judge layers are tuned on pilot output either way. The plan text is updated (Living docs impact).
 4. **Judge scope: leakage on revealed carriers, forbidden on every session.** Only a session with a `revealed` or `contradiction` stance has a planted bias whose label could leak; an unplanted trait or preference can surface anywhere, so the forbidden judge runs on all sessions, silence included. About 1.3 judge calls per session. Rejected: both judges everywhere (a false-positive baseline for the leakage judge at twice the cost); judges on carriers only (forbidden traits in filler unchecked).
@@ -106,7 +106,7 @@ Reasons use the layer wording above. Each attempt produces one `validation` row;
 
 Validators: `status == pass` iff all `*_ok` are true; `reasons` non-empty iff `status != pass`.
 
-`sessions` and `dialogue_logs`: unchanged schemas; stage 7 appends with `owned = pm_id in validated PMs`.
+`sessions` and `dialogue_logs`: unchanged schemas; stage 7 appends owning every row and rewrites both tables in full from this run's results.
 
 ## Config
 
@@ -138,7 +138,7 @@ Validators: `status == pass` iff all `*_ok` are true; `reasons` non-empty iff `s
 
 - `ledger.py`, `grep.py`, `judge.py` parsing and `map_label`: pure unit tests on hand-built `Mention`, `LedgerRow`, `TurnLog` objects and fake judge replies.
 - `loop.py`: fake client responder that fails a session on a chosen layer for the first k attempts, asserting feedback text, attempt rows and the drop at the cap.
-- `stage.py`: chain engine, plan, dialogue (fake) and validate (fake) on the fixture market; assert 1:1 `validation` rows on the pass path, replaced and removed rows on regenerate and drop, `Append` ownership preserved for an unvalidated PM, byte-identical rerun from cache, budget error writes nothing, metadata keys.
+- `stage.py`: chain engine, plan, dialogue (fake) and validate (fake) on the fixture market; assert 1:1 `validation` rows on the pass path, replaced and removed rows on regenerate and drop, rerun after partial and full PM drops, byte-identical rerun from cache, budget error writes nothing, metadata keys.
 - `bias_labels.yaml`: loader checks tested in `tests/catalogues/test_loader.py` (bad keys, empty list, duplicate phrase, param string as phrase) and the shipped file in `tests/catalogues/test_shipped.py`. Validate unit tests live under `tests/dialogue/validate/`.
 - `ValidateError` is added to `errors.py` with exit code 1, following the one-class-per-stage pattern.
 
