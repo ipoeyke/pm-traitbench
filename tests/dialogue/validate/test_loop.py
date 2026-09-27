@@ -334,6 +334,9 @@ def test_forbidden_violation_fails_with_the_avoid_line_and_out_of_range_index_is
         'forbidden: never mention position size: "quoted the size"',
     )
     assert result.passed is False
+    assert result.warnings == (
+        f"session {ctx.skeleton.session_id}: forbidden judge index out of range: 5",
+    )
 
 
 def test_forbidden_verdict_with_every_index_out_of_range_passes(market_lookup, tmp_path):
@@ -365,6 +368,10 @@ def test_forbidden_verdict_with_every_index_out_of_range_passes(market_lookup, t
 
     assert result.forbidden_reasons == ()
     assert result.passed is True
+    assert result.warnings == (
+        f"session {ctx.skeleton.session_id}: forbidden judge index out of range: 0",
+        f"session {ctx.skeleton.session_id}: forbidden judge index out of range: 5",
+    )
 
 
 def test_failed_session_is_regenerated_with_feedback_and_passes_on_attempt_two(

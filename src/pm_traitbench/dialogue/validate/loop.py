@@ -37,6 +37,7 @@ class LayerResult:
     forbidden_reasons: tuple[str, ...]
     level_warnings: int
     unmapped_labels: tuple[str, ...]
+    warnings: tuple[str, ...]
     rejected_replies: int
 
     @property
@@ -105,6 +106,11 @@ async def validate_once(
         for v in violations
         if 1 <= v.index <= len(ctx.avoid_lines)
     )
+    out_of_range_warnings = tuple(
+        f"session {session_id}: forbidden judge index out of range: {v.index}"
+        for v in violations
+        if not (1 <= v.index <= len(ctx.avoid_lines))
+    )
 
     return LayerResult(
         ledger_reasons=ledger_reasons,
@@ -114,6 +120,7 @@ async def validate_once(
         forbidden_reasons=forbidden_reasons,
         level_warnings=level_warnings,
         unmapped_labels=unmapped_labels,
+        warnings=out_of_range_warnings,
         rejected_replies=rejected_replies,
     )
 
@@ -171,6 +178,7 @@ async def run_session(
             f"session {ctx.skeleton.session_id}: judge label unmapped: {label}"
             for label in layer.unmapped_labels
         )
+        warnings.extend(layer.warnings)
 
         if layer.passed:
             status = ValidationStatus.PASS
