@@ -2091,7 +2091,7 @@ class Config(BaseModel):
     gate1: Gate1Config = Field(default_factory=Gate1Config)
     plan: PlanConfig = Field(default_factory=PlanConfig)
     dialogue: DialogueConfig = Field(default_factory=DialogueConfig)
-    validate: ValidateConfig = Field(default_factory=ValidateConfig)
+    validation: ValidateConfig = Field(default_factory=ValidateConfig)
 
     @model_validator(mode="after")
     def _check_week_ranges_within_calendar(self) -> "Config":

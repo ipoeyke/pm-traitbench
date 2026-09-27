@@ -1091,7 +1091,7 @@ def test_dialogue_config_loads_from_yaml_override(tmp_path: Path) -> None:
 
 
 def test_validate_config_defaults_and_basis() -> None:
-    config = Config().validate
+    config = Config().validation
     assert config.judge_model == "claude-opus-5-5"
     assert config.effort == Effort.LOW
     assert config.max_output_tokens == 1000
@@ -1103,7 +1103,7 @@ def test_validate_config_defaults_and_basis() -> None:
 
     paths = {row.path for row in Config().dump_with_basis()}
     for name in ValidateConfig.model_fields:
-        assert f"validate.{name}" in paths
+        assert f"validation.{name}" in paths
 
 
 def test_validate_config_rejects_out_of_range() -> None:
