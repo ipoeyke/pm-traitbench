@@ -774,7 +774,7 @@ Verification is in two steps. First, opportunity counts: the engine writes its c
 
 **Stage 9, probes.** Deterministic for everything that carries an answer: situations sampled from the PM's universe, engine re-run per option source, answer key, distractor sources, checkpoints, context cutoff. A model may paraphrase question and option wording for variety, but the answer key is fixed before paraphrase and a round-trip check confirms the paraphrase still maps to the same option.
 
-**Stage 10, freeze.** Hash every file, write the README from the config object, model ids, validator pass rates, judge agreement rates, and regeneration counts. Nothing downstream may write to `data/` after this.
+**Stage 10, freeze.** Hash every file, write the README from the config object, model ids, validator pass rates, regeneration counts and dropped-session counts. Nothing downstream may write to `data/` after this.
 
 Order of work follows the stage numbers, with the pilot run through stages 1-8 before any scale-up. The pilot includes drift PMs (section 6), so the drift layer is built and checked in the pilot, not after it. Within the pilot the cheap checks still come first: stages 1-5 and Gate 1 call no model and run on all 32 PMs; stage 6 then narrates the 16 static PMs and Gate 2 runs on them; only when Gate 2 passes are the 16 drift PMs narrated, so a narration defect is found before the drift sessions are paid for. Gates 1 and 2 are the whole point of the pilot. A dataset where the planted parameters cannot be recovered from its own ledger and its own dialogue measures nothing.
 

@@ -7,13 +7,12 @@ it is validated here, so a refusal or a schema-invalid reply is never
 replayed on a rerun.
 """
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from pm_traitbench.config import DialogueConfig
-from pm_traitbench.dialogue.client import CachedClient, Reply
+from pm_traitbench.dialogue.client import CachedClient, Reply, last_text_json
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.prompts import (
     NARRATOR_OPENING_MESSAGE,
@@ -72,18 +71,7 @@ def parse_turn(response: Mapping[str, Any]) -> TurnOutput | None:
     fail `Turn`'s own `min_length=1` after the reply is already cached, so it
     is rejected here instead.
     """
-    if response.get("stop_reason") != "end_turn":
-        return None
-    text_block: Mapping[str, Any] | None = None
-    for block in response.get("content") or ():
-        if block.get("type") == "text":
-            text_block = block
-    if text_block is None:
-        return None
-    try:
-        payload = json.loads(text_block["text"])
-    except (json.JSONDecodeError, TypeError, KeyError):
-        return None
+    payload = last_text_json(response)
     if not isinstance(payload, dict):
         return None
     try:

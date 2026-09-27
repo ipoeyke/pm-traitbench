@@ -6,14 +6,13 @@ session's rendered avoid lines - never a trait id, bias param, trait value,
 stance line, signal mode or the PM's persona.
 """
 
-import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from pm_traitbench.catalogues.models import BiasLabels
 from pm_traitbench.config import BIAS_PARAMS, ValidateConfig
-from pm_traitbench.dialogue.client import CachedClient
+from pm_traitbench.dialogue.client import CachedClient, last_text_json
 from pm_traitbench.enums import TurnRole
 from pm_traitbench.errors import ValidateError
 from pm_traitbench.tables.schema import DialogueLog
@@ -122,29 +121,9 @@ class Violation:
     quote: str
 
 
-def _last_text_payload(response: Mapping[str, Any]) -> Any:
-    """The last text block's JSON payload, or a sentinel-free `None` if it cannot be read.
-
-    `None` when `stop_reason` is not `end_turn`, there is no text block, or
-    the text is not valid JSON.
-    """
-    if response.get("stop_reason") != "end_turn":
-        return None
-    text_block: Mapping[str, Any] | None = None
-    for block in response.get("content") or ():
-        if block.get("type") == "text":
-            text_block = block
-    if text_block is None:
-        return None
-    try:
-        return json.loads(text_block["text"])
-    except (json.JSONDecodeError, TypeError, KeyError):
-        return None
-
-
 def parse_leak(response: Mapping[str, Any]) -> LeakVerdict | None:
     """The leak verdict from a judge reply's last text block, validated against `LEAK_SCHEMA`."""
-    payload = _last_text_payload(response)
+    payload = last_text_json(response)
     if not isinstance(payload, dict):
         return None
     try:
@@ -164,7 +143,7 @@ def parse_leak(response: Mapping[str, Any]) -> LeakVerdict | None:
 
 def parse_forbidden(response: Mapping[str, Any]) -> tuple[Violation, ...] | None:
     """The violations from a judge reply's last text block, validated against `FORBIDDEN_SCHEMA`."""
-    payload = _last_text_payload(response)
+    payload = last_text_json(response)
     if not isinstance(payload, dict):
         return None
     raw_violations = payload.get("violations")

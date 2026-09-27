@@ -6,8 +6,9 @@ to match `schema.py` in one place.
 """
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
+from typing import Any
 
 from pm_traitbench.enums import InstrumentKind, MentionKind, SessionKind, Side, Tenor, TurnRole
 from pm_traitbench.tables.schema import (
@@ -137,12 +138,12 @@ def forbidden_reply(violations: list[tuple[int, str]]) -> dict:
     return fake_message([{"type": "text", "text": payload}])
 
 
-def is_leak_request(request) -> bool:
+def is_leak_request(request: Mapping[str, Any]) -> bool:
     """True when `request` is a leakage judge request, by its schema's title."""
     return request["output_config"]["format"]["schema"]["title"] == "leak_verdict"
 
 
-def is_forbidden_request(request) -> bool:
+def is_forbidden_request(request: Mapping[str, Any]) -> bool:
     """True when `request` is a forbidden-trait judge request, by its schema's title."""
     return request["output_config"]["format"]["schema"]["title"] == "forbidden_verdict"
 

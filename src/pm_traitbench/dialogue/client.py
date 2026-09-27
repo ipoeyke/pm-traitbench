@@ -31,6 +31,27 @@ class LlmClient(Protocol):
     async def send(self, request: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
+def last_text_json(response: Mapping[str, Any]) -> Any | None:
+    """The last text block's content parsed as JSON, or `None`.
+
+    `None` when `stop_reason` is not `end_turn`, there is no text block, or
+    the text is not valid JSON. Shared by every reply parser in the dialogue
+    and validate stages so the content-block walk lives in one place.
+    """
+    if response.get("stop_reason") != "end_turn":
+        return None
+    text_block: Mapping[str, Any] | None = None
+    for block in response.get("content") or ():
+        if block.get("type") == "text":
+            text_block = block
+    if text_block is None:
+        return None
+    try:
+        return json.loads(text_block["text"])
+    except (json.JSONDecodeError, TypeError, KeyError):
+        return None
+
+
 def request_key(request: Mapping[str, Any], scope: str) -> str:
     """sha256 hex of `scope` plus the request serialised with sorted keys and no whitespace.
 

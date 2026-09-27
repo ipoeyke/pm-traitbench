@@ -1,6 +1,7 @@
 """Tests for the leakage and forbidden-trait judge requests, parsers and label mapping."""
 
 import asyncio
+import json
 
 import pytest
 
@@ -84,6 +85,24 @@ def test_forbidden_request_numbers_avoid_lines_from_one():
     assert not is_leak_request(request)
 
 
+def test_judge_requests_never_carry_a_turn_directive():
+    """A PM turn's `directive` (its stance line) must never reach a judge request: only its
+    narrated `text` does.
+    """
+    directive = "push to run this at twice the usual size"
+    log = log_of(
+        "s_pm001_2026-01-05_a",
+        "pm_001",
+        [pm_turn("I bought the dip", directive=directive), advisor_turn("noted")],
+    )
+
+    leak_dump = json.dumps(leak_request(log, _CONFIG))
+    forbidden_dump = json.dumps(forbidden_request(log, ["never mention position size"], _CONFIG))
+
+    assert directive not in leak_dump
+    assert directive not in forbidden_dump
+
+
 def test_parse_leak_accepts_a_valid_reply_and_rejects_bad_shapes():
     valid = leak_reply(True, "loss aversion", "I always average down")
     assert parse_leak(valid) == LeakVerdict(
@@ -125,6 +144,10 @@ def test_map_label_uses_catalogue_phrases_case_insensitively():
     assert map_label("Disposition effect", labels) == "disposition_ratio"
     assert map_label("I like coffee", labels) is None
     assert map_label(None, labels) is None
+    assert map_label("   ", labels) is None
+    # Matches both loss_aversion_lambda ("loss aversion") and disposition_ratio
+    # ("disposition"); the earlier param in BIAS_PARAMS order must win.
+    assert map_label("loss aversion and disposition too", labels) == "loss_aversion_lambda"
 
 
 def _cached_client(responder, tmp_path):
@@ -168,7 +191,42 @@ def test_send_judged_raises_validate_error_at_the_cap(tmp_path):
     def responder(req):
         return fake_message([{"type": "text", "text": "not json"}])
 
-    _, client = _cached_client(responder, tmp_path)
+    fake, client = _cached_client(responder, tmp_path)
 
-    with pytest.raises(ValidateError):
+    with pytest.raises(
+        ValidateError, match=r"session s_test: the judge reply was unparsable or schema-invalid"
+    ):
         asyncio.run(send_judged(client, request, parse_leak, "s_test", max_retries=1))
+
+    assert len(fake.requests) == 2  # 1 + max_retries
+
+
+def test_send_judged_bypasses_a_cached_reply_that_fails_the_real_parser(tmp_path):
+    """A reply already committed to the cache under a permissive parser must not be replayed
+    forever once a stricter parser rejects it: the retry must fetch a fresh reply instead.
+    """
+    request = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
+    calls = {"n": 0}
+
+    def responder(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return fake_message([{"type": "text", "text": "not json"}])
+        return leak_reply(True, "loss aversion", "I always average down")
+
+    fake, client = _cached_client(responder, tmp_path)
+
+    # Prime the cache with an unparsable reply, via a parser that accepts anything.
+    asyncio.run(send_judged(client, request, lambda response: response, "s_test", max_retries=0))
+    assert len(fake.requests) == 1
+
+    parsed, rejected = asyncio.run(
+        send_judged(client, request, parse_leak, "s_test", max_retries=1)
+    )
+
+    assert len(fake.requests) == 2  # the stale cache hit is bypassed by exactly one fresh call
+    assert rejected == 1
+    assert parsed == LeakVerdict(
+        explicit=True, label="loss aversion", quote="I always average down"
+    )
+    assert client.totals.cache_hits == 1
