@@ -23,7 +23,7 @@ Out of scope: Gate 2 (recovery, cross-PM n-gram overlap); probes; re-planning a 
 7. **Every same-day trade must be mentioned.** Stage 5 applied `plan.ledger_session_percentile` when it chose which ideas a session discusses, and stage 6 puts every same-day ledger row of those ideas on the turn-0 directive, so "above the size threshold" is already "listed on the directive". Stage 7 does not recompute the threshold. Trade mentions may also point at earlier rows of the session's ideas (a PM recalls last week's entry), so a mention matches any row dated at or before the session date.
 8. **Regeneration re-narrates the whole session.** `feedback` changes every narrator request, so the PM texts change and every advisor request misses the cache too. The feedback line carries the attempt number, so a repeated reason still yields a new cache key. Rejected: regenerating single turns (the driver has no per-turn entry point and later turns depend on the changed one).
 9. **No verdict raise.** Dropped sessions are an accepted outcome; the stage exits 0 unless the run itself fails (budget, API error, missing input), in which case nothing is written, as in stage 6. Regeneration rate above 30% in a typicality cell is a warning in run metadata (plan 9.1, "narrator reverts to stereotype").
-10. **Validates every PM present in `sessions`.** Stage 6's `pm_filter` already chose the PMs; a second filter would let the two tables disagree about which PMs are validated.
+10. **Validates every PM stage 6 narrated**, read from the dialogue run metadata's `voices` map. Stage 6's `pm_filter` already chose the PMs; a second filter would let the tables disagree, and reading `sessions` alone would lose a PM whose sessions were all dropped on a rerun.
 
 ## Components
 
