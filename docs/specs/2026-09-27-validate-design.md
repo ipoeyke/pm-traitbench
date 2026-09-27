@@ -125,7 +125,7 @@ Validators: `status == pass` iff all `*_ok` are true; `reasons` non-empty iff `s
 
 ## Run metadata extras
 
-`judge_model`, `pms`, `sessions_checked`, `fails_by_layer` (ledger, grep, leak, forbidden), `regenerated`, `dropped`, `dropped_session_ids`, `void_signal_ids`, `void_signals_by_pm`, `regeneration_rate_by_typicality`, `warnings` (includes the 30% cell warning and out-of-range judge indices), `calls`, `cache_hits`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `rejected_replies`.
+`judge_model`, `pms`, `sessions_checked`, `fails_by_layer` (ledger, grep, leak, forbidden), `regenerated`, `dropped`, `dropped_session_ids`, `void_signal_ids`, `void_signals_by_pm`, `regeneration_rate_by_typicality` (share of that cell's sessions that needed at least one regeneration), `warnings` (includes the 30% cell warning and out-of-range judge indices), `calls`, `cache_hits`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `rejected_replies`.
 
 ## Error handling
 
