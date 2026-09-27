@@ -357,10 +357,10 @@ def _run(
         for unit, outcome in zip(frozen_units, session_outcomes, strict=True)
     }
 
-    new_sessions = [s for s in sessions if s.pm_id not in pm_ids]
-    new_sessions.extend(final.session for final in finals.values() if final is not None)
-    new_logs = [log for log in dialogue_logs if log.pm_id not in pm_ids]
-    new_logs.extend(final.log for final in finals.values() if final is not None)
+    # Validate rewrites the final rows of every PM dialogue narrated: no PM stays
+    # unvalidated, so `sessions`/`dialogue_logs` hold exactly this run's passing rows.
+    new_sessions = [final.session for final in finals.values() if final is not None]
+    new_logs = [final.log for final in finals.values() if final is not None]
 
     newly_dropped_ids = [session_id for (_, session_id), final in finals.items() if final is None]
     dropped_session_ids = sorted({*newly_dropped_ids, *previously_dropped_session_ids})
