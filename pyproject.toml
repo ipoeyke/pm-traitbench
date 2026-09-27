@@ -44,6 +44,7 @@ select = ["E", "F", "I", "UP", "B"]
 "tests/signals/test_stage.py" = ["F811"]
 "tests/dialogue/conftest.py" = ["F811"]
 "tests/dialogue/test_stage.py" = ["F811"]
+"tests/dialogue/validate/conftest.py" = ["F811"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
