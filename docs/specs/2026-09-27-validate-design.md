@@ -64,7 +64,7 @@ Over every PM turn's `text`, lower-cased: a whole-word or whole-phrase match on 
 
 ### Layer 3: judges (`judge.py`, `bias_labels.yaml`)
 
-Both judges go through the stage's `CachedClient` (same cache directory `cache/llm`, scope = session id) with `output_config.format` JSON schemas and `output_config.effort = config.validate.effort`, `max_tokens = config.validate.max_output_tokens`. Requests carry only the transcript text (all turns, both roles, in order, as one user message) and the judge instruction; never a trait id, param, stance line, mode or the PM's row. A refusal, truncation or unparsable reply is retried up to `config.dialogue.max_retries` fresh attempts, then the session fails the run (as a stage 6 rejected reply does).
+Both judges go through the stage's `CachedClient` (same cache directory `cache/llm`, scope = session id) with `output_config.format` JSON schemas and `output_config.effort = config.validation.effort`, `max_tokens = config.validation.max_output_tokens`. Requests carry only the transcript text (all turns, both roles, in order, as one user message) and the judge instruction; never a trait id, param, stance line, mode or the PM's row. A refusal, truncation or unparsable reply is retried up to `config.dialogue.max_retries` fresh attempts, then the session fails the run (as a stage 6 rejected reply does).
 
 Leakage judge (sessions with a `revealed` or `contradiction` stance):
 - Instruction: read the PM side; decide whether the PM explicitly names or self-labels a psychological or trading tendency of their own, either by a term for it or by stating it as a general habit ("I always", "I tend to", "my weakness is"); describing one decision on its merits is not explicit. Return `{"explicit": bool, "label": string or null, "quote": string}`.
@@ -110,7 +110,7 @@ Validators: `status == pass` iff all `*_ok` are true; `reasons` non-empty iff `s
 
 ## Config
 
-`ValidateConfig`, registered as `Config.validate`, every leaf with `basis` and `note`:
+`ValidateConfig`, registered as `Config.validation` (not `validate`, which would shadow `BaseModel.validate` and warn on import), every leaf with `basis` and `note`:
 
 | Field | Default | Basis |
 |---|---|---|
