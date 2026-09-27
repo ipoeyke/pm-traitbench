@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from pm_traitbench.catalogues.models import (
     ADAPTER_FORMS,
     AvoidLines,
+    BiasLabels,
     Catalogue,
     Phrasings,
     PreferenceEntry,
@@ -40,6 +41,7 @@ _FILE_NAMES = (
     "stances.yaml",
     "voices.yaml",
     "avoid.yaml",
+    "bias_labels.yaml",
 )
 
 # A stance line's slots vary by (kind of trait, kind of evidence): which parts of the
@@ -171,6 +173,7 @@ def _build_catalogue(base: Any) -> Catalogue:
         stances = Stances.model_validate(raw["stances.yaml"])
         voices = _VoicesFile.model_validate(raw["voices.yaml"]).voices
         avoid = AvoidLines.model_validate(raw["avoid.yaml"])
+        bias_labels = BiasLabels.model_validate(raw["bias_labels.yaml"])
     except ValidationError as e:
         raise CatalogueError(f"invalid catalogue content: {e}") from e
     return Catalogue(
@@ -183,6 +186,7 @@ def _build_catalogue(base: Any) -> Catalogue:
         stances=stances,
         voices=voices,
         avoid=avoid,
+        bias_labels=bias_labels,
     )
 
 
@@ -573,15 +577,14 @@ def check_stances(catalogue: Catalogue) -> None:
             )
 
 
-def _voice_line_matched_param(line: str, params: Iterable[str]) -> str | None:
-    """Return the first bias or preference param named in a voice line, if any.
+def matched_param(text: str, params: Iterable[str]) -> str | None:
+    """Return the first param named in text, whole-word, if any.
 
-    A voice line goes verbatim into the narrator's system prompt, so it must never
-    carry a param name for the narrator to repeat. Checks both the raw param (with
-    underscores) and its underscore-replaced phrase, each as a whole word or phrase,
-    so "register" and "loss_aversion_lambda" are caught however the line spells them.
+    Checks both the raw param (with underscores) and its underscore-replaced
+    phrase, each as a whole word or phrase, so "register" and "loss_aversion_lambda"
+    are caught however the text spells them.
     """
-    lowered = line.lower()
+    lowered = text.lower()
     for param in params:
         for form in (param.lower(), param.lower().replace("_", " ")):
             if re.search(rf"\b{re.escape(form)}\b", lowered):
@@ -612,11 +615,9 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
                 raise CatalogueError(
                     f"voices: voice '{voice.voice_id}' line contains banned word '{banned}'"
                 )
-        matched_param = _voice_line_matched_param(voice.line, forbidden_param_names)
-        if matched_param is not None:
-            raise CatalogueError(
-                f"voices: voice '{voice.voice_id}' line names param '{matched_param}'"
-            )
+        matched = matched_param(voice.line, forbidden_param_names)
+        if matched is not None:
+            raise CatalogueError(f"voices: voice '{voice.voice_id}' line names param '{matched}'")
 
     actual_bias_keys = set(catalogue.avoid.biases)
     expected_bias_keys = set(BIAS_PARAMS)
@@ -639,6 +640,55 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
     for param, line in {**catalogue.avoid.biases, **catalogue.avoid.preferences}.items():
         if not line.strip():
             raise CatalogueError(f"avoid: param '{param}' has an empty line")
+
+
+def check_validate_catalogue(catalogue: Catalogue) -> None:
+    """Check the bias label catalogue the validation stage's leakage judge maps labels through.
+
+    A judge never writes a raw param identifier, so any phrase equal to one is a
+    labeling error under any param. A phrase equal to a different param's spaced-out
+    name is filed under the wrong bias; a phrase equal to its own param's spaced-out
+    name is that bias's plain-English name and is expected.
+    """
+    labels = catalogue.bias_labels.labels
+    actual = set(labels)
+    expected = set(BIAS_PARAMS)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise CatalogueError(
+            f"bias_labels: keys must equal the bias parameter set; missing {missing}, extra {extra}"
+        )
+
+    raw_forms = {param.lower() for param in expected}
+    spaced_forms = {param: param.lower().replace("_", " ") for param in expected}
+
+    seen: dict[str, str] = {}
+    for param, phrases in labels.items():
+        if not phrases:
+            raise CatalogueError(f"bias_labels: param '{param}' has no phrases")
+        for phrase in phrases:
+            if not phrase.strip() or phrase != phrase.strip().lower():
+                raise CatalogueError(
+                    f"bias_labels: param '{param}' phrase '{phrase}' must be "
+                    "lower-case and non-blank"
+                )
+            if phrase in raw_forms:
+                raise CatalogueError(
+                    f"bias_labels: param '{param}' phrase '{phrase}' is a raw param string"
+                )
+            for other, spaced in spaced_forms.items():
+                if other != param and phrase == spaced:
+                    raise CatalogueError(
+                        f"bias_labels: param '{param}' phrase '{phrase}' equals "
+                        f"the name of param '{other}'"
+                    )
+            if phrase in seen and seen[phrase] != param:
+                raise CatalogueError(
+                    f"bias_labels: phrase '{phrase}' appears under both "
+                    f"'{seen[phrase]}' and '{param}'"
+                )
+            seen[phrase] = param
 
 
 def check_catalogue(
