@@ -138,6 +138,11 @@ def _build_units(
 ) -> _BuildResult:
     all_pm_tables = partition_pm_tables(store)
     selected = [pm for pm in all_pm_tables if pm.persona.pm_id in pm_ids]
+    missing_pms = sorted(pm_ids - {pm.persona.pm_id for pm in selected})
+    if missing_pms:
+        # `partition_pm_tables` drops a PM with no skeletons; rewriting `sessions` and
+        # `dialogue_logs` for it anyway would silently delete its narrated rows.
+        raise ValidateError(f"pm(s) {', '.join(missing_pms)} were narrated but have no skeletons")
 
     instruments = store.read(MARKET_INSTRUMENTS)
     prices = store.read(MARKET_PRICES)
@@ -166,11 +171,8 @@ def _build_units(
             session_row = sessions_by_key.get(key)
             log_row = logs_by_key.get(key)
             if session_row is None or log_row is None:
-                # Both rows missing and an earlier run's own `validation` table
-                # already recorded this session as dropped: a rerun skips it
-                # rather than un-narrating. Anything else missing rows (a
-                # skeleton never narrated, or only one of the pair present) is
-                # a real inconsistency and must be loud.
+                # Skip only a session both rows are missing for and an earlier run's
+                # `validation` table already confirmed dropped; anything else missing is loud.
                 confirmed_dropped = (
                     session_row is None
                     and log_row is None
@@ -301,9 +303,8 @@ def _run(
     sessions_by_key = {(s.pm_id, s.session_id): s for s in sessions}
     logs_by_key = {(log.pm_id, log.session_id): log for log in dialogue_logs}
 
-    # Every PM stage 6 narrated, from its own record of who it visited: a PM
-    # whose sessions have all since been dropped has none left in `sessions`,
-    # so deriving the PM set from there would silently stop visiting it.
+    # Every PM stage 6 narrated: deriving this from `sessions` instead would stop
+    # visiting a PM once every one of its sessions had been dropped.
     pm_ids = set(dialogue_meta["voices"])
 
     # A session only counts as already dropped, rather than never narrated,

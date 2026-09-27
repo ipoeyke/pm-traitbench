@@ -33,10 +33,13 @@ from pm_traitbench.tables.specs import (
 from pm_traitbench.tables.store import DataStore
 from tests.dialogue.conftest import FakeClient, default_responder, fake_message, turn_text
 from tests.dialogue.validate.conftest import (
+    advisor_turn,
     forbidden_reply,
     is_forbidden_request,
     is_leak_request,
     leak_reply,
+    log_of,
+    pm_turn,
     trade_mention,
 )
 from tests.engine.conftest import (  # noqa: F401
@@ -320,11 +323,7 @@ def test_rerun_after_full_pm_drop_still_lists_the_pm_and_carries_its_rows(
     catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When every one of a PM's sessions drops, a rerun must still visit that PM (to see
-    it has nothing left to check) rather than silently stop tracking it: `pms` still
-    lists it, its every session id stays in `dropped_session_ids`, and a `--force` rerun
-    with a raising client factory succeeds without recomputing anything for it.
-    """
+    """A rerun must still visit a PM whose sessions all dropped, not silently drop it too."""
     config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     skeletons = store.read(SKELETONS)
     target_pm_id = sorted({sk.pm_id for sk in skeletons})[0]
@@ -484,9 +483,8 @@ def test_one_missing_row_raises(
     catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A skeleton missing exactly one of its session/log rows, with no `validation` table
-    to confirm a drop, is a real inconsistency (a plan rerun that added skeletons, or a
-    first run that lost a row), never a silent skip.
+    """A skeleton missing exactly one of its session/log rows reflects a corrupted data
+    dir, not a legitimate drop, and must raise.
     """
     config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
@@ -518,6 +516,78 @@ def test_missing_session_and_log_with_no_validation_table_raises(
 
     with pytest.raises(ValidateError, match=f"session '{target_id}' has no narrated"):
         run_stage(make_validate_stage(_raising_factory), config, store)
+
+
+def test_confirmed_dropped_id_with_only_one_row_missing_raises(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A session id an earlier run's `validation` table confirms `DROPPED` is only
+    skipped while both its rows stay missing; one reappearing is still an inconsistency.
+    """
+    config_one_attempt, store, target_id = _setup_drop_scenario(
+        tmp_path, fixture_market, neutral_pm, monkeypatch
+    )
+    run_stage(_clean_validate_stage(store), config_one_attempt, store)
+    dropped_rows = {
+        r.session_id for r in store.read(VALIDATION) if r.status == ValidationStatus.DROPPED
+    }
+    assert target_id in dropped_rows
+
+    skeleton = next(sk for sk in store.read(SKELETONS) if sk.session_id == target_id)
+    stray_log = log_of(target_id, skeleton.pm_id, [pm_turn("filler"), advisor_turn("noted")])
+    store.write(DIALOGUE_LOGS, [*store.read(DIALOGUE_LOGS), stray_log])
+
+    with pytest.raises(ValidateError, match=f"session '{target_id}' has no narrated"):
+        run_stage(make_validate_stage(_raising_factory), config_one_attempt, store, force=True)
+
+
+def test_missing_rows_for_a_passed_session_raises(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `validation` table that exists but holds no `DROPPED` row for a missing session
+    (here, an earlier `PASS`) must not be mistaken for an earlier drop.
+    """
+    config, store = _run_clean_corpus(tmp_path, fixture_market, neutral_pm, monkeypatch)
+    target_id = next(
+        row.session_id for row in store.read(VALIDATION) if row.status == ValidationStatus.PASS
+    )
+    store.write(SESSIONS, [s for s in store.read(SESSIONS) if s.session_id != target_id])
+    store.write(
+        DIALOGUE_LOGS, [log for log in store.read(DIALOGUE_LOGS) if log.session_id != target_id]
+    )
+
+    with pytest.raises(ValidateError, match=f"session '{target_id}' has no narrated"):
+        run_stage(make_validate_stage(_raising_factory), config, store, force=True)
+
+
+def test_pm_with_no_skeletons_raises_and_leaves_sessions_untouched(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PM the dialogue metadata's `voices` names but that now has no skeletons must
+    raise rather than have its narrated `sessions`/`dialogue_logs` rows silently dropped.
+    """
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
+    target_pm_id = sorted({sk.pm_id for sk in store.read(SKELETONS)})[0]
+    store.write(SKELETONS, [sk for sk in store.read(SKELETONS) if sk.pm_id != target_pm_id])
+    sessions_before = store.path(SESSIONS).read_bytes()
+
+    with pytest.raises(ValidateError, match=target_pm_id):
+        run_stage(make_validate_stage(_raising_factory), config, store)
+
+    assert store.path(SESSIONS).read_bytes() == sessions_before
 
 
 def test_budget_error_writes_nothing(
