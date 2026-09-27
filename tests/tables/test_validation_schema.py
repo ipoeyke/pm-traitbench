@@ -33,6 +33,12 @@ def test_pass_row_requires_all_layers_ok_and_no_reasons() -> None:
         _row(reasons=("some reason",))
 
 
+@pytest.mark.parametrize("status", [ValidationStatus.REGENERATE, ValidationStatus.DROPPED])
+def test_non_pass_status_with_all_ok_raises(status: ValidationStatus) -> None:
+    with pytest.raises(ValidationError):
+        _row(status=status, reasons=("some reason",))
+
+
 def test_failed_row_requires_reasons() -> None:
     with pytest.raises(ValidationError):
         _row(status=ValidationStatus.REGENERATE, ledger_ok=False, reasons=())
@@ -43,6 +49,8 @@ def test_failed_row_requires_reasons() -> None:
 def test_unjudged_leak_must_be_ok() -> None:
     with pytest.raises(ValidationError):
         _row(leak_judged=False, leak_ok=False)
+    row = _row(leak_judged=False, leak_ok=True)
+    assert row.leak_judged is False
 
 
 def test_session_id_must_belong_to_pm() -> None:

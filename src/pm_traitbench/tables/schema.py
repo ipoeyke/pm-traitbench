@@ -1144,7 +1144,7 @@ class ValidationRow(BaseModel):
     grep_ok: bool = Field(description="Whether the session passed the deterministic grep checks.")
     leak_judged: bool = Field(description="Whether a judge assessed the session for a trait leak.")
     leak_ok: bool = Field(description="Whether the session passed the leak check.")
-    forbidden_ok: bool = Field(description="Whether the session avoided its forbidden traits.")
+    forbidden_ok: bool = Field(description="Whether the session avoided its rendered avoid lines.")
     level_warnings: int = Field(
         ge=0, description="Number of level-mention tolerance warnings raised."
     )
