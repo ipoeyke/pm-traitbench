@@ -231,13 +231,15 @@ def _run_metadata(
     for unit in frozen_units:
         typicality_by_pm[unit.ctx.skeleton.pm_id] = unit.typicality
         sessions_by_typicality[unit.typicality] = sessions_by_typicality.get(unit.typicality, 0) + 1
-    regenerated_by_typicality: dict[Typicality, int] = {}
+    # A session regenerated more than once still counts once: the rate is the share of
+    # sessions that needed regeneration, not the number of regenerate attempts.
+    regenerated_sessions_by_typicality: dict[Typicality, set[str]] = {}
     for row in new_rows:
         if row.status == ValidationStatus.REGENERATE:
             t = typicality_by_pm[row.pm_id]
-            regenerated_by_typicality[t] = regenerated_by_typicality.get(t, 0) + 1
+            regenerated_sessions_by_typicality.setdefault(t, set()).add(row.session_id)
     regeneration_rate_by_typicality = {
-        t: regenerated_by_typicality.get(t, 0) / n
+        t: len(regenerated_sessions_by_typicality.get(t, ())) / n
         for t, n in sorted(sessions_by_typicality.items())
     }
 

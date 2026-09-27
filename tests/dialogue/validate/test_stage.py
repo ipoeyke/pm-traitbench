@@ -7,21 +7,23 @@ from collections import Counter
 from collections.abc import Callable
 from contextvars import ContextVar
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from pm_traitbench import pipeline
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config
-from pm_traitbench.dialogue.client import CachedClient
+from pm_traitbench.dialogue.client import CachedClient, UsageTotals
 from pm_traitbench.dialogue.stage import make_stage
+from pm_traitbench.dialogue.validate.stage import _run_metadata
 from pm_traitbench.dialogue.validate.stage import make_stage as make_validate_stage
 from pm_traitbench.engine.stage import ENGINE_STAGE
-from pm_traitbench.enums import Ownership, SignalMode, Valence, ValidationStatus
+from pm_traitbench.enums import Ownership, SignalMode, Typicality, Valence, ValidationStatus
 from pm_traitbench.errors import DialogueBudgetError, ValidateError
 from pm_traitbench.signals.stage import PLAN_STAGE
 from pm_traitbench.stages import Stage, run_stage
-from pm_traitbench.tables.schema import Signal, to_record
+from pm_traitbench.tables.schema import Signal, ValidationRow, to_record
 from pm_traitbench.tables.specs import (
     DIALOGUE_LOGS,
     LEDGER,
@@ -700,6 +702,63 @@ def test_run_metadata_keys_and_typicality_rate(
     assert metadata["regeneration_rate_by_typicality"] == {"typical": 0.0}
     assert metadata["dropped"] == 0
     assert metadata["regenerated"] == 0
+
+
+def _unit_of(pm_id: str, typicality: Typicality) -> SimpleNamespace:
+    """A stand-in for `_Unit`, carrying only the attributes `_run_metadata` reads."""
+    skeleton = SimpleNamespace(pm_id=pm_id)
+    return SimpleNamespace(ctx=SimpleNamespace(skeleton=skeleton), typicality=typicality)
+
+
+def _validation_row(
+    pm_id: str, session_id: str, attempt: int, status: ValidationStatus
+) -> ValidationRow:
+    passed = status == ValidationStatus.PASS
+    return ValidationRow(
+        pm_id=pm_id,
+        session_id=session_id,
+        attempt=attempt,
+        status=status,
+        ledger_ok=True,
+        grep_ok=True,
+        leak_judged=False,
+        leak_ok=True,
+        forbidden_ok=passed,
+        level_warnings=0,
+        reasons=() if passed else ("forbidden: test reason",),
+        judge_model="judge-test",
+    )
+
+
+def test_regeneration_rate_counts_a_twice_regenerated_session_once() -> None:
+    """A session regenerated twice before passing must count once toward the rate, not
+    twice, so the rate stays a share of sessions rather than a count of attempts.
+    """
+    units = (
+        _unit_of("pm_001", Typicality.TYPICAL),
+        _unit_of("pm_002", Typicality.TYPICAL),
+    )
+    rows = [
+        _validation_row("pm_001", "s_pm001_2026-01-05_a", 1, ValidationStatus.REGENERATE),
+        _validation_row("pm_001", "s_pm001_2026-01-05_a", 2, ValidationStatus.REGENERATE),
+        _validation_row("pm_001", "s_pm001_2026-01-05_a", 3, ValidationStatus.PASS),
+        _validation_row("pm_002", "s_pm002_2026-01-05_a", 1, ValidationStatus.PASS),
+    ]
+
+    metadata = _run_metadata(
+        Config(),
+        units,
+        rows,
+        session_warnings=(),
+        rejected_replies=0,
+        dropped_session_ids=(),
+        signals=(),
+        pm_ids={"pm_001", "pm_002"},
+        totals=UsageTotals(),
+    )
+
+    assert metadata["regeneration_rate_by_typicality"] == {"typical": 0.5}
+    assert metadata["regenerated"] == 2
 
 
 def test_pipeline_lists_validate_seventh() -> None:
