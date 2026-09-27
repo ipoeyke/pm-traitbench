@@ -737,7 +737,7 @@ One Python package managed with uv, one CLI with one subcommand per stage, one `
 | 4 gate1 | `gates/gate1.py` | no | stage 3 | recovery report per parameter per asset class per seed; floors from synthetic seeds; real seeds report only |
 | 5 plan | `signals/` | no (stances from a template bank) | stages 1, 3 | `signals.jsonl`, session skeletons (date, kind, ideas, stance per signal) |
 | 6 dialogue | `dialogue/` | yes | stage 5, market | `sessions.jsonl` |
-| 7 validate | dialogue/validate/ | partly | stages 1-3, 5, 6, market | validation (hidden); rewrites sessions.jsonl and dialogue_logs.jsonl in place |
+| 7 validate | `dialogue/validate/` | partly | stages 1-3, 5, 6, market | `validation` (hidden); rewrites `sessions.jsonl` and `dialogue_logs.jsonl` in place |
 | 8 gate2 | `gates/gate2.py` | yes | stage 6 | recovery report per trait, kind, mode; classification ceiling |
 | 9 probes | `probes/` | optional | stages 1, 3, 5, 6 | `probes.jsonl` |
 | 10 freeze | `freeze.py` | no | all | hashes, `README.md`, split manifest |
