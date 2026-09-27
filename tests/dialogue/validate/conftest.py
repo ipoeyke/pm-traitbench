@@ -5,12 +5,26 @@ Consumed by every validate-stage test module, so a fixture's shape only has
 to match `schema.py` in one place.
 """
 
+import dataclasses
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date
+from pathlib import Path
 from typing import Any
 
-from pm_traitbench.enums import InstrumentKind, MentionKind, SessionKind, Side, Tenor, TurnRole
+from pm_traitbench.dialogue.client import CachedClient
+from pm_traitbench.dialogue.context import SessionContext
+from pm_traitbench.dialogue.tools import MarketLookup
+from pm_traitbench.enums import (
+    InstrumentKind,
+    MentionKind,
+    SessionKind,
+    Side,
+    SignalMode,
+    StanceEntry,
+    Tenor,
+    TurnRole,
+)
 from pm_traitbench.tables.schema import (
     CallUsage,
     DialogueLog,
@@ -21,7 +35,14 @@ from pm_traitbench.tables.schema import (
     ToolCall,
     TurnLog,
 )
-from tests.dialogue.conftest import fake_message, fixture_market, market_lookup  # noqa: F401
+from tests.dialogue.conftest import (  # noqa: F401
+    FakeClient,
+    default_responder,
+    fake_message,
+    fixture_market,
+    market_lookup,
+    session_context,
+)
 
 _MODEL = "claude-opus-5-5"
 _REQUEST_HASH = "0" * 64
@@ -138,14 +159,58 @@ def forbidden_reply(violations: list[tuple[int, str]]) -> dict:
     return fake_message([{"type": "text", "text": payload}])
 
 
+def _schema_title(request: Mapping[str, Any]) -> str | None:
+    """The request's output schema title, or `None` for a request whose schema carries none."""
+    return request.get("output_config", {}).get("format", {}).get("schema", {}).get("title")
+
+
 def is_leak_request(request: Mapping[str, Any]) -> bool:
     """True when `request` is a leakage judge request, by its schema's title."""
-    return request["output_config"]["format"]["schema"]["title"] == "leak_verdict"
+    return _schema_title(request) == "leak_verdict"
 
 
 def is_forbidden_request(request: Mapping[str, Any]) -> bool:
     """True when `request` is a forbidden-trait judge request, by its schema's title."""
-    return request["output_config"]["format"]["schema"]["title"] == "forbidden_verdict"
+    return _schema_title(request) == "forbidden_verdict"
+
+
+def validate_context(
+    lookup: MarketLookup,
+    *,
+    stances: tuple[Stance, ...] = (),
+    avoid_lines: tuple[str, ...] = (),
+    day_trades: tuple[LedgerRow, ...] = (),
+    kind: SessionKind = SessionKind.DECISION,
+) -> SessionContext:
+    """A `SessionContext` for the validate stage, with its own avoid lines."""
+    ctx = session_context(lookup, kind=kind, stances=stances, day_trades=day_trades)
+    return dataclasses.replace(ctx, avoid_lines=avoid_lines)
+
+
+def stance(trait_id: str, mode: SignalMode, entry: StanceEntry, text: str) -> Stance:
+    """A stance on `trait_id` with a fixed signal id, for tests that don't care which."""
+    return Stance(signal_id="sg_001", trait_id=trait_id, mode=mode, entry=entry, stance=text)
+
+
+def scripted_client(
+    tmp_path: Path,
+    narrator_reply: Callable[[dict], dict],
+    leak: Callable[[dict], dict],
+    forbidden: Callable[[dict], dict],
+) -> CachedClient:
+    """A `CachedClient` over a `FakeClient` that routes each request to its own script."""
+
+    def responder(request: Mapping[str, Any]) -> dict:
+        if is_leak_request(request):
+            return leak(request)
+        if is_forbidden_request(request):
+            return forbidden(request)
+        if "tools" in request:
+            return default_responder(request)
+        return narrator_reply(request)
+
+    fake = FakeClient(responder)
+    return CachedClient(lambda: fake, tmp_path, token_budget=None)
 
 
 def skeleton_of(
