@@ -25,9 +25,12 @@ def check_grep(log: DialogueLog, params: Sequence[str]) -> tuple[str, ...]:
     for turn in log.turns:
         if turn.role != TurnRole.PM:
             continue
-        matched = matched_param(turn.text, params)
-        if matched is not None:
-            reasons.add(f"names a parameter: {matched}")
+        # Check one param at a time: matched_param stops at the first hit, so a
+        # single call would miss a turn that names more than one param.
+        for param in params:
+            matched = matched_param(turn.text, (param,))
+            if matched is not None:
+                reasons.add(f"names a parameter: {matched}")
         lowered = turn.text.lower()
         for word in BANNED_STANCE_WORDS:
             if word in lowered:

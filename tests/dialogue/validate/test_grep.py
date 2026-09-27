@@ -36,8 +36,9 @@ def test_param_name_as_phrase_fails():
 
 def test_preference_param_fails():
     log = _log(pm_turn("I like a wide register"), advisor_turn("noted"))
+    params = grep_params(load_catalogue())
 
-    assert check_grep(log, PARAMS) == ("names a parameter: register",)
+    assert check_grep(log, params) == ("names a parameter: register",)
 
 
 def test_banned_word_substring_fails():
@@ -47,9 +48,30 @@ def test_banned_word_substring_fails():
 
 
 def test_advisor_turn_is_not_grepped():
-    log = _log(pm_turn("all clear"), advisor_turn("my loss_aversion_lambda take is this"))
+    log = _log(
+        pm_turn("all clear"),
+        advisor_turn("my loss_aversion_lambda take is this, driven by loss aversion"),
+    )
 
     assert check_grep(log, PARAMS) == ()
+
+
+def test_turn_naming_two_params_reports_both():
+    log = _log(pm_turn("register and pushback_style both matter"), advisor_turn("noted"))
+
+    assert check_grep(log, ("register", "pushback_style")) == (
+        "names a parameter: pushback_style",
+        "names a parameter: register",
+    )
+
+
+def test_case_insensitive_for_params_and_banned_words():
+    log = _log(pm_turn("REGISTER is what I said, driven by Loss Aversion"), advisor_turn("noted"))
+
+    assert check_grep(log, PARAMS) == (
+        "names a parameter: loss aversion",
+        "names a parameter: register",
+    )
 
 
 def test_whole_word_only():
@@ -77,8 +99,11 @@ def test_reasons_sorted_unique():
 
 def test_grep_params_is_biases_then_catalogue_preferences():
     catalogue = load_catalogue()
+    params = grep_params(catalogue)
 
-    assert grep_params(catalogue) == (
+    assert params == (
         *BIAS_PARAMS,
         *(entry.param for entry in catalogue.preferences),
     )
+    assert "register" in params
+    assert params.index("register") > params.index(BIAS_PARAMS[-1])
