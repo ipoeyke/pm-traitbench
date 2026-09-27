@@ -161,8 +161,8 @@ def test_reasons_are_sorted_and_unique():
         "trade not mentioned: ti_001 EQ-0001 - buy 100.0",
     )
 
-    # Two distinct not-in-ledger mentions, mentioned in reverse-sorted order, prove the
-    # tuple is actually sorted rather than merely reflecting insertion order.
+    # Two not-in-ledger mentions in reverse-sorted order prove the tuple is sorted,
+    # not in insertion order.
     later_idea = Mention(
         kind=MentionKind.TRADE,
         instrument_id="EQ-0001",
