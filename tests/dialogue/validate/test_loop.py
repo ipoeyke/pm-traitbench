@@ -132,6 +132,34 @@ def test_leak_judge_runs_only_with_a_revealed_or_contradiction_stance(market_loo
     assert revealed_result.leak_judged is True
     assert calls["n"] == 1
 
+    contradiction_ctx = validate_context(
+        market_lookup,
+        stances=(stance("t_01", SignalMode.CONTRADICTION, StanceEntry.CLAIM, "line"),),
+    )
+    contradiction_calls = {"n": 0}
+
+    def leak_called_contradiction(_request):
+        contradiction_calls["n"] += 1
+        return leak_reply(False, None)
+
+    contradiction_client = scripted_client(
+        tmp_path / "contradiction", _raise, leak_called_contradiction, _clean_forbidden
+    )
+    contradiction_result = asyncio.run(
+        validate_once(
+            contradiction_ctx,
+            log,
+            contradiction_client,
+            config,
+            catalogue,
+            ledger=(),
+            grep_params=(),
+            trait_param_by_id={"t_01": "disposition_ratio"},
+        )
+    )
+    assert contradiction_result.leak_judged is True
+    assert contradiction_calls["n"] == 1
+
 
 def test_explicit_label_of_the_revealed_param_fails_and_other_labels_pass(market_lookup, tmp_path):
     log = log_of(
@@ -175,6 +203,48 @@ def test_explicit_label_of_the_revealed_param_fails_and_other_labels_pass(market
     assert not_explicit.passed is True
 
 
+def test_explicit_label_naming_a_stated_traits_param_passes(market_lookup, tmp_path):
+    """A stated stance's param never needs judging; an explicit label naming it must not
+    fail the session just because some other stance in the session happens to be revealed.
+    """
+    log = log_of(
+        "s_pm001_2026-01-05_a",
+        "pm_001",
+        [pm_turn("all clear on the book"), advisor_turn("noted")],
+    )
+    catalogue = load_catalogue()
+    ctx = validate_context(
+        market_lookup,
+        stances=(
+            stance("t_01", SignalMode.STATED, StanceEntry.STATED, "line a"),
+            stance("t_02", SignalMode.REVEALED, StanceEntry.REVEALED, "line b"),
+        ),
+    )
+    client = scripted_client(
+        tmp_path,
+        _raise,
+        lambda _r: leak_reply(True, "loss aversion", "average down again"),
+        _clean_forbidden,
+    )
+
+    result = asyncio.run(
+        validate_once(
+            ctx,
+            log,
+            client,
+            Config(),
+            catalogue,
+            ledger=(),
+            grep_params=(),
+            trait_param_by_id={"t_01": "loss_aversion_lambda", "t_02": "disposition_ratio"},
+        )
+    )
+
+    assert result.leak_reasons == ()
+    assert result.unmapped_labels == ()
+    assert result.passed is True
+
+
 def test_unmapped_label_is_a_warning_not_a_failure(market_lookup, tmp_path):
     log = log_of(
         "s_pm001_2026-01-05_a",
@@ -208,6 +278,24 @@ def test_unmapped_label_is_a_warning_not_a_failure(market_lookup, tmp_path):
     assert result.leak_reasons == ()
     assert result.unmapped_labels == ("a label nobody catalogued",)
     assert result.passed is True
+
+    blank_client = scripted_client(
+        tmp_path / "blank", _raise, lambda _r: leak_reply(True, "   ", "quote"), _clean_forbidden
+    )
+    blank_result = asyncio.run(
+        validate_once(
+            ctx,
+            log,
+            blank_client,
+            Config(),
+            catalogue,
+            ledger=(),
+            grep_params=(),
+            trait_param_by_id={"t_01": "disposition_ratio"},
+        )
+    )
+    assert blank_result.unmapped_labels == ()
+    assert blank_result.passed is True
 
 
 def test_forbidden_violation_fails_with_the_avoid_line_and_out_of_range_index_is_dropped(
@@ -246,6 +334,37 @@ def test_forbidden_violation_fails_with_the_avoid_line_and_out_of_range_index_is
         'forbidden: never mention position size: "quoted the size"',
     )
     assert result.passed is False
+
+
+def test_forbidden_verdict_with_every_index_out_of_range_passes(market_lookup, tmp_path):
+    log = log_of(
+        "s_pm001_2026-01-05_a",
+        "pm_001",
+        [pm_turn("all clear on the book"), advisor_turn("noted")],
+    )
+    ctx = validate_context(market_lookup, avoid_lines=("never mention position size",))
+    client = scripted_client(
+        tmp_path,
+        _raise,
+        _raise,
+        lambda _r: forbidden_reply([(0, "zero index"), (5, "too high")]),
+    )
+
+    result = asyncio.run(
+        validate_once(
+            ctx,
+            log,
+            client,
+            Config(),
+            load_catalogue(),
+            ledger=(),
+            grep_params=(),
+            trait_param_by_id={},
+        )
+    )
+
+    assert result.forbidden_reasons == ()
+    assert result.passed is True
 
 
 def test_failed_session_is_regenerated_with_feedback_and_passes_on_attempt_two(
@@ -291,11 +410,19 @@ def test_failed_session_is_regenerated_with_feedback_and_passes_on_attempt_two(
         ValidationStatus.PASS,
     ]
     assert outcome.final is not None
-    assert outcome.final.session.turns != session.turns
-    assert calls["n"] >= 1
+    assert any(
+        turn.text == "feeling calm about the book today" for turn in outcome.final.session.turns
+    )
+    assert outcome.final.log != log
+    assert any(turn.text == "feeling calm about the book today" for turn in outcome.final.log.turns)
 
 
-def test_drop_at_the_attempt_cap(market_lookup, tmp_path):
+def _run_always_bad_narrator(market_lookup, tmp_path, max_attempts):
+    """Run a session whose narrator always names a banned param, up to `max_attempts`.
+
+    Returns the outcome and every narrator request's `system`, grouped by the attempt
+    number embedded in its feedback text.
+    """
     ctx = validate_context(market_lookup)
     session = _session_from(ctx, ("my loss_aversion_lambda is high", "noted"))
     log = log_of(
@@ -303,15 +430,17 @@ def test_drop_at_the_attempt_cap(market_lookup, tmp_path):
         ctx.skeleton.pm_id,
         [pm_turn("my loss_aversion_lambda is high"), advisor_turn("noted")],
     )
-    seen_attempts: list[int] = []
+    systems_by_attempt: dict[int, set[str]] = {}
 
     def narrator_reply(request):
         match = re.search(r"Attempt (\d+)\.", request["system"])
         assert match is not None
-        seen_attempts.append(int(match.group(1)))
+        systems_by_attempt.setdefault(int(match.group(1)), set()).add(request["system"])
         return _turn_reply("still naming my loss_aversion_lambda here", [])
 
-    config = Config(validation=Config().validation.model_copy(update={"max_attempts": 2}))
+    config = Config(
+        validation=Config().validation.model_copy(update={"max_attempts": max_attempts})
+    )
     client = scripted_client(tmp_path, narrator_reply, _raise, _clean_forbidden)
 
     outcome = asyncio.run(
@@ -328,14 +457,61 @@ def test_drop_at_the_attempt_cap(market_lookup, tmp_path):
             trait_param_by_id={},
         )
     )
+    return outcome, systems_by_attempt
+
+
+def test_drop_at_the_attempt_cap(market_lookup, tmp_path):
+    outcome, systems_by_attempt = _run_always_bad_narrator(market_lookup, tmp_path, max_attempts=2)
 
     assert [r.status for r in outcome.rows] == [
         ValidationStatus.REGENERATE,
         ValidationStatus.DROPPED,
     ]
     assert outcome.final is None
-    assert seen_attempts
-    assert all(attempt == 2 for attempt in seen_attempts)
+    assert set(systems_by_attempt) == {2}
+
+
+def test_drop_at_the_attempt_cap_after_two_regenerations(market_lookup, tmp_path):
+    outcome, systems_by_attempt = _run_always_bad_narrator(market_lookup, tmp_path, max_attempts=3)
+
+    assert [r.status for r in outcome.rows] == [
+        ValidationStatus.REGENERATE,
+        ValidationStatus.REGENERATE,
+        ValidationStatus.DROPPED,
+    ]
+    assert outcome.final is None
+    assert set(systems_by_attempt) == {2, 3}
+    assert systems_by_attempt[2].isdisjoint(systems_by_attempt[3])
+
+
+def test_max_attempts_one_drops_on_the_first_failure(market_lookup, tmp_path):
+    ctx = validate_context(market_lookup)
+    session = _session_from(ctx, ("my loss_aversion_lambda is high", "noted"))
+    log = log_of(
+        ctx.skeleton.session_id,
+        ctx.skeleton.pm_id,
+        [pm_turn("my loss_aversion_lambda is high"), advisor_turn("noted")],
+    )
+    config = Config(validation=Config().validation.model_copy(update={"max_attempts": 1}))
+    client = scripted_client(tmp_path, _raise, _raise, _clean_forbidden)
+
+    outcome = asyncio.run(
+        run_session(
+            ctx,
+            session,
+            log,
+            client,
+            config,
+            load_catalogue(),
+            _ADVISOR_PROMPT,
+            ledger=(),
+            grep_params=("loss_aversion_lambda",),
+            trait_param_by_id={},
+        )
+    )
+
+    assert [r.status for r in outcome.rows] == [ValidationStatus.DROPPED]
+    assert outcome.final is None
 
 
 def test_feedback_text_format():

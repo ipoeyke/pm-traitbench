@@ -89,7 +89,7 @@ async def validate_once(
             mapped = map_label(verdict.label, catalogue.bias_labels)
             if mapped is not None and mapped in revealed:
                 leak_reasons = (f'leaks {mapped}: "{verdict.quote}"',)
-            elif mapped is None and verdict.label is not None:
+            elif mapped is None and verdict.label and verdict.label.strip():
                 unmapped_labels = (verdict.label,)
 
     violations, rejected = await send_judged(
