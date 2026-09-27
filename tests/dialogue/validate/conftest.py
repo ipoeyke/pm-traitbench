@@ -15,6 +15,7 @@ from pm_traitbench.tables.schema import (
     LedgerRow,
     Mention,
     Skeleton,
+    Stance,
     ToolCall,
     TurnLog,
 )
@@ -125,7 +126,7 @@ def skeleton_of(
     pm_id: str,
     date: date,
     trade_idea_ids: tuple[str, ...],
-    stances: tuple = (),
+    stances: tuple[Stance, ...] = (),
     forbidden_trait_ids: tuple[str, ...] = (),
     forbidden_pref_params: tuple[str, ...] = (),
     kind: SessionKind = SessionKind.DECISION,

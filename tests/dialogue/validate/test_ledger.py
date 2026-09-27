@@ -161,6 +161,42 @@ def test_reasons_are_sorted_and_unique():
         "trade not mentioned: ti_001 EQ-0001 - buy 100.0",
     )
 
+    # Two distinct not-in-ledger mentions, mentioned in reverse-sorted order, prove the
+    # tuple is actually sorted rather than merely reflecting insertion order.
+    later_idea = Mention(
+        kind=MentionKind.TRADE,
+        instrument_id="EQ-0001",
+        trade_idea_id="ti_002",
+        tenor=None,
+        side=Side.BUY,
+        size=10.0,
+        field=None,
+        value=None,
+    )
+    earlier_idea = Mention(
+        kind=MentionKind.TRADE,
+        instrument_id="EQ-0001",
+        trade_idea_id="ti_001",
+        tenor=None,
+        side=Side.BUY,
+        size=10.0,
+        field=None,
+        value=None,
+    )
+    reverse_skeleton = skeleton_of(PM_ID, DATE, ())
+    reverse_log = _log(
+        reverse_skeleton,
+        pm_turn("later idea first", mentions=(later_idea,)),
+        advisor_turn("noted"),
+        pm_turn("earlier idea second", mentions=(earlier_idea,)),
+        advisor_turn("noted again"),
+    )
+    reverse_reasons = check_trades(reverse_log, reverse_skeleton, (), size_tolerance=0.05)
+    assert reverse_reasons == (
+        "trade not in ledger: ti_001 EQ-0001 - buy 10.0",
+        "trade not in ledger: ti_002 EQ-0001 - buy 10.0",
+    )
+
 
 def _quote_call(price: float) -> ToolCall:
     return ToolCall(
@@ -199,13 +235,27 @@ def test_advisor_level_ignores_error_tool_results(market_lookup):
     error_call = ToolCall(
         name=AdvisorTool.GET_QUOTE,
         input_json=canonical_json({"instrument": "EQ-0001"}),
-        result_json=canonical_json({"error": "unknown instrument 'EQ-0001', price 101.37"}),
+        result_json=canonical_json({"error": "unknown instrument", "price": 101.37}),
         is_error=True,
     )
     mention = level_mention("EQ-0001", "price", 101.37)
     log = _log(
         skeleton, pm_turn("what's the price?"), advisor_turn("no data", (mention,), (error_call,))
     )
+
+    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 1
+
+
+def test_advisor_level_ignores_bools_in_the_number_walk(market_lookup):
+    skeleton = skeleton_of(PM_ID, DATE, ())
+    call = ToolCall(
+        name=AdvisorTool.GET_QUOTE,
+        input_json=canonical_json({"instrument": "EQ-0001"}),
+        result_json=canonical_json({"instrument_id": "EQ-0001", "active": True}),
+        is_error=False,
+    )
+    mention = level_mention("EQ-0001", "price", 1.0)
+    log = _log(skeleton, pm_turn("what's the price?"), advisor_turn("no data", (mention,), (call,)))
 
     assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 1
 
@@ -267,6 +317,49 @@ def test_pm_level_confirmed_against_market_price(market_lookup, fixture_market):
 def test_pm_level_unknown_field_is_a_warning(market_lookup, fixture_market):
     instrument = sorted(fixture_market["instruments"], key=lambda i: i.instrument_id)[0]
     mention = level_mention(instrument.instrument_id, "bogus_field", 123.0)
+    skeleton = skeleton_of(PM_ID, DATE, ())
+    log = _log(skeleton, pm_turn("mark", mentions=(mention,)), advisor_turn("ok"))
+
+    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 1
+
+
+def test_pm_level_confirmed_against_curve_tenor(market_lookup):
+    _, levels = market_lookup.curve_on_or_before("RT-USD", DATE)
+    mention = level_mention("RT-USD", "level", levels[Tenor.Y5], tenor=Tenor.Y5)
+    skeleton = skeleton_of(PM_ID, DATE, ())
+    log = _log(skeleton, pm_turn("curve", mentions=(mention,)), advisor_turn("ok"))
+
+    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 0
+
+
+def test_pm_level_with_no_tenor_is_a_warning(market_lookup):
+    mention = level_mention("RT-USD", "level", 3.8)
+    skeleton = skeleton_of(PM_ID, DATE, ())
+    log = _log(skeleton, pm_turn("curve", mentions=(mention,)), advisor_turn("ok"))
+
+    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 1
+
+
+def test_pm_level_confirmed_against_spread_bp(market_lookup):
+    row = market_lookup.latest_price("CR-IG-001", DATE)
+    mention = level_mention("CR-IG-001", "spread_bp", row.spread_bp)
+    skeleton = skeleton_of(PM_ID, DATE, ())
+    log = _log(skeleton, pm_turn("spread", mentions=(mention,)), advisor_turn("ok"))
+
+    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 0
+
+
+def test_pm_level_confirmed_against_street_score(market_lookup):
+    row = market_lookup.latest_consensus("EQ-0001", DATE)
+    mention = level_mention("EQ-0001", "street_score", row.street_score)
+    skeleton = skeleton_of(PM_ID, DATE, ())
+    log = _log(skeleton, pm_turn("consensus", mentions=(mention,)), advisor_turn("ok"))
+
+    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 0
+
+
+def test_pm_level_missing_market_row_is_a_warning(market_lookup):
+    mention = level_mention("EQ-9999", "price", 100.0)
     skeleton = skeleton_of(PM_ID, DATE, ())
     log = _log(skeleton, pm_turn("mark", mentions=(mention,)), advisor_turn("ok"))
 
