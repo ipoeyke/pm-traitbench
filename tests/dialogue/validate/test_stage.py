@@ -614,6 +614,38 @@ def test_budget_error_writes_nothing(
     assert store.path(DIALOGUE_LOGS).read_bytes() == logs_before
 
 
+def test_unparsable_forbidden_judge_raises_validate_error_and_writes_nothing(
+    tmp_path: Path,
+    fixture_market: dict,
+    neutral_pm,
+    catalogue: Catalogue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A forbidden judge that never returns parsable JSON must surface as the validate
+    stage's own error, not the dialogue stage's, and leave every table untouched.
+    """
+    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
+    sessions_before = store.path(SESSIONS).read_bytes()
+    logs_before = store.path(DIALOGUE_LOGS).read_bytes()
+
+    faithful = _faithful_responder(store)
+
+    def responder(request: dict) -> dict:
+        if is_forbidden_request(request):
+            return fake_message([{"type": "text", "text": "not json"}])
+        return faithful(request)
+
+    stage = make_validate_stage(lambda c: FakeClient(responder))
+
+    with pytest.raises(ValidateError, match="the judge reply was unparsable"):
+        run_stage(stage, config, store)
+
+    assert not store.exists(VALIDATION)
+    assert store.path(SESSIONS).read_bytes() == sessions_before
+    assert store.path(DIALOGUE_LOGS).read_bytes() == logs_before
+
+
 def test_rerun_from_cache_is_byte_identical_with_zero_inner_calls(
     tmp_path: Path,
     fixture_market: dict,

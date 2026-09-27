@@ -333,7 +333,13 @@ def _run(
     outcomes = asyncio.run(
         _validate_all(frozen_units, client, config, catalogue, advisor_prompt, grep_terms)
     )
-    raise_on_failure(tuple(unit.ctx for unit in frozen_units), outcomes, client)
+    raise_on_failure(
+        tuple(unit.ctx for unit in frozen_units),
+        outcomes,
+        client,
+        error_type=ValidateError,
+        budget_label="validation",
+    )
 
     session_outcomes = [o for o in outcomes if isinstance(o, SessionOutcome)]
     if len(session_outcomes) != len(frozen_units):

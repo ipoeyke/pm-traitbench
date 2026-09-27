@@ -145,21 +145,27 @@ def raise_on_failure(
     contexts: tuple[SessionContext, ...],
     results: list[Any],
     client: CachedClient,
+    *,
+    error_type: type[PmTraitbenchError] = DialogueError,
+    budget_label: str = "dialogue",
 ) -> None:
-    """Raise a budget error, else a combined dialogue error, else re-raise any other exception.
+    """Raise a budget error, else a combined error of `error_type`, else re-raise any other
+    exception.
 
     A budget error takes priority since it means the whole run should stop
-    spending. Otherwise every failed session is named, in session order,
-    with sessions that failed for the identical reason collapsed onto one
-    line, so a rerun's cache can skip the sessions that already succeeded.
-    Any `PmTraitbenchError` result is grouped this way, not only a
-    `DialogueError`, so the validate stage's `ValidateError` results group
-    the same way as a narration failure.
+    spending; its message names `budget_label` so a validate run's budget
+    error points at `validation.token_budget`, not the dialogue config.
+    Otherwise every failed session is named, in session order, with sessions
+    that failed for the identical reason collapsed onto one line, so a
+    rerun's cache can skip the sessions that already succeeded. Any
+    `PmTraitbenchError` result is grouped this way and raised as
+    `error_type`, so the validate stage's `ValidateError` results are
+    reported under validate's own error, not dialogue's.
     """
     if any(isinstance(r, DialogueBudgetError) for r in results):
         totals = client.totals
         raise DialogueBudgetError(
-            f"dialogue token budget spent: {totals.input_tokens} input, "
+            f"{budget_label} token budget spent: {totals.input_tokens} input, "
             f"{totals.output_tokens} output tokens across {totals.calls} calls"
         )
 
@@ -172,7 +178,7 @@ def raise_on_failure(
         for reason, ids in ids_by_reason.items():
             who = f"session {ids[0]}" if len(ids) == 1 else f"sessions {', '.join(ids)}"
             lines.append(f"{who}: {reason}")
-        raise DialogueError("\n".join(lines))
+        raise error_type("\n".join(lines))
 
     for result in results:
         if isinstance(result, BaseException):
