@@ -14,10 +14,15 @@ from pm_traitbench.enums import (
     HY_BANDS,
     AssetClass,
     CommodityGroup,
+    DriftStatus,
+    Effort,
     EventType,
     ExpiryRule,
     RatingBand,
     Regime,
+    SessionKind,
+    Split,
+    Typicality,
 )
 from pm_traitbench.errors import ConfigError
 from pm_traitbench.market.constants import (
@@ -1838,6 +1843,178 @@ class MarketConfig(BaseModel):
         return self
 
 
+_TURN_RANGE_FIELD_BY_KIND: dict[SessionKind, str] = {
+    SessionKind.SILENCE: "silence",
+    SessionKind.CHECK_IN: "check_in",
+    SessionKind.DECISION: "decision",
+}
+
+
+class TurnRanges(BaseModel):
+    """Candidate turn counts a dialogue session may run, keyed by session kind."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    silence: tuple[int, ...] = Field(
+        (2, 4),
+        json_schema_extra={
+            "basis": "guess",
+            "note": "a factual question and its answer, at most one follow-up",
+        },
+    )
+    check_in: tuple[int, ...] = Field(
+        (2, 4, 6),
+        json_schema_extra={
+            "basis": "guess",
+            "note": "a status update takes a little longer than a silent session",
+        },
+    )
+    decision: tuple[int, ...] = Field(
+        (4, 6, 8),
+        json_schema_extra={
+            "basis": "guess",
+            "note": "a decision gets discussed before it is closed",
+        },
+    )
+
+    @field_validator("silence", "check_in", "decision")
+    @classmethod
+    def _check_turn_counts(cls, value: tuple[int, ...]) -> tuple[int, ...]:
+        if not value:
+            raise ValueError("turn counts must not be empty")
+        if list(value) != sorted(set(value)):
+            raise ValueError(f"turn counts must be strictly increasing: {list(value)}")
+        if any(n % 2 != 0 or not (2 <= n <= 8) for n in value):
+            raise ValueError(f"turn counts must be even and within [2, 8]: {list(value)}")
+        return value
+
+    def for_kind(self, kind: SessionKind) -> tuple[int, ...]:
+        return getattr(self, _TURN_RANGE_FIELD_BY_KIND[kind])
+
+
+class PmFilter(BaseModel):
+    """Optional criteria to restrict which PMs the dialogue stage generates sessions for."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    split: Split | None = Field(
+        None,
+        json_schema_extra={
+            "basis": "design",
+            "note": "restrict to one split so a first run can measure cost before scaling up",
+        },
+    )
+    typicality: Typicality | None = Field(
+        None,
+        json_schema_extra={
+            "basis": "design",
+            "note": "restrict to one typicality so a first run can measure cost before scaling up",
+        },
+    )
+    drift: DriftStatus | None = Field(
+        None,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "restrict to static or drift PMs, so narration can go static pilot PMs "
+                "first, then drift PMs once dialogue recovery is checked"
+            ),
+        },
+    )
+    pm_ids: tuple[str, ...] = Field(
+        (),
+        json_schema_extra={
+            "basis": "design",
+            "note": "restrict to a few named PMs so a first run can measure cost before scaling up",
+        },
+    )
+
+
+class DialogueConfig(BaseModel):
+    """Settings for the dialogue stage: narrator and advisor models, turn budgets and limits."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    narrator_model: str = Field(
+        "claude-opus-5-5",
+        json_schema_extra={
+            "basis": "design",
+            "note": "one narrator model so narration never confounds trait recovery",
+        },
+    )
+    advisor_model: str = Field(
+        "claude-opus-5-5",
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "same model as the narrator, so one API behaviour to handle; the two "
+                "sides differ by prompt and inputs"
+            ),
+        },
+    )
+    effort: Effort = Field(
+        Effort.LOW,
+        json_schema_extra={
+            "basis": "design",
+            "note": "a narrated turn is short and constrained by its directive",
+        },
+    )
+    advisor_prompt_path: Path | None = Field(
+        None,
+        json_schema_extra={"basis": "design", "note": "None means the packaged advisor prompt"},
+    )
+    turns_by_kind: TurnRanges = Field(default_factory=TurnRanges)
+    max_tool_rounds: int = Field(
+        3,
+        ge=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "parallel tool calls answer most turns in one round",
+        },
+    )
+    max_retries: int = Field(
+        3,
+        ge=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "re-sends of a reply the pipeline rejected (refusal, truncation or invalid "
+                "output); transport errors are retried separately, by the SDK"
+            ),
+        },
+    )
+    api_max_retries: int = Field(
+        4,
+        ge=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "SDK retries for rate limits, overloads and dropped connections, with backoff",
+        },
+    )
+    max_concurrency: int = Field(
+        8,
+        ge=1,
+        json_schema_extra={"basis": "guess", "note": "well inside default API rate limits"},
+    )
+    max_output_tokens: int = Field(
+        4000,
+        ge=256,
+        json_schema_extra={
+            "basis": "design",
+            "note": "room for low-effort thinking plus a short turn",
+        },
+    )
+    token_budget: int | None = Field(
+        None,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": "fresh input plus output tokens per run",
+        },
+    )
+    pm_filter: PmFilter = Field(default_factory=PmFilter)
+
+
 class Config(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -1854,6 +2031,7 @@ class Config(BaseModel):
     engine: EngineConfig = Field(default_factory=EngineConfig)
     gate1: Gate1Config = Field(default_factory=Gate1Config)
     plan: PlanConfig = Field(default_factory=PlanConfig)
+    dialogue: DialogueConfig = Field(default_factory=DialogueConfig)
 
     @model_validator(mode="after")
     def _check_week_ranges_within_calendar(self) -> "Config":

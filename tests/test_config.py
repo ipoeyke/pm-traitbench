@@ -11,17 +11,20 @@ from pm_traitbench.config import (
     BiasSpec,
     CalendarConfig,
     Config,
+    DialogueConfig,
     DriftConfig,
     EngineConfig,
     EventSpec,
     MarketConfig,
     PlanConfig,
+    PmFilter,
     RealSeedSpec,
     RegimeParams,
+    TurnRanges,
     load_config,
 )
 from pm_traitbench.distributions import BetaSpec, LogNormalSpec
-from pm_traitbench.enums import EventType, Regime
+from pm_traitbench.enums import Effort, EventType, Regime, SessionKind
 from pm_traitbench.errors import ConfigError
 
 
@@ -988,3 +991,99 @@ def test_dump_with_basis_covers_every_plan_leaf() -> None:
         row = rows[path]
         assert row.basis in ("sourced", "design", "guess")
         assert row.note.strip()
+
+
+def test_dialogue_defaults() -> None:
+    config = Config().dialogue
+    assert config.narrator_model == "claude-opus-5-5"
+    assert config.advisor_model == "claude-opus-5-5"
+    assert config.effort == Effort.LOW
+    assert config.advisor_prompt_path is None
+    assert config.turns_by_kind == TurnRanges()
+    assert config.turns_by_kind.silence == (2, 4)
+    assert config.turns_by_kind.check_in == (2, 4, 6)
+    assert config.turns_by_kind.decision == (4, 6, 8)
+    assert config.max_tool_rounds == 3
+    assert config.max_retries == 3
+    assert config.api_max_retries == 4
+    assert config.max_concurrency == 8
+    assert config.max_output_tokens == 4000
+    assert config.token_budget is None
+    assert config.pm_filter == PmFilter()
+    assert config.pm_filter.split is None
+    assert config.pm_filter.typicality is None
+    assert config.pm_filter.drift is None
+    assert config.pm_filter.pm_ids == ()
+
+
+def test_turn_ranges_for_kind_maps_session_kind() -> None:
+    ranges = TurnRanges()
+    assert ranges.for_kind(SessionKind.SILENCE) == ranges.silence
+    assert ranges.for_kind(SessionKind.CHECK_IN) == ranges.check_in
+    assert ranges.for_kind(SessionKind.DECISION) == ranges.decision
+
+
+def test_turn_ranges_reject_odd_values() -> None:
+    with pytest.raises(ValidationError):
+        TurnRanges(silence=(2, 3))
+
+
+def test_turn_ranges_reject_values_above_eight() -> None:
+    with pytest.raises(ValidationError):
+        TurnRanges(decision=(4, 6, 10))
+
+
+def test_turn_ranges_reject_unsorted_values() -> None:
+    with pytest.raises(ValidationError):
+        TurnRanges(check_in=(4, 2, 6))
+
+
+def test_turn_ranges_reject_empty_tuple() -> None:
+    with pytest.raises(ValidationError):
+        TurnRanges(silence=())
+
+
+def test_turn_ranges_reject_duplicate_values() -> None:
+    with pytest.raises(ValidationError):
+        TurnRanges(check_in=(2, 4, 4))
+
+
+def test_turn_ranges_reject_value_below_two() -> None:
+    with pytest.raises(ValidationError):
+        TurnRanges(decision=(0, 4, 6))
+
+
+def test_dialogue_config_rejects_zero_token_budget() -> None:
+    with pytest.raises(ValidationError):
+        DialogueConfig(token_budget=0)
+
+
+def test_dialogue_config_rejects_max_output_tokens_below_256() -> None:
+    with pytest.raises(ValidationError):
+        DialogueConfig(max_output_tokens=255)
+
+
+def test_dialogue_config_rejects_zero_max_tool_rounds() -> None:
+    with pytest.raises(ValidationError):
+        DialogueConfig(max_tool_rounds=0)
+
+
+def test_dialogue_config_rejects_negative_api_max_retries() -> None:
+    with pytest.raises(ValidationError):
+        DialogueConfig(api_max_retries=-1)
+
+
+def test_dialogue_config_rejects_unknown_key() -> None:
+    with pytest.raises(ValidationError):
+        DialogueConfig(unknown_field=1)
+
+
+def test_dialogue_config_loads_from_yaml_override(tmp_path: Path) -> None:
+    path = _write_yaml(
+        tmp_path, {"dialogue": {"pm_filter": {"pm_ids": ["pm_001"]}, "token_budget": 1000}}
+    )
+    config = load_config(path)
+    assert config.dialogue.pm_filter.pm_ids == ("pm_001",)
+    assert config.dialogue.token_budget == 1000
+    assert config.dialogue.narrator_model == Config().dialogue.narrator_model
+    assert config.dialogue.turns_by_kind == Config().dialogue.turns_by_kind

@@ -4,16 +4,18 @@ Re-exports pm_traitbench.enums so table code has a single import path.
 """
 
 import datetime
+import json
 import re
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pm_traitbench.enums import (
     MARKET_WIDE_EVENTS,
     MULTI_LEG_FORMS,
     NULL_SURPRISE_EVENTS,
     Action,
+    AdvisorTool,
     AssetClass,
     CommodityGroup,
     DriftEventType,
@@ -26,6 +28,7 @@ from pm_traitbench.enums import (
     Gate1Verdict,
     InstrumentKind,
     Kind,
+    MentionKind,
     Op,
     Ownership,
     PnlState,
@@ -44,6 +47,7 @@ from pm_traitbench.enums import (
     StanceEntry,
     StreetView,
     Tenor,
+    TurnRole,
     Typicality,
     Valence,
 )
@@ -81,6 +85,9 @@ __all__ = [
     "Ownership",
     "SessionKind",
     "StanceEntry",
+    "TurnRole",
+    "MentionKind",
+    "AdvisorTool",
     "Mandate",
     "StatedProfile",
     "Persona",
@@ -103,6 +110,13 @@ __all__ = [
     "Signal",
     "Stance",
     "Skeleton",
+    "Turn",
+    "Session",
+    "Mention",
+    "ToolCall",
+    "CallUsage",
+    "TurnLog",
+    "DialogueLog",
     "to_record",
     "multiplier_field",
 ]
@@ -740,6 +754,17 @@ def _session_prefix(pm_id: str, date: datetime.date) -> str:
     return f"{_session_pm_prefix(pm_id)}{date.isoformat()}_"
 
 
+def _check_idea_id_tuple(trade_idea_ids: tuple[str, ...]) -> None:
+    """Raise unless every id matches the idea-id pattern and the tuple is sorted and unique."""
+    for trade_idea_id in trade_idea_ids:
+        if not _IDEA_ID_RE.fullmatch(trade_idea_id):
+            raise ValueError(
+                f"trade_idea_ids must match {_IDEA_ID_PATTERN!r}, got '{trade_idea_id}'"
+            )
+    if list(trade_idea_ids) != sorted(set(trade_idea_ids)):
+        raise ValueError("trade_idea_ids must be sorted and unique")
+
+
 def _session_date(session_id: str) -> datetime.date:
     """Parse the YYYY-MM-DD segment out of a session id."""
     return datetime.date.fromisoformat(session_id.split("_")[2])
@@ -884,13 +909,219 @@ class Skeleton(BaseModel):
 
     @model_validator(mode="after")
     def _check_trade_idea_ids(self) -> "Skeleton":
-        for trade_idea_id in self.trade_idea_ids:
-            if not _IDEA_ID_RE.fullmatch(trade_idea_id):
+        _check_idea_id_tuple(self.trade_idea_ids)
+        return self
+
+
+_REQUEST_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _check_turns_alternate(turns: "tuple[Turn, ...] | tuple[TurnLog, ...]") -> None:
+    """Raise unless turns has an even length in [2, 8] and alternates pm, advisor, pm, ..."""
+    if len(turns) % 2 != 0 or not (2 <= len(turns) <= 8):
+        raise ValueError("turns must have an even length between 2 and 8")
+    for index, turn in enumerate(turns):
+        expected = TurnRole.PM if index % 2 == 0 else TurnRole.ADVISOR
+        if turn.role != expected:
+            raise ValueError("turns must alternate starting with pm and ending with advisor")
+
+
+class Turn(BaseModel):
+    """One turn of a session's public transcript: who spoke and what they said."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    role: TurnRole = Field(description="Who spoke this turn.")
+    text: str = Field(min_length=1, description="The turn's spoken text.")
+
+
+class Session(BaseModel):
+    """A dated PM-copilot session: the public transcript of a two-agent dialogue."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    session_id: str = Field(
+        pattern=_SESSION_ID_PATTERN, description="Unique identifier for the session."
+    )
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM the session belongs to."
+    )
+    date: datetime.date = Field(description="Date of the session.")
+    kind: SessionKind = Field(description="Kind of session.")
+    trade_idea_ids: tuple[str, ...] = Field(
+        description="Trade ideas raised in the session, sorted and unique."
+    )
+    turns: tuple[Turn, ...] = Field(description="The session's public transcript.")
+
+    @model_validator(mode="after")
+    def _check_session(self) -> "Session":
+        if not self.session_id.startswith(_session_prefix(self.pm_id, self.date)):
+            raise ValueError("session_id must sit on the session's own pm and date")
+        return self
+
+    @model_validator(mode="after")
+    def _check_turns(self) -> "Session":
+        _check_turns_alternate(self.turns)
+        return self
+
+    @model_validator(mode="after")
+    def _check_trade_idea_ids(self) -> "Session":
+        _check_idea_id_tuple(self.trade_idea_ids)
+        return self
+
+
+class Mention(BaseModel):
+    """A single trade or market level mentioned in a turn."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: MentionKind = Field(description="Whether the mention is a trade or a market level.")
+    instrument_id: str = Field(description="Instrument the mention refers to.")
+    trade_idea_id: str | None = Field(
+        pattern=_IDEA_ID_PATTERN, description="Trade idea mentioned; set only for a trade mention."
+    )
+    tenor: Tenor | None = Field(description="Tenor mentioned, if any.")
+    side: Side | None = Field(description="Side mentioned; set only for a trade mention.")
+    size: float | None = Field(gt=0, description="Size mentioned; set only for a trade mention.")
+    field: str | None = Field(description="Data field mentioned; set only for a level mention.")
+    value: float | None = Field(description="Value mentioned; set only for a level mention.")
+
+    @model_validator(mode="after")
+    def _check_kind(self) -> "Mention":
+        if self.kind == MentionKind.TRADE:
+            if self.trade_idea_id is None or self.side is None or self.size is None:
+                raise ValueError("trade mention requires trade_idea_id, side and size")
+            if self.field is not None or self.value is not None:
+                raise ValueError("trade mention requires field and value to be null")
+        else:
+            if self.field is None or self.value is None:
+                raise ValueError("level mention requires field and value")
+            if self.trade_idea_id is not None or self.side is not None or self.size is not None:
+                raise ValueError("level mention requires trade_idea_id, side and size to be null")
+        return self
+
+
+def canonical_json(value: Any) -> str:
+    """One JSON serialisation for `value`: sorted keys, no extra whitespace.
+
+    The dialogue session log and the `tool_result` block sent back to the
+    model both serialise a tool call's input and result through this, so a
+    given value always renders the same string.
+    """
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+class ToolCall(BaseModel):
+    """One advisor tool invocation and its result."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: AdvisorTool = Field(description="Tool invoked.")
+    input_json: str = Field(
+        description=(
+            "Tool call input, as canonical JSON: "
+            "json.dumps(value, sort_keys=True, separators=(',', ':'))."
+        )
+    )
+    result_json: str = Field(
+        description=(
+            "Tool call result, as canonical JSON: "
+            "json.dumps(value, sort_keys=True, separators=(',', ':'))."
+        )
+    )
+    is_error: bool = Field(description="Whether the tool call resulted in an error.")
+
+    @field_validator("input_json", "result_json")
+    @classmethod
+    def _check_canonical_json(cls, v: str) -> str:
+        try:
+            parsed = json.loads(v)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"must be valid JSON: {e}") from e
+        if canonical_json(parsed) != v:
+            raise ValueError("must be canonical JSON (sorted keys, no extra whitespace)")
+        return v
+
+
+class CallUsage(BaseModel):
+    """Token usage summed over a turn's API calls."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    input_tokens: int = Field(ge=0, description="Fresh input tokens billed.")
+    output_tokens: int = Field(ge=0, description="Fresh output tokens billed.")
+    cache_read_input_tokens: int = Field(ge=0, description="Input tokens read from cache.")
+    cache_creation_input_tokens: int = Field(ge=0, description="Input tokens written to cache.")
+
+
+class TurnLog(BaseModel):
+    """The hidden log of one turn: its mentions, directive, tool use and call metadata."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    role: TurnRole = Field(description="Who spoke this turn.")
+    text: str = Field(description="The turn's spoken text.")
+    mentions: tuple[Mention, ...] = Field(description="Trades and levels mentioned this turn.")
+    directive: str | None = Field(
+        description="The stance, opening or violation line the turn carried, if any."
+    )
+    scripted_violation: bool = Field(
+        description="Whether this is the advisor turn that carried the scripted violation."
+    )
+    tool_calls: tuple[ToolCall, ...] = Field(description="Tool calls made this turn.")
+    model: str = Field(description="Model that generated this turn.")
+    request_hashes: tuple[str, ...] = Field(
+        min_length=1, description="Cache keys of the requests that produced this turn."
+    )
+    usage: CallUsage = Field(description="Token usage summed over the turn's calls.")
+
+    @model_validator(mode="after")
+    def _check_request_hashes(self) -> "TurnLog":
+        for request_hash in self.request_hashes:
+            if not _REQUEST_HASH_PATTERN.fullmatch(request_hash):
                 raise ValueError(
-                    f"trade_idea_ids must match {_IDEA_ID_PATTERN!r}, got '{trade_idea_id}'"
+                    f"request_hashes entries must be 64 lowercase hex characters, "
+                    f"got '{request_hash}'"
                 )
-        if list(self.trade_idea_ids) != sorted(set(self.trade_idea_ids)):
-            raise ValueError("trade_idea_ids must be sorted and unique")
+        return self
+
+    @model_validator(mode="after")
+    def _check_pm_turn(self) -> "TurnLog":
+        if self.role == TurnRole.PM and (self.tool_calls != () or self.scripted_violation):
+            raise ValueError("pm turn requires empty tool_calls and scripted_violation False")
+        return self
+
+
+class DialogueLog(BaseModel):
+    """The hidden per-turn log of a session: voice, mentions, tool use and call metadata."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    session_id: str = Field(
+        pattern=_SESSION_ID_PATTERN, description="Unique identifier for the session."
+    )
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM the session belongs to."
+    )
+    voice_id: str = Field(description="Voice drawn for the PM this session was narrated in.")
+    turns: tuple[TurnLog, ...] = Field(description="The session's hidden per-turn log.")
+
+    @model_validator(mode="after")
+    def _check_session_id(self) -> "DialogueLog":
+        if not self.session_id.startswith(_session_pm_prefix(self.pm_id)):
+            raise ValueError("session_id must belong to the log's own pm")
+        return self
+
+    @model_validator(mode="after")
+    def _check_turns(self) -> "DialogueLog":
+        _check_turns_alternate(self.turns)
+        return self
+
+    @model_validator(mode="after")
+    def _check_scripted_violation_count(self) -> "DialogueLog":
+        count = sum(turn.scripted_violation for turn in self.turns)
+        if count > 1:
+            raise ValueError("at most one turn may have scripted_violation True")
         return self
 
 

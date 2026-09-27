@@ -1,5 +1,11 @@
 from pm_traitbench.tables.schema import PositionDay
-from pm_traitbench.tables.specs import ENGINE_TABLES, HIDDEN_COLUMNS, PLAN_TABLES, POSITION_DAYS
+from pm_traitbench.tables.specs import (
+    DIALOGUE_TABLES,
+    ENGINE_TABLES,
+    HIDDEN_COLUMNS,
+    PLAN_TABLES,
+    POSITION_DAYS,
+)
 
 _EXPECTED_ENGINE_TABLES = {
     "ideas": ("pm_id", "trade_idea_id"),
@@ -15,7 +21,9 @@ def test_engine_tables_names_and_keys() -> None:
 
 
 def test_hidden_columns_names_real_columns() -> None:
-    models_by_table = {spec.name: spec.model for spec in (*ENGINE_TABLES, *PLAN_TABLES)}
+    models_by_table = {
+        spec.name: spec.model for spec in (*ENGINE_TABLES, *PLAN_TABLES, *DIALOGUE_TABLES)
+    }
     for table_name, hidden in HIDDEN_COLUMNS.items():
         model = models_by_table[table_name]
         for column in hidden:

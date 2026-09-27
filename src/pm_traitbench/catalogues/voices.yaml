@@ -1,0 +1,17 @@
+voices:
+  - voice_id: v_01
+    line: terse trader shorthand, drops articles, quotes levels without units
+  - voice_id: v_02
+    line: measured and complete sentences, hedges before committing to a view
+  - voice_id: v_03
+    line: numbers first, then one line of reasoning
+  - voice_id: v_04
+    line: long unhurried sentences, walks through the reasoning before the conclusion
+  - voice_id: v_05
+    line: clipped one-liners, states the call and stops
+  - voice_id: v_06
+    line: casual and conversational, turns statements into questions back at the advisor
+  - voice_id: v_07
+    line: formal, full sentences, cites every level with its unit
+  - voice_id: v_08
+    line: rapid short sentences, stacks two or three data points before any view

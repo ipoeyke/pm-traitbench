@@ -1,0 +1,43 @@
+biases:
+  loss_aversion_lambda: do not describe averaging into a losing position, holding one to avoid taking the loss, or pushing to get back to even after a loss
+  disposition_ratio: do not describe selling winners quickly or holding on to losing positions
+  anchoring_rho: do not describe taking profit at a round number short of your target
+  extrapolation_theta: do not describe adding to or entering a trade because a recent trend kept extending
+  herding_weight: do not describe taking a position because the street or other desks are already positioned that way
+  overconfidence_coverage: do not describe keeping a narrow range of outcomes around your targets, or sizing up because you trust your read
+  conviction_size_miscalibration: do not describe sizing a position out of step with how confident you say you are in it
+  exit_deficiency: do not describe noticing a trigger and not acting on it, adding to a position past its trigger, or rolling a position later than planned
+
+preferences:
+  response_format: do not ask the advisor for a particular answer format
+  pushback_style: do not ask the advisor to push back more or less on your view
+  register: do not ask the advisor to change its tone
+  number_language: do not ask the advisor to quote moves in a particular unit
+  answer_ordering: do not ask the advisor to lead with the conclusion or with the reasoning
+  hedging_language: do not ask the advisor to hedge its language or give a confidence level
+  length_on_routine_questions: do not ask the advisor to keep answers short or go longer on routine questions
+  positioning_context: do not ask the advisor for street positioning
+  carry_display: do not ask the advisor how it shows carry
+  macro_commentary: do not ask the advisor for macro commentary
+  calendar_citation: do not ask the advisor to cite calendar events
+  source_attribution: do not ask the advisor to name its data source
+  scenario_framing: do not ask the advisor to frame outcomes into named scenarios
+  peer_comparison: do not ask the advisor to compare your positioning to consensus or to a peer set
+  rating_agency_view: do not ask the advisor for the rating agency view
+  inventory_data_mention: do not ask the advisor to cite inventory data
+  pre_mortem_before_sizing: do not ask the advisor for a pre-mortem before sizing
+  weekly_exposure_recap: do not ask the advisor for an exposure recap
+  end_of_day_summary: do not ask the advisor for a summary when you wrap up for the day
+  thesis_reminder_on_review: do not ask the advisor to restate your original thesis
+  decision_journal_prompt: do not ask the advisor to prompt you for a journal entry
+  earnings_week_heads_up: do not ask the advisor to flag upcoming earnings
+  refi_window_reminder: do not ask the advisor to flag a refinancing window
+  roll_reminder: do not ask the advisor to flag a contract roll date
+  rebalance_recap: do not ask the advisor to recap a rebalance
+  hedge_instrument: do not specify which instrument to hedge with
+  duration_expression: do not describe expressing a rates view as a curve trade, a butterfly or outright duration
+  futures_vs_etf: do not specify futures, an etf, or the underlying instrument for the trade
+  curve_trade_expression: do not specify a calendar spread, a spread ratio or a butterfly for a curve view
+  pair_vs_outright: do not specify a pair trade, an outright position, or a basket for the trade
+  fx_hedge_expression: do not specify forwards, options or futures for hedging fx exposure
+  credit_index_vs_single_name: do not specify a credit index, single-name bonds or credit default swaps for the trade

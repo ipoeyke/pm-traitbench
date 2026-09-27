@@ -31,6 +31,8 @@ _CATALOGUE_FILES = (
     "signposts.yaml",
     "theses.yaml",
     "stances.yaml",
+    "voices.yaml",
+    "avoid.yaml",
 )
 _ASSET_CLASSES = list(AssetClass)
 _N_PREFERENCES_MAX = 8
@@ -591,3 +593,136 @@ def test_render_thesis_maps_closer_to_a_phrase() -> None:
 def test_render_thesis_unknown_closer_raises_catalogue_error() -> None:
     with pytest.raises(CatalogueError, match="bogus"):
         render_thesis("out on {closer}", closer="bogus")
+
+
+# --- check_dialogue_catalogue: voice bank and forbidden-behaviour catalogue ---
+
+
+def test_avoid_missing_a_bias_param_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "avoid.yaml"
+    data = _load_yaml(path)
+    del data["biases"]["exit_deficiency"]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="missing.*exit_deficiency"):
+        _check(catalogue)
+
+
+def test_avoid_missing_a_preference_param_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "avoid.yaml"
+    data = _load_yaml(path)
+    del data["preferences"]["positioning_context"]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="missing.*positioning_context"):
+        _check(catalogue)
+
+
+def test_avoid_extra_bias_key_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "avoid.yaml"
+    data = _load_yaml(path)
+    data["biases"]["not_a_bias_param"] = "do not do the thing"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="extra.*not_a_bias_param"):
+        _check(catalogue)
+
+
+def test_avoid_blank_line_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "avoid.yaml"
+    data = _load_yaml(path)
+    data["preferences"]["positioning_context"] = "   "
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="positioning_context"):
+        _check(catalogue)
+
+
+def test_voice_line_with_a_banned_word_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][0]["line"] = "quietly follows the herd on every call"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="herd"):
+        _check(catalogue)
+
+
+def test_voice_line_with_a_banned_word_raises_case_insensitively(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][0]["line"] = "quietly follows the HERD on every call"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="herd"):
+        _check(catalogue)
+
+
+def test_voice_line_naming_a_bias_param_raises(tmp_path: Path) -> None:
+    # exit_deficiency has no BANNED_STANCE_WORDS stem, so this exercises only
+    # the param-name check, not the separate banned-word check above.
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][0]["line"] = "explains the exit_deficiency behind every call"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="exit_deficiency"):
+        _check(catalogue)
+
+
+def test_voice_line_naming_a_preference_param_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][0]["line"] = "casual register, drops articles"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="register"):
+        _check(catalogue)
+
+
+def test_blank_voice_line_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][0]["line"] = "   "
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="v_01"):
+        _check(catalogue)
+
+
+def test_duplicate_voice_id_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"][1]["voice_id"] = data["voices"][0]["voice_id"]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="duplicate"):
+        _check(catalogue)
+
+
+def test_fewer_than_six_voices_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "voices.yaml"
+    data = _load_yaml(path)
+    data["voices"] = data["voices"][:5]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="6"):
+        _check(catalogue)
+
+
+def test_missing_voices_file_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    (tmp_path / "voices.yaml").unlink()
+    with pytest.raises(CatalogueError):
+        load_catalogue(tmp_path)

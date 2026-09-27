@@ -8,6 +8,7 @@ import pytest
 from pm_traitbench import pipeline
 from pm_traitbench.cli import build_parser, main
 from pm_traitbench.config import OutputConfig, load_config
+from pm_traitbench.dialogue.stage import DIALOGUE_STAGE, make_stage
 from pm_traitbench.enums import AssetClass
 from pm_traitbench.signals.stage import PLAN_STAGE
 from pm_traitbench.tables.specs import (
@@ -18,10 +19,12 @@ from pm_traitbench.tables.specs import (
     MARKET_TABLES,
     PERSONAS,
     RULES,
+    SESSIONS,
     SKELETONS,
     TRAITS,
 )
 from pm_traitbench.tables.store import DataStore
+from tests.dialogue.conftest import FakeClient, default_responder
 from tests.market.real.conftest import fake_cache  # noqa: F401
 
 _DEMO_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "demo.yaml"
@@ -258,3 +261,41 @@ def test_parser_accepts_the_plan_subcommand() -> None:
     parser = build_parser(pipeline.STAGES)
     args = parser.parse_args(["plan", "--config", str(_DEMO_CONFIG)])
     assert args.command == PLAN_STAGE.name
+
+
+def test_sample_market_engine_plan_then_dialogue_on_synthetic_seeds(tmp_path: Path) -> None:
+    config_path = tmp_path / "synthetic.yaml"
+    config_path.write_text(_SYNTHETIC_CONFIG, encoding="utf-8")
+    data_dir = tmp_path / "data"
+    args = ["--config", str(config_path), "--data-dir", str(data_dir)]
+
+    for stage in ("sample", "market", "engine", "plan"):
+        assert main([stage, *args]) == 0
+
+    store = DataStore(data_dir, load_config(config_path).output)
+    personas = store.read(PERSONAS)
+    asset_class_by_pm = {p.pm_id: p.mandate.asset_class for p in personas}
+    direct_asset_pm = sorted(
+        pm_id for pm_id, ac in asset_class_by_pm.items() if ac != AssetClass.MULTI_ASSET
+    )[0]
+
+    dialogue_config_path = tmp_path / "synthetic_dialogue.yaml"
+    dialogue_config_path.write_text(
+        _SYNTHETIC_CONFIG + f"dialogue:\n  pm_filter:\n    pm_ids: [{direct_asset_pm}]\n",
+        encoding="utf-8",
+    )
+    dialogue_args = ["--config", str(dialogue_config_path), "--data-dir", str(data_dir)]
+    fake_dialogue_stage = make_stage(lambda c: FakeClient(default_responder))
+    stages = (*pipeline.STAGES[:-1], fake_dialogue_stage)
+
+    assert main(["dialogue", *dialogue_args], stages=stages) == 0
+
+    sessions = store.read(SESSIONS)
+    assert sessions
+    assert {s.pm_id for s in sessions} == {direct_asset_pm}
+
+
+def test_parser_accepts_the_dialogue_subcommand() -> None:
+    parser = build_parser(pipeline.STAGES)
+    args = parser.parse_args(["dialogue", "--config", str(_DEMO_CONFIG)])
+    assert args.command == DIALOGUE_STAGE.name

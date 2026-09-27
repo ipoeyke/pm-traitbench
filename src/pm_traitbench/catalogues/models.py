@@ -280,6 +280,28 @@ class Stances(BaseModel):
         return pattern_lines.get(asset_class.value, pattern_lines.get("all", ()))
 
 
+class Voice(BaseModel):
+    """One narrator voice: an id and a short instruction line, independent of any trait."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    voice_id: str = Field(pattern=r"^v_\d{2}$")
+    line: str = Field(min_length=1)
+
+
+class AvoidLines(BaseModel):
+    """Behaviour lines the narrator must not give a PM who does not have that trait.
+
+    Keyed by bias and preference param so a skeleton's forbidden trait and
+    preference ids can look up the line to render into the narrator's forbidden list.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    biases: dict[str, str]
+    preferences: dict[str, str]
+
+
 class Catalogue(BaseModel):
     """The full reference catalogue that samplers draw from."""
 
@@ -292,6 +314,8 @@ class Catalogue(BaseModel):
     signposts: dict[AssetClass, SignpostTemplates]
     theses: ThesisTemplates
     stances: Stances
+    voices: tuple[Voice, ...]
+    avoid: AvoidLines
 
     def preferences_for(self, asset_class: AssetClass) -> tuple[PreferenceEntry, ...]:
         """Return preference entries applicable to an asset class, in catalogue order."""

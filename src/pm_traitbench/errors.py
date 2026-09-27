@@ -61,3 +61,15 @@ class PlanError(PmTraitbenchError):
     """
 
     exit_code = 1
+
+
+class DialogueError(PmTraitbenchError):
+    """Raised when the dialogue stage cannot run or a session cannot be narrated."""
+
+    exit_code = 1
+
+
+class DialogueBudgetError(DialogueError):
+    """Raised when the dialogue stage's fresh-token budget is spent."""
+
+    exit_code = 1

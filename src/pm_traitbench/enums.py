@@ -283,3 +283,34 @@ class CarrierSource(StrEnum):
     POSITION_DAY = "position_day"
     RULE_EVENT = "rule_event"
     IDEA = "idea"
+
+
+class TurnRole(StrEnum):
+    PM = "pm"
+    ADVISOR = "advisor"
+
+
+class MentionKind(StrEnum):
+    TRADE = "trade"
+    LEVEL = "level"
+
+
+class DriftStatus(StrEnum):
+    STATIC = "static"
+    DRIFT = "drift"
+
+
+class Effort(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+    MAX = "max"
+
+
+class AdvisorTool(StrEnum):
+    GET_QUOTE = "get_quote"
+    GET_CURVE = "get_curve"
+    GET_CONSENSUS = "get_consensus"
+    GET_CALENDAR = "get_calendar"
+    GET_HISTORY = "get_history"

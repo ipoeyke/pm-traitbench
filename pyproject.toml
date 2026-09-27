@@ -10,6 +10,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "anthropic>=1.8.0",
     "numpy>=2.5.3",
     "pyarrow>=25.0.1",
     "pydantic>=2.13.5",
@@ -27,6 +28,9 @@ build-backend = "uv_build"
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.format]
+exclude = ["*.md"]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
@@ -38,6 +42,8 @@ select = ["E", "F", "I", "UP", "B"]
 "tests/gates/conftest.py" = ["F811"]
 "tests/signals/conftest.py" = ["F811"]
 "tests/signals/test_stage.py" = ["F811"]
+"tests/dialogue/conftest.py" = ["F811"]
+"tests/dialogue/test_stage.py" = ["F811"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

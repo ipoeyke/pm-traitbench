@@ -20,6 +20,7 @@ uv run pm-traitbench market --config configs/demo.yaml --data-dir data
 uv run pm-traitbench engine --config configs/demo.yaml --data-dir data
 uv run pm-traitbench gate1 --config configs/demo.yaml --data-dir data
 uv run pm-traitbench plan --config configs/demo.yaml --data-dir data
+uv run pm-traitbench dialogue --config configs/demo.yaml --data-dir data
 ```
 
 The `sample` stage writes four tables to `data`: `personas`, `traits`,
@@ -44,8 +45,10 @@ non-report-only parameter, pooled over every direct asset class of the
 synthetic seeds. Per-class and report-only rows are judged but never block.
 Both tables and its run metadata land on disk either way. The `plan` stage
 plants trait signals on dated sessions and writes `signals` and `skeletons`,
-never blocking on a shortfall. Pass `--force` to overwrite a table that
-already exists. Run `uv run pm-traitbench --help` for the full command list.
+never blocking on a shortfall. The `dialogue` stage narrates every planted
+session and writes `sessions` and the hidden `dialogue_logs`. Pass `--force`
+to overwrite a table that already exists. Run `uv run pm-traitbench --help`
+for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
 market seed, as the default and demo configs both do for their pilot seed;
@@ -546,6 +549,54 @@ lack of free trading days are all warnings in `run_metadata/plan.json`, in
 PM order. Multi-asset PMs are skipped, the same PMs the engine stage already
 skipped, and are listed under `skipped` in the plan's own run metadata.
 
+## Dialogue
+
+The `dialogue` stage reads `personas`, `rules`, `traits`, `drift_events`, the
+engine's `ideas`, `ledger` and `position_days`, the plan's `skeletons`, and
+the market's `instruments`, `prices`, `curves`, `consensus` and `calendar`.
+A PM with no skeleton (the same multi-asset PMs the earlier stages already
+skip) is skipped here too; the plan's own `skipped` list is copied into this
+stage's run metadata, not used to decide the skip itself. The stage narrates
+every skeleton into a two-agent session and writes two tables: `sessions`,
+the public transcript of text-only turns, and `dialogue_logs`, a hidden
+table carrying each session's voice and, per turn, its directive, its
+`mentions`, any tool calls, the model that produced it, the cache keys of
+the requests behind it, and its token usage.
+
+Both agents are `claude-opus-5-5` at low reasoning effort. The advisor
+never sees the PM's persona, rules, ideas or plan; it is instructed to
+answer market questions only through five tools, each capped to dates on or
+before the session's own date, rather than from memory - whether it
+actually follows that instruction is checked by a later stage, not
+enforced here. The narrator is one model across every PM, so no model
+choice can leak a signal; each PM instead draws one voice, independently of
+every trait and preference, that colours every session it narrates. Each
+session's turn count is drawn per session kind and then raised just enough
+to fit every stance the skeleton schedules; a stance and the opening line
+reach the narrator, and a scripted advisor violation reaches the advisor,
+each as a system message partway through the conversation, never folded
+into the first turn.
+
+Every request goes through a response cache under `<data-dir>/cache/llm/`,
+keyed on the session id plus the full request body - so two sessions whose
+requests happen to render identically never share a cached reply - which
+doubles as the run's resume manifest: a crash, a rejected reply or widening
+`dialogue.pm_filter` to cover more PMs is a rerun with `--force` that only
+calls the API for the turns still missing from the cache. Credentials
+(`ant auth login` or `ANTHROPIC_API_KEY`) are needed only on a cache miss,
+so a fully cached rerun works offline. The advisor's system prompt is
+`src/pm_traitbench/catalogues/advisor_prompt.md` unless
+`dialogue.advisor_prompt_path` names another file. Like every other stage,
+it writes both tables or neither. `dialogue.token_budget` caps fresh input
+plus output tokens spent in one run of the stage; it is a soft stop (an
+already in-flight batch of sessions can overshoot it by up to
+`dialogue.max_concurrency` calls) and a resumed run's count starts back at
+zero, so it caps each run's own spend, not a cumulative total. Before a
+full run, measure cost with `dialogue.pm_filter` restricted to 2-3 PMs and
+set `dialogue.token_budget` accordingly. Checking whether a session
+actually holds up (its `mentions` against the ledger, leakage, forbidden
+traits) is a later stage's job, not this one's.
+
 ## Development
 
 ```sh
@@ -553,3 +604,17 @@ uv run pytest -n auto
 uv run ruff check
 uv run ruff format
 ```
+
+Tests marked `network` are skipped by default because they reach real
+endpoints. Pass `--run-network` to run them:
+
+```sh
+uv run pytest -m network --run-network
+```
+
+There are two: one fetches a real FRED series, and one runs a single
+four-turn dialogue session against the live Anthropic API to confirm the
+dialogue stage's requests (structured output, advisor tools, mid-conversation
+system messages) work on the configured model. The second needs Anthropic
+credentials (`ant auth login` or `ANTHROPIC_API_KEY`) and spends a few cents
+of tokens; run it once before a paid `dialogue` run.
