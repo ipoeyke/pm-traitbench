@@ -131,12 +131,13 @@ def _build_units(
     store: DataStore,
     catalogue: Catalogue,
     voices_meta: Mapping[str, Any],
-    pm_ids_in_sessions: set[str],
+    pm_ids: set[str],
     sessions_by_key: Mapping[tuple[str, str], Session],
     logs_by_key: Mapping[tuple[str, str], DialogueLog],
+    previously_dropped_ids_confirmed: set[str],
 ) -> _BuildResult:
     all_pm_tables = partition_pm_tables(store)
-    selected = [pm for pm in all_pm_tables if pm.persona.pm_id in pm_ids_in_sessions]
+    selected = [pm for pm in all_pm_tables if pm.persona.pm_id in pm_ids]
 
     instruments = store.read(MARKET_INSTRUMENTS)
     prices = store.read(MARKET_PRICES)
@@ -164,15 +165,23 @@ def _build_units(
             key = (pm.persona.pm_id, ctx.skeleton.session_id)
             session_row = sessions_by_key.get(key)
             log_row = logs_by_key.get(key)
-            if session_row is None and log_row is None:
-                # A skeleton with no session row was dropped by an earlier
-                # validate run; a rerun skips it rather than un-narrating.
+            if session_row is None or log_row is None:
+                # Both rows missing and an earlier run's own `validation` table
+                # already recorded this session as dropped: a rerun skips it
+                # rather than un-narrating. Anything else missing rows (a
+                # skeleton never narrated, or only one of the pair present) is
+                # a real inconsistency and must be loud.
+                confirmed_dropped = (
+                    session_row is None
+                    and log_row is None
+                    and ctx.skeleton.session_id in previously_dropped_ids_confirmed
+                )
+                if not confirmed_dropped:
+                    raise ValidateError(
+                        f"session '{ctx.skeleton.session_id}' has no narrated dialogue output"
+                    )
                 previously_dropped.append(ctx.skeleton.session_id)
                 continue
-            if session_row is None or log_row is None:
-                raise ValidateError(
-                    f"session '{ctx.skeleton.session_id}' has no narrated dialogue output"
-                )
             units.append(
                 _Unit(
                     ctx=ctx,
@@ -196,7 +205,7 @@ def _run_metadata(
     rejected_replies: int,
     dropped_session_ids: Sequence[str],
     signals: Sequence[Signal],
-    validated_pm_ids: set[str],
+    pm_ids: set[str],
     totals: UsageTotals,
 ) -> dict[str, Any]:
     """Build the validate stage's run metadata from this run's own attempts and outcomes.
@@ -204,6 +213,8 @@ def _run_metadata(
     `new_rows` is this run's own attempt rows (not counting rows carried
     forward from an earlier run's dropped sessions), so `fails_by_layer`,
     `regenerated` and the typicality rates all describe this run alone.
+    `dropped`, `dropped_session_ids`, `void_signal_ids` and `void_signals_by_pm`
+    are cumulative across every run instead, since a dropped session stays dropped.
     """
     void_signal_set = set(dropped_session_ids)
     void_signal_ids = sorted(sig.signal_id for sig in signals if sig.session_id in void_signal_set)
@@ -238,7 +249,7 @@ def _run_metadata(
 
     return {
         "judge_model": config.validation.judge_model,
-        "pms": sorted(validated_pm_ids),
+        "pms": sorted(pm_ids),
         "sessions_checked": len(frozen_units),
         "fails_by_layer": {
             "ledger": sum(1 for r in new_rows if not r.ledger_ok),
@@ -287,9 +298,20 @@ def _run(
 
     sessions = store.read(SESSIONS)
     dialogue_logs = store.read(DIALOGUE_LOGS)
-    pm_ids_in_sessions = {s.pm_id for s in sessions}
     sessions_by_key = {(s.pm_id, s.session_id): s for s in sessions}
     logs_by_key = {(log.pm_id, log.session_id): log for log in dialogue_logs}
+
+    # Every PM stage 6 narrated, from its own record of who it visited: a PM
+    # whose sessions have all since been dropped has none left in `sessions`,
+    # so deriving the PM set from there would silently stop visiting it.
+    pm_ids = set(dialogue_meta["voices"])
+
+    # A session only counts as already dropped, rather than never narrated,
+    # when an earlier run's own `validation` table says so.
+    previous_rows = store.read(VALIDATION) if store.exists(VALIDATION) else []
+    previously_dropped_ids_confirmed = {
+        row.session_id for row in previous_rows if row.status == ValidationStatus.DROPPED
+    }
 
     grep_terms = grep_params(catalogue)
     build_result = _build_units(
@@ -297,15 +319,13 @@ def _run(
         store,
         catalogue,
         dialogue_meta["voices"],
-        pm_ids_in_sessions,
+        pm_ids,
         sessions_by_key,
         logs_by_key,
+        previously_dropped_ids_confirmed,
     )
     frozen_units = build_result.units
     previously_dropped_session_ids = build_result.previously_dropped_session_ids
-    # Derived from the built units, not `pm_ids_in_sessions`, since a skeleton-less
-    # PM (never possible in practice) must not be dropped from the tables below.
-    validated_pm_ids = {unit.ctx.skeleton.pm_id for unit in frozen_units}
 
     cache_dir = store.data_dir / "cache" / "llm"
     client = CachedClient(lambda: client_factory(config), cache_dir, config.validation.token_budget)
@@ -328,9 +348,9 @@ def _run(
         for unit, outcome in zip(frozen_units, session_outcomes, strict=True)
     }
 
-    new_sessions = [s for s in sessions if s.pm_id not in validated_pm_ids]
+    new_sessions = [s for s in sessions if s.pm_id not in pm_ids]
     new_sessions.extend(final.session for final in finals.values() if final is not None)
-    new_logs = [log for log in dialogue_logs if log.pm_id not in validated_pm_ids]
+    new_logs = [log for log in dialogue_logs if log.pm_id not in pm_ids]
     new_logs.extend(final.log for final in finals.values() if final is not None)
 
     newly_dropped_ids = [session_id for (_, session_id), final in finals.items() if final is None]
@@ -338,10 +358,8 @@ def _run(
 
     # A session an earlier run already dropped keeps its earlier validation rows,
     # unchanged, since this run never re-checks it.
-    previous_rows = store.read(VALIDATION) if store.exists(VALIDATION) else []
-    carried_rows = [
-        row for row in previous_rows if row.session_id in set(previously_dropped_session_ids)
-    ]
+    previously_dropped_set = set(previously_dropped_session_ids)
+    carried_rows = [row for row in previous_rows if row.session_id in previously_dropped_set]
 
     store.write(VALIDATION, [*carried_rows, *new_rows])
     store.write(SESSIONS, new_sessions)
@@ -356,7 +374,7 @@ def _run(
         rejected_replies,
         dropped_session_ids,
         signals,
-        validated_pm_ids,
+        pm_ids,
         client.totals,
     )
 
@@ -393,7 +411,7 @@ def make_stage(client_factory: Callable[[Config], LlmClient]) -> Stage:
         ),
         writes=(VALIDATION,),
         appends=(
-            # Validate checks every PM present in `sessions`, so it owns the whole table.
+            # Validate checks every PM dialogue narrated, so it owns the whole table.
             Append(SESSIONS, owned=lambda record: True),
             Append(DIALOGUE_LOGS, owned=lambda record: True),
         ),
