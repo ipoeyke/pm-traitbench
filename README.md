@@ -604,3 +604,17 @@ uv run pytest -n auto
 uv run ruff check
 uv run ruff format
 ```
+
+Tests marked `network` are skipped by default because they reach real
+endpoints. Pass `--run-network` to run them:
+
+```sh
+uv run pytest -m network --run-network
+```
+
+There are two: one fetches a real FRED series, and one runs a single
+four-turn dialogue session against the live Anthropic API to confirm the
+dialogue stage's requests (structured output, advisor tools, mid-conversation
+system messages) work on the configured model. The second needs Anthropic
+credentials (`ant auth login` or `ANTHROPIC_API_KEY`) and spends a few cents
+of tokens; run it once before a paid `dialogue` run.
