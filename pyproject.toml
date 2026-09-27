@@ -28,6 +28,9 @@ build-backend = "uv_build"
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.format]
+exclude = ["*.md"]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
