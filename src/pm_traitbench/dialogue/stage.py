@@ -14,7 +14,7 @@ from typing import Any
 
 from pm_traitbench.catalogues.loader import check_dialogue_catalogue, load_catalogue
 from pm_traitbench.config import Config
-from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, LlmClient
+from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, LlmClient, session_prefix
 from pm_traitbench.dialogue.context import PmTables, SessionContext, build_contexts, select_pms
 from pm_traitbench.dialogue.prompts import prompt_sha256, read_advisor_prompt
 from pm_traitbench.dialogue.session import SessionResult, narrate_session
@@ -147,7 +147,7 @@ def _reason_of(ctx: SessionContext, error: PmTraitbenchError) -> str:
     normalises both to a plain reason before regrouping by session.
     """
     message = str(error)
-    prefix = f"session {ctx.skeleton.session_id}: "
+    prefix = session_prefix(ctx.skeleton.session_id)
     return message[len(prefix) :] if message.startswith(prefix) else message
 
 

@@ -49,6 +49,9 @@ BIAS_PARAMS: tuple[str, ...] = (
 
 Basis = Literal["sourced", "design", "guess"]
 
+# One model for narrator, advisor and judge, so model behaviour never confounds recovery.
+DEFAULT_MODEL = "claude-opus-5-5"
+
 
 class BiasSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -1936,14 +1939,14 @@ class DialogueConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     narrator_model: str = Field(
-        "claude-opus-5-5",
+        DEFAULT_MODEL,
         json_schema_extra={
             "basis": "design",
             "note": "one narrator model so narration never confounds trait recovery",
         },
     )
     advisor_model: str = Field(
-        "claude-opus-5-5",
+        DEFAULT_MODEL,
         json_schema_extra={
             "basis": "design",
             "note": (
@@ -2021,7 +2024,7 @@ class ValidateConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     judge_model: str = Field(
-        "claude-opus-5-5",
+        DEFAULT_MODEL,
         json_schema_extra={
             "basis": "design",
             "note": "strongest current model, one judge",

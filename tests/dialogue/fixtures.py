@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from pm_traitbench.catalogues.models import Voice
-from pm_traitbench.config import Config, TurnRanges
+from pm_traitbench.config import DEFAULT_MODEL, Config, TurnRanges
 from pm_traitbench.dialogue.client import LlmClient
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import MarketLookup
@@ -35,7 +35,7 @@ from tests.signals.fixtures import persona
 def fake_message(
     content: list[dict],
     stop_reason: str = "end_turn",
-    model: str = "claude-opus-5-5",
+    model: str = DEFAULT_MODEL,
     input_tokens: int = 100,
     output_tokens: int = 50,
 ) -> dict:

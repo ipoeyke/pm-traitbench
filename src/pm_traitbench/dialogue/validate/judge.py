@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pm_traitbench.catalogues.models import BiasLabels
 from pm_traitbench.config import BIAS_PARAMS, ValidateConfig
 from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_until_accepted
+from pm_traitbench.dialogue.prompts import base_request
 from pm_traitbench.enums import TurnRole
 from pm_traitbench.errors import ValidateError
 from pm_traitbench.tables.schema import DialogueLog
@@ -84,16 +85,14 @@ def _judge_request(
     system: str, content: str, schema: Mapping[str, Any], config: ValidateConfig
 ) -> dict[str, Any]:
     """A judge's Messages API request body: only the allowed keys."""
-    return {
-        "model": config.judge_model,
-        "max_tokens": config.max_output_tokens,
-        "system": system,
-        "messages": [{"role": "user", "content": content}],
-        "output_config": {
-            "effort": config.effort.value,
-            "format": {"type": "json_schema", "schema": schema},
-        },
-    }
+    return base_request(
+        config.judge_model,
+        config.max_output_tokens,
+        config.effort,
+        system,
+        [{"role": "user", "content": content}],
+        schema,
+    )
 
 
 def leak_request(

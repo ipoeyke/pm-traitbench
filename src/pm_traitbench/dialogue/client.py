@@ -20,9 +20,15 @@ from typing import Any, Protocol
 
 import anthropic
 
+from pm_traitbench.dialogue.usage import usage_of
 from pm_traitbench.errors import DialogueBudgetError, DialogueError, PmTraitbenchError
 
 _NO_CREDENTIALS_MESSAGE = "no Anthropic credentials: run `ant auth login` or set ANTHROPIC_API_KEY"
+
+
+def session_prefix(session_id: str) -> str:
+    """The `session {id}: ` lead of every per-session error and warning."""
+    return f"session {session_id}: "
 
 
 class LlmClient(Protocol):
@@ -155,11 +161,10 @@ class CachedClient:
             self._inner = self._inner_factory()
         response = await self._inner.send(request)
 
-        usage = response.get("usage", {})
-        # `to_dict()` keeps explicit nulls for optional usage fields.
-        self._totals.input_tokens += usage.get("input_tokens") or 0
-        self._totals.output_tokens += usage.get("output_tokens") or 0
-        self._totals.cache_read_tokens += usage.get("cache_read_input_tokens") or 0
+        usage = usage_of(response)
+        self._totals.input_tokens += usage.input_tokens
+        self._totals.output_tokens += usage.output_tokens
+        self._totals.cache_read_tokens += usage.cache_read_input_tokens
 
         return Reply(key=key, response=response, cached=False)
 
@@ -273,4 +278,4 @@ async def send_until_accepted[T](
             return reply, accepted, rejected
         refresh = refresh or reply.cached
         rejected += 1
-    raise error_type(f"session {scope}: {reason}")
+    raise error_type(f"{session_prefix(scope)}{reason}")

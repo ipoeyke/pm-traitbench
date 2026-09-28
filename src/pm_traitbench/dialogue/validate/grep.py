@@ -18,7 +18,6 @@ def check_grep(log: DialogueLog, params: Sequence[str]) -> tuple[str, ...]:
     for turn in log.turns:
         if turn.role != TurnRole.PM:
             continue
-        lowered = turn.text.lower()
-        for name in (*matched_params(lowered, params), *banned_words_in(lowered)):
+        for name in (*matched_params(turn.text, params), *banned_words_in(turn.text)):
             reasons.add(f"names a parameter: {name}")
     return tuple(sorted(reasons))

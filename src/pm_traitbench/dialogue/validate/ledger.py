@@ -39,7 +39,7 @@ def _trade_key(mention_or_row: Mention | LedgerRow) -> _TradeKey:
 
 
 def _size_agrees(mention: Mention, row: LedgerRow, size_tolerance: float) -> bool:
-    return abs(mention.size - row.size) <= size_tolerance * row.size
+    return _agree(mention.size, row.size, size_tolerance)
 
 
 def check_trades(

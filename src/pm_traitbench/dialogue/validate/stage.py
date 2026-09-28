@@ -31,7 +31,7 @@ from pm_traitbench.dialogue.stage import (
     raise_on_failure,
     run_bounded,
 )
-from pm_traitbench.dialogue.validate.loop import SessionOutcome, run_session
+from pm_traitbench.dialogue.validate.loop import LAYERS, SessionOutcome, run_session
 from pm_traitbench.dialogue.voices import draw_voice
 from pm_traitbench.enums import Typicality, ValidationStatus
 from pm_traitbench.errors import ValidateError
@@ -167,16 +167,14 @@ def _run_metadata(
             void_signal_ids.append(sig.signal_id)
             void_signals_by_pm[sig.pm_id] += 1
 
-    fails_by_layer = dict.fromkeys(("ledger", "grep", "leak", "forbidden"), 0)
+    fails_by_layer = dict.fromkeys(LAYERS, 0)
     regenerate_rows = 0
     # A session regenerated more than once still counts once: the rate is the share of
     # sessions that needed regeneration, not the number of regenerate attempts.
     regenerated_sessions: set[str] = set()
     for row in new_rows:
-        fails_by_layer["ledger"] += not row.ledger_ok
-        fails_by_layer["grep"] += not row.grep_ok
-        fails_by_layer["leak"] += not row.leak_ok
-        fails_by_layer["forbidden"] += not row.forbidden_ok
+        for layer in LAYERS:
+            fails_by_layer[layer] += not getattr(row, f"{layer}_ok")
         if row.status == ValidationStatus.REGENERATE:
             regenerate_rows += 1
             regenerated_sessions.add(row.session_id)

@@ -12,9 +12,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from pm_traitbench.config import DEFAULT_MODEL
 from pm_traitbench.dialogue.client import CachedClient
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import MarketLookup
+from pm_traitbench.dialogue.usage import ZERO_USAGE
 from pm_traitbench.enums import (
     MentionKind,
     SessionKind,
@@ -25,7 +27,6 @@ from pm_traitbench.enums import (
 )
 from pm_traitbench.signals.assemble import session_id
 from pm_traitbench.tables.schema import (
-    CallUsage,
     DialogueLog,
     LedgerRow,
     Mention,
@@ -36,11 +37,7 @@ from pm_traitbench.tables.schema import (
 )
 from tests.dialogue.fixtures import FakeClient, default_responder, fake_message, session_context
 
-_MODEL = "claude-opus-5-5"
 _REQUEST_HASH = "0" * 64
-_ZERO_USAGE = CallUsage(
-    input_tokens=0, output_tokens=0, cache_read_input_tokens=0, cache_creation_input_tokens=0
-)
 
 
 def _turn(
@@ -59,9 +56,9 @@ def _turn(
         directive=directive,
         scripted_violation=False,
         tool_calls=tool_calls,
-        model=_MODEL,
+        model=DEFAULT_MODEL,
         request_hashes=(_REQUEST_HASH,),
-        usage=_ZERO_USAGE,
+        usage=ZERO_USAGE,
     )
 
 

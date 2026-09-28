@@ -195,7 +195,7 @@ def test_tool_round_cap_forces_a_final_reply_and_warns(market_lookup, tmp_path):
     result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
 
     assert result.warnings == (
-        f"{ctx.skeleton.session_id}: advisor reply 0 hit the tool-round cap",
+        f"session {ctx.skeleton.session_id}: advisor reply 0 hit the tool-round cap",
     )
     advisor_log = result.log.turns[1]
     assert len(advisor_log.tool_calls) == _CONFIG.max_tool_rounds

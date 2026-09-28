@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config
-from pm_traitbench.dialogue.client import CachedClient
+from pm_traitbench.dialogue.client import CachedClient, session_prefix
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.session import SessionResult, narrate_session
 from pm_traitbench.dialogue.validate.grep import check_grep
@@ -25,6 +25,10 @@ from pm_traitbench.dialogue.validate.ledger import check_trades, count_level_war
 from pm_traitbench.enums import REVEALING_MODES, TurnRole, ValidationStatus
 from pm_traitbench.tables.schema import DialogueLog, LedgerRow, Session, ValidationRow
 
+# The check layers that can reject a session; each has `<layer>_reasons` on `LayerResult`
+# and `<layer>_ok` on `ValidationRow`.
+LAYERS = ("ledger", "grep", "leak", "forbidden")
+
 
 @dataclass(frozen=True)
 class LayerResult:
@@ -39,9 +43,13 @@ class LayerResult:
     warnings: tuple[str, ...]
     rejected_replies: int
 
+    def reasons_by_layer(self) -> dict[str, tuple[str, ...]]:
+        """Each layer's reject reasons, keyed by layer name in `LAYERS` order."""
+        return {layer: getattr(self, f"{layer}_reasons") for layer in LAYERS}
+
     @property
     def reasons(self) -> tuple[str, ...]:
-        return self.ledger_reasons + self.grep_reasons + self.leak_reasons + self.forbidden_reasons
+        return tuple(r for reasons in self.reasons_by_layer().values() for r in reasons)
 
     @property
     def passed(self) -> bool:
@@ -67,6 +75,7 @@ async def validate_once(
 ) -> LayerResult:
     """Run every check layer once against `log` and return their combined outcome."""
     session_id = ctx.skeleton.session_id
+    prefix = session_prefix(session_id)
     max_retries = config.dialogue.max_retries
 
     ledger_reasons = check_trades(log, ctx.skeleton, ledger, config.validation.size_tolerance)
@@ -106,26 +115,21 @@ async def validate_once(
     leak_reasons: tuple[str, ...] = ()
     warnings: list[str] = []
     if verdict is not None and verdict.explicit:
-        label = (verdict.label or "").strip()
-        mapped = map_label(label, catalogue.bias_labels)
+        mapped = map_label(verdict.label, catalogue.bias_labels)
         if mapped is not None and mapped in revealed:
             if is_direct_quote(verdict.quote, pm_text):
                 leak_reasons = (f'leaks {mapped}: "{verdict.quote}"',)
             else:
-                warnings.append(
-                    f"session {session_id}: leak judge quote not in a PM turn: {verdict.quote}"
-                )
-        elif mapped is None and label:
-            warnings.append(f"session {session_id}: judge label unmapped: {verdict.label}")
+                warnings.append(f"{prefix}leak judge quote not in a PM turn: {verdict.quote}")
+        elif mapped is None and verdict.label and not verdict.label.isspace():
+            warnings.append(f"{prefix}judge label unmapped: {verdict.label}")
 
     forbidden_reasons: list[str] = []
     for v in violations:
         if not (1 <= v.index <= len(ctx.avoid_lines)):
-            warnings.append(f"session {session_id}: forbidden judge index out of range: {v.index}")
+            warnings.append(f"{prefix}forbidden judge index out of range: {v.index}")
         elif not is_direct_quote(v.quote, pm_text):
-            warnings.append(
-                f"session {session_id}: forbidden judge quote not in a PM turn: {v.quote}"
-            )
+            warnings.append(f"{prefix}forbidden judge quote not in a PM turn: {v.quote}")
         else:
             forbidden_reasons.append(f'forbidden: {ctx.avoid_lines[v.index - 1]}: "{v.quote}"')
 
@@ -207,11 +211,8 @@ async def run_session(
                 session_id=ctx.skeleton.session_id,
                 attempt=attempt,
                 status=status,
-                ledger_ok=not layer.ledger_reasons,
-                grep_ok=not layer.grep_reasons,
                 leak_judged=layer.leak_judged,
-                leak_ok=not layer.leak_reasons,
-                forbidden_ok=not layer.forbidden_reasons,
+                **{f"{name}_ok": not reasons for name, reasons in layer.reasons_by_layer().items()},
                 level_warnings=layer.level_warnings,
                 reasons=layer.reasons,
                 judge_model=config.validation.judge_model,
