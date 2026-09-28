@@ -28,7 +28,7 @@ from pm_traitbench.tables.specs import (
 )
 from pm_traitbench.tables.store import DataStore
 from tests.dialogue.fixtures import FakeClient, default_responder
-from tests.dialogue.validate.conftest import (
+from tests.dialogue.validate.fixtures import (
     forbidden_reply,
     is_forbidden_request,
     is_leak_request,

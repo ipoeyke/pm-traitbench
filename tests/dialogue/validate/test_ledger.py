@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from pm_traitbench.dialogue.validate.ledger import check_trades, count_level_warnings
 from pm_traitbench.enums import AdvisorTool, MentionKind, Side, Tenor
 from pm_traitbench.tables.schema import Mention, ToolCall, canonical_json
-from tests.dialogue.validate.conftest import (
+from tests.dialogue.validate.fixtures import (
     advisor_turn,
     ledger_row,
     level_mention,

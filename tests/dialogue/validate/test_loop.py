@@ -10,7 +10,7 @@ from pm_traitbench.dialogue.validate.loop import feedback_text, run_session, val
 from pm_traitbench.enums import Side, SignalMode, StanceEntry, TurnRole, ValidationStatus
 from pm_traitbench.tables.schema import Session, Turn
 from tests.dialogue.fixtures import fake_message, turn_text
-from tests.dialogue.validate.conftest import (
+from tests.dialogue.validate.fixtures import (
     advisor_turn,
     forbidden_reply,
     leak_reply,

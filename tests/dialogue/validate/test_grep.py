@@ -3,7 +3,7 @@
 from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.dialogue.validate.grep import check_grep, grep_params
-from tests.dialogue.validate.conftest import advisor_turn, log_of, pm_turn
+from tests.dialogue.validate.fixtures import advisor_turn, log_of, pm_turn
 
 PARAMS = ("register", "loss_aversion_lambda")
 

@@ -34,7 +34,7 @@ from pm_traitbench.tables.specs import (
 )
 from pm_traitbench.tables.store import DataStore
 from tests.dialogue.fixtures import FakeClient, default_responder, fake_message, turn_text
-from tests.dialogue.validate.conftest import (
+from tests.dialogue.validate.fixtures import (
     advisor_turn,
     forbidden_reply,
     is_forbidden_request,
