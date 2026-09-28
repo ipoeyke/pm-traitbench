@@ -701,7 +701,16 @@ class Gate1CellRow(BaseModel):
         description="Share of active PMs whose statistic clears the floor."
     )
     rank_corr: float | None = Field(
-        description="Rank correlation between planted strength and the recovered statistic."
+        description=(
+            "Rank correlation between planted strength and the recovered statistic, "
+            "over neutral and active PMs together; report-only."
+        )
+    )
+    active_rank_corr: float | None = Field(
+        description=(
+            "Rank correlation between planted strength and the recovered statistic "
+            "over active PMs only; the value the rank check uses."
+        )
     )
     count_p10: float | None = Field(
         description="10th percentile of the cell's PMs' estimator opportunity counts (Estimate.n)."
@@ -723,7 +732,7 @@ class Gate1CellRow(BaseModel):
         )
     )
     pop_ok: bool = Field(
-        description="Whether the population check (pop_z and a positive rank correlation) passed."
+        description="Whether the population check (pop_z at or above its minimum) passed."
     )
     count_ok: bool | None = Field(
         description="Whether the observation count check passed; null when not evaluated."

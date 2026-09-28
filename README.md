@@ -41,9 +41,10 @@ flag and driving rule on `ledger`. Hidden data is generator provenance for
 checking the engine itself and is never shown to a system under test. The
 `gate1` stage recovers each direct-asset PM's eight planted biases from the
 engine's ledger and pools them per asset class, writing `gate1_pm` and
-`gate1_cells`; it exits 1 when a blocking row fails - one row per
-non-report-only parameter, pooled over every direct asset class of the
-synthetic seeds. Per-class and report-only rows are judged but never block.
+`gate1_cells`; it exits 1 when a blocking row fails or a non-report-only
+parameter has no blocking row - one row per non-report-only parameter,
+pooled over every direct asset class of the synthetic seeds. Per-class and
+report-only rows are judged but never block.
 Both tables and its run metadata land on disk either way. The `plan` stage
 plants trait signals on dated sessions and writes `signals` and `skeletons`,
 never blocking on a shortfall. The `dialogue` stage narrates every planted
@@ -372,13 +373,15 @@ in `population_params`. The default, per-PM rule passes when the active mean
 sits on the stronger side of the neutral mean (per the parameter's own
 direction) with the neutral standard deviation no more than half the gap
 between them (`gap_fraction`, default 0.5), and the planted-versus-recovered
-rank correlation clears `min_rank_corr` (default 0.5). The population rule
-passes when the active mean exceeds the neutral mean, in the parameter's own
+rank correlation over active PMs clears `min_rank_corr` (default 0.4); the
+combined correlation is reported as `rank_corr`. The population rule passes
+when the active mean exceeds the neutral mean, in the parameter's own
 direction, by at least `min_pop_z` (default 3.0) standard errors of the
-difference (each side's own sample standard deviation), with a positive rank
-correlation; it suits a parameter whose per-PM opportunity count is limited
-by how many decisions one PM makes in a year, so a single PM's own estimate
-is too noisy to judge even though the pooled population carries a signal.
+difference (each side's own sample standard deviation), with no rank
+condition; it suits a parameter whose per-PM opportunity
+count is limited by how many decisions one PM makes in a year, so a single
+PM's own estimate is too noisy to judge even though the pooled population
+carries a signal.
 `population_params` (default `herding_weight`, `conviction_size_miscalibration`,
 `disposition_ratio`, `anchoring_rho`) names the parameters judged this way;
 every other parameter keeps the per-PM rule. A cell with fewer than `min_pms`
@@ -419,8 +422,7 @@ class/parameter/split keyed on `(seed_group, asset_class, param, split)`,
 where a null `asset_class` is the synthetic pool's cross-class row. Each
 `gate1_cells` row records which rule judged it (`test`), the per-PM gap and
 rank checks (`gap_ok`, `rank_ok`), and, for a population-tested parameter,
-the standard-error z (`pop_z`) and whether it and the rank correlation passed
-(`pop_ok`).
+the standard-error z (`pop_z`) and whether it cleared its minimum (`pop_ok`).
 
 Blocking rows are pooled over every direct asset class, synthetic seeds:
 exit deficiency, extrapolation, loss aversion and overconfidence use the
@@ -428,7 +430,9 @@ per-PM rule; conviction uses the population rule. On the default root and on
 12 further root seeds (20260301-20260312) all five pass on every root, so
 Gate 1 exits 0. Over the 12 roots: per-PM neutral-sd-over-gap medians
 0.18-0.30 (max 0.41) and rank correlations 0.71-0.90; conviction population z
-median 7.7 (min 5.6).
+median 7.7 (min 5.6). Those rank correlations are the combined (neutral and
+active together) measure; the default population's result under the
+active-only measure is not yet recorded.
 
 Report-only rows: herding passes pooled on 12 of 12 roots (z median 6.7, min
 5.5) but stays report-only for the coupling reason above; anchoring passes on

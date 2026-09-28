@@ -1,12 +1,13 @@
 """Tests for the gate 1 stage: table I/O, run metadata and the blocking verdict."""
 
 import json
+from datetime import date
 
 import pytest
 
-from pm_traitbench.config import BIAS_PARAMS
+from pm_traitbench.config import BIAS_PARAMS, RealSeedSpec
 from pm_traitbench.engine.stage import ENGINE_STAGE
-from pm_traitbench.enums import AssetClass, Gate1Split, Gate1Verdict, SeedGroupKind
+from pm_traitbench.enums import AssetClass, Gate1Split, Gate1Verdict, Regime, SeedGroupKind
 from pm_traitbench.errors import Gate1Error, StageIOError
 from pm_traitbench.gates.gate1.stage import GATE1_STAGE
 from pm_traitbench.stages import run_stage
@@ -83,6 +84,46 @@ def test_gate1_stage_writes_both_tables_and_raises_on_the_insufficient_default_t
     # default: insufficient like every other parameter here, but never blocking.
     blocking_params = set(BIAS_PARAMS) - set(config.gate1.report_only_params)
     assert set(entries) == {f"all/{param}" for param in blocking_params}
+
+    # A pilot-only config (no synthetic seeds) puts every PM on the real seed;
+    # every non-report-only param then has no blocking row, reported missing.
+    real_seed_t = RealSeedSpec(
+        window_start=date(2018, 6, 4),
+        regime_starts=(
+            (Regime.RANGE, date(2018, 6, 4)),
+            (Regime.RISK_OFF, date(2018, 6, 20)),
+            (Regime.RISK_ON, date(2018, 7, 16)),
+        ),
+        basis="design",
+        note="a short window inside the real-seed date coverage",
+    )
+    pilot_only_config = config.model_copy(
+        update={
+            "population": config.population.model_copy(update={"full_per_cell": 0}),
+            "market": config.market.model_copy(
+                update={
+                    "seeds": {},
+                    "real": config.market.real.model_copy(update={"seeds": {"T": real_seed_t}}),
+                }
+            ),
+        }
+    )
+    pilot_store = DataStore(tmp_path / "pilot_only", pilot_only_config.output)
+    write_stage_inputs(pilot_store, fixture_market, neutral_pm)
+    run_stage(ENGINE_STAGE, pilot_only_config, pilot_store)
+    with pytest.raises(Gate1Error) as pilot_excinfo:
+        run_stage(GATE1_STAGE, pilot_only_config, pilot_store)
+
+    pilot_cells = pilot_store.read(GATE1_CELLS)
+    assert pilot_cells
+    for row in pilot_cells:
+        assert row.seed_group_kind == SeedGroupKind.REAL_SEED
+        assert row.blocking is False
+
+    non_report_only = sorted(set(BIAS_PARAMS) - set(pilot_only_config.gate1.report_only_params))
+    assert str(pilot_excinfo.value) == "gate 1 failed for: " + ", ".join(
+        f"all/{param}: missing" for param in non_report_only
+    )
 
 
 def test_gate1_stage_with_every_param_report_only_does_not_raise_on_insufficient_cells(

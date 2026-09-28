@@ -316,6 +316,34 @@ def test_rank_corr_is_positive_when_coverage_moves_with_its_planted_value() -> N
     assert cell.rank_corr == pytest.approx(1.0)
 
 
+def test_active_rank_corr_is_positive_when_coverage_moves_with_its_planted_value() -> None:
+    param = "overconfidence_coverage"  # higher_is_stronger is False
+    # Three active PMs whose statistic moves with the planted value, plus one
+    # neutral PM: active_rank_corr needs at least three active PMs with a value.
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.90, 10, 0.1, False),
+        _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.45, 10, 0.5, True),
+        _pm("pm_003", "seed_a", param, Gate1Split.ALL, 0.65, 10, 0.7, True),
+        _pm("pm_004", "seed_a", param, Gate1Split.ALL, 0.85, 10, 0.9, True),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+    cell = next(c for c in cells if c.seed_group == "seed_a")
+    assert cell.active_rank_corr == pytest.approx(1.0)
+
+
+def test_active_rank_corr_none_with_two_active_pms_even_though_combined_is_defined() -> None:
+    param = "overconfidence_coverage"
+    estimates = [
+        _pm("pm_001", "seed_a", param, Gate1Split.ALL, 0.90, 10, 0.1, False),
+        _pm("pm_002", "seed_a", param, Gate1Split.ALL, 0.45, 10, 0.5, True),
+        _pm("pm_003", "seed_a", param, Gate1Split.ALL, 0.65, 10, 0.7, True),
+    ]
+    cells = aggregate(estimates, {"seed_a"}, set(), Gate1Config())
+    cell = next(c for c in cells if c.seed_group == "seed_a")
+    assert cell.rank_corr is not None  # combined: three members total, defined
+    assert cell.active_rank_corr is None  # only two active PMs
+
+
 def test_rank_corr_none_below_three_pms_and_for_a_constant_statistic() -> None:
     param = "disposition_ratio"
     two_pm = [

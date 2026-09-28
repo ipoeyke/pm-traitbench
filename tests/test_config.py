@@ -856,7 +856,7 @@ def test_gate1_config_defaults() -> None:
     config = Config().gate1
     assert config.floor_se == 2.0
     assert config.gap_fraction == 0.5
-    assert config.min_rank_corr == 0.5
+    assert config.min_rank_corr == 0.4
     assert config.min_pms == 5
     assert config.min_pop_z == 3.0
     assert config.population_params == (

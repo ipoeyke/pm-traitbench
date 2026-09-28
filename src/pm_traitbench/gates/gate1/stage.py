@@ -6,7 +6,9 @@ rebuild each idea's series, and blocks the pipeline only on one row per
 parameter: the synthetic seeds pooled over every direct asset class, and only
 for a parameter that is not report-only (herding, disposition and anchoring
 are report-only). Every per-class and report-only row is judged but never
-blocks.
+blocks. A non-report-only parameter with no such row at all - for example
+when the run sampled no synthetic full population - also blocks, so the gate
+cannot pass by testing nothing.
 """
 
 from typing import Any
@@ -89,7 +91,7 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
     store.write(GATE1_CELLS, rows)
 
     return {
-        "failed": blocking_failures(rows),
+        "failed": blocking_failures(rows, config.gate1),
         "warnings": count_warnings(rows),
         "thresholds": config.gate1.model_dump(mode="json"),
     }
@@ -107,7 +109,7 @@ GATE1_STAGE = Stage(
     name="gate1",
     help=(
         "recover planted biases from the engine's ledger; blocks on the synthetic "
-        "pool's cross-class row per non-report-only parameter"
+        "pool's cross-class row per non-report-only parameter, or on that row's absence"
     ),
     run=run,
     reads=(PERSONAS, TRAITS, DRIFT_EVENTS, *ENGINE_TABLES, *MARKET_TABLES),
