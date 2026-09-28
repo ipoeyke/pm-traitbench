@@ -697,12 +697,7 @@ def check_validate_catalogue(catalogue: Catalogue) -> None:
 
 
 def check_gate2_catalogue(catalogue: Catalogue) -> None:
-    """Check the bias definition catalogue gate 2's judge prompt shows beside each param name.
-
-    Since the prompt already names the param next to its line, a line that also names
-    any bias param, its own or another's, would make the judge's read redundant rather
-    than a description of behaviour.
-    """
+    """Check the bias definitions a Gate 2 recovery prompt shows beside each param name."""
     definitions = catalogue.bias_definitions.definitions
     _check_key_set(
         "bias_definitions: keys", set(definitions), set(BIAS_PARAMS), "the bias parameter set"

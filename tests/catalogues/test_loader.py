@@ -861,3 +861,22 @@ def test_bias_definitions_line_naming_a_param_raises(tmp_path: Path) -> None:
     catalogue = load_catalogue(tmp_path)
     with pytest.raises(CatalogueError, match="herding_weight"):
         check_gate2_catalogue(catalogue)
+
+    _copy_shipped(tmp_path)
+    data = _load_yaml(path)
+    data["definitions"]["loss_aversion_lambda"] = "shows herding_weight on every trade"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="herding_weight"):
+        check_gate2_catalogue(catalogue)
+
+
+def test_bias_definitions_em_dash_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_definitions.yaml"
+    data = _load_yaml(path)
+    data["definitions"]["exit_deficiency"] = "does not act — or acts late"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="bias_definitions.*exit_deficiency"):
+        check_gate2_catalogue(catalogue)
