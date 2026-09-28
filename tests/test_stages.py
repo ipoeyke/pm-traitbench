@@ -319,6 +319,48 @@ def test_run_stage_append_not_written_raises_did_not_write(tmp_path: Path) -> No
         run_stage(stage, config, DataStore(tmp_path, config.output))
 
 
+def test_run_stage_rewrites_existing_table_without_force_and_drops_every_old_row(
+    tmp_path: Path,
+) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    config = Config()
+    store.write(RULES, [_rule("pm_001", "r_01")])
+    stage = Stage(number=1, name="fake", help="h", run=_drop_original_rule, rewrites=(RULES,))
+
+    # no force, and no kept-row check: the whole table belongs to this stage
+    run_stage(stage, config, store)
+
+    assert [row.rule_id for row in store.read(RULES)] == ["r_02"]
+
+
+def test_run_stage_missing_rewrite_raises_and_never_calls_run(tmp_path: Path) -> None:
+    store = DataStore(tmp_path, OutputConfig())
+    called = False
+
+    def _run(config: Config, store: DataStore) -> None:
+        nonlocal called
+        called = True
+
+    stage = Stage(number=1, name="fake", help="h", run=_run, rewrites=(RULES,))
+
+    with pytest.raises(StageIOError, match="missing required table\\(s\\): rules"):
+        run_stage(stage, Config(), store)
+    assert called is False
+
+
+def test_run_stage_rewrite_not_written_raises_did_not_write(tmp_path: Path) -> None:
+    config = Config()
+    DataStore(tmp_path, config.output).write(RULES, [_rule("pm_001", "r_01")])
+
+    def _run(config: Config, store: DataStore) -> None:
+        store.read(RULES)
+
+    stage = Stage(number=1, name="fake", help="h", run=_run, rewrites=(RULES,))
+
+    with pytest.raises(StageIOError, match="did not write expected table\\(s\\): rules"):
+        run_stage(stage, config, DataStore(tmp_path, config.output))
+
+
 def test_run_stage_calls_verdict_after_metadata_is_written(tmp_path: Path) -> None:
     store = DataStore(tmp_path, OutputConfig())
     config = Config()

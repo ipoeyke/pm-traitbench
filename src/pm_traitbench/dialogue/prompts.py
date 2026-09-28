@@ -7,6 +7,7 @@ built from a `SessionContext` and a plain messages sequence with no
 non-deterministic step, so identical inputs give identical cache keys.
 """
 
+import hashlib
 from collections.abc import Mapping, Sequence
 from datetime import date
 from importlib import resources
@@ -117,6 +118,11 @@ def read_advisor_prompt(path: Path | None) -> str:
     if not text.strip():
         raise DialogueError("advisor prompt is blank")
     return text
+
+
+def prompt_sha256(text: str) -> str:
+    """sha256 hex of a prompt's UTF-8 text, recorded so a later stage can detect an edit."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def narrator_system(ctx: SessionContext, feedback: str | None) -> str:

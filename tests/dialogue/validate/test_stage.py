@@ -7,23 +7,19 @@ from collections import Counter
 from collections.abc import Callable
 from contextvars import ContextVar
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from pm_traitbench import pipeline
-from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config
 from pm_traitbench.dialogue.client import CachedClient, UsageTotals
 from pm_traitbench.dialogue.stage import make_stage
 from pm_traitbench.dialogue.validate.stage import _run_metadata
 from pm_traitbench.dialogue.validate.stage import make_stage as make_validate_stage
-from pm_traitbench.engine.stage import ENGINE_STAGE
 from pm_traitbench.enums import Ownership, SignalMode, Typicality, Valence, ValidationStatus
 from pm_traitbench.errors import DialogueBudgetError, ValidateError
-from pm_traitbench.signals.stage import PLAN_STAGE
 from pm_traitbench.stages import Stage, run_stage
-from pm_traitbench.tables.schema import Signal, ValidationRow, to_record
+from pm_traitbench.tables.schema import Signal, Skeleton, ValidationRow, to_record
 from pm_traitbench.tables.specs import (
     DIALOGUE_LOGS,
     LEDGER,
@@ -33,24 +29,29 @@ from pm_traitbench.tables.specs import (
     VALIDATION,
 )
 from pm_traitbench.tables.store import DataStore
-from tests.dialogue.fixtures import FakeClient, default_responder, fake_message, turn_text
+from tests.dialogue.fixtures import (
+    FakeClient,
+    fake_message,
+    raising_factory,
+    run_engine_and_plan,
+    turn_text,
+)
 from tests.dialogue.validate.fixtures import (
     advisor_turn,
     forbidden_reply,
     is_forbidden_request,
-    is_leak_request,
     leak_reply,
     log_of,
     pm_turn,
+    routing_responder,
     trade_mention,
 )
-from tests.engine.fixtures import stage_config, write_stage_inputs
 
 _CLEAN_TEXT = "all clear on the book"
-# A responder must never see this: it means `CachedClient.send` was called without
-# `_intercept_scope` installed first, so failing loudly beats a silently empty lookup.
-_NO_SCOPE = "<no-scope-intercepted>"
-_current_scope: ContextVar[str] = ContextVar("validate_test_scope", default=_NO_SCOPE)
+_BAD_TEXT = "my herding_weight is showing today"
+# No default: a `.get()` before `_intercept_scope` is installed raises `LookupError`
+# instead of silently answering with an empty lookup.
+_current_scope: ContextVar[str] = ContextVar("validate_test_scope")
 
 
 def _mentions_by_session(store: DataStore) -> dict[str, list[dict]]:
@@ -99,25 +100,16 @@ def _faithful_responder(
     mentions_by_session = _mentions_by_session(store)
     bad_text_by_session = bad_text_by_session or {}
 
-    def responder(request: dict) -> dict:
-        if is_leak_request(request):
-            return leak_reply(False, None)
-        if is_forbidden_request(request):
-            return forbidden_reply([])
-        if "tools" in request:
-            return default_responder(request)
+    def narrator(request: dict) -> dict:
         scope = _current_scope.get()
-        if scope == _NO_SCOPE:
-            raise AssertionError(
-                "CachedClient.send was not intercepted; call faithful_dialogue_stage (or "
-                "_intercept_scope) before running a stage that narrates or judges a session"
-            )
         is_regeneration = "A validator rejected the previous version" in request.get("system", "")
         text = bad_text_by_session.get(scope, _CLEAN_TEXT) if not is_regeneration else _CLEAN_TEXT
         mentions = mentions_by_session.get(scope, [])
         return fake_message([turn_text(text, mentions)])
 
-    return responder
+    return routing_responder(
+        narrator, lambda _request: leak_reply(False, None), lambda _request: forbidden_reply([])
+    )
 
 
 def faithful_dialogue_stage(
@@ -136,38 +128,54 @@ def _clean_validate_stage(store: DataStore) -> Stage:
     return make_validate_stage(lambda c: FakeClient(_faithful_responder(store)))
 
 
-def _run_engine_and_plan(
-    tmp_path: Path, fixture_market: dict, neutral_pm
-) -> tuple[Config, DataStore]:
-    config = stage_config()
-    store = DataStore(tmp_path, config.output)
-    write_stage_inputs(store, fixture_market, neutral_pm)
-    run_stage(ENGINE_STAGE, config, store)
-    run_stage(PLAN_STAGE, config, store)
-    return config, store
-
-
 def _run_clean_corpus(
     tmp_path: Path, fixture_market: dict, neutral_pm, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Config, DataStore]:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
     run_stage(_clean_validate_stage(store), config, store)
     return config, store
 
 
-def _raising_factory(_config: Config):
-    raise AssertionError("the client must not be constructed here")
+def _void_signal(skeleton: Skeleton) -> Signal:
+    """A stated signal planted on `skeleton`'s session, voided if that session drops."""
+    return Signal(
+        signal_id="sg_001",
+        pm_id=skeleton.pm_id,
+        session_id=skeleton.session_id,
+        date=skeleton.date,
+        trait_id="t_01",
+        mode=SignalMode.STATED,
+        trade_idea_id=None,
+        valence=Valence.CONFIRM,
+        ownership=Ownership.SELF,
+        third_party_value=None,
+        claim_session_id=None,
+    )
+
+
+def _one_attempt(config: Config) -> Config:
+    """`config` with `validation.max_attempts` set to 1, so any failure drops the session."""
+    return config.model_copy(
+        update={"validation": config.validation.model_copy(update={"max_attempts": 1})}
+    )
+
+
+def _edit_dialogue_meta(tmp_path: Path, edit: Callable[[dict], None]) -> None:
+    """Apply `edit` in place to the dialogue stage's run metadata JSON on disk."""
+    meta_path = tmp_path / "run_metadata" / "dialogue.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    edit(meta)
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
 
 def test_clean_run_writes_one_pass_row_per_session_and_keeps_tables(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
     sessions_before = [to_record(s) for s in store.read(SESSIONS)]
     logs_before = [to_record(log) for log in store.read(DIALOGUE_LOGS)]
@@ -188,13 +196,12 @@ def test_grep_failure_regenerates_and_replaces_the_session(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     target_id = sorted(sk.session_id for sk in store.read(SKELETONS))[0]
     dialogue_stage = faithful_dialogue_stage(
-        monkeypatch, store, bad_text_by_session={target_id: "my herding_weight is showing today"}
+        monkeypatch, store, bad_text_by_session={target_id: _BAD_TEXT}
     )
     run_stage(dialogue_stage, config, store)
     turns_before = {s.session_id: s.turns for s in store.read(SESSIONS)}[target_id]
@@ -222,40 +229,23 @@ def _setup_drop_scenario(
     Returns the one-attempt config that will force the drop, the store and the
     session id that will drop, all before validate has run.
     """
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     skeleton = sorted(store.read(SKELETONS), key=lambda s: s.session_id)[0]
     target_id = skeleton.session_id
-    signal = Signal(
-        signal_id="sg_001",
-        pm_id=skeleton.pm_id,
-        session_id=target_id,
-        date=skeleton.date,
-        trait_id="t_01",
-        mode=SignalMode.STATED,
-        trade_idea_id=None,
-        valence=Valence.CONFIRM,
-        ownership=Ownership.SELF,
-        third_party_value=None,
-        claim_session_id=None,
-    )
-    store.write(SIGNALS, [signal])
+    store.write(SIGNALS, [_void_signal(skeleton)])
 
     dialogue_stage = faithful_dialogue_stage(
-        monkeypatch, store, bad_text_by_session={target_id: "my herding_weight is showing today"}
+        monkeypatch, store, bad_text_by_session={target_id: _BAD_TEXT}
     )
     run_stage(dialogue_stage, config, store)
 
-    config_one_attempt = config.model_copy(
-        update={"validation": config.validation.model_copy(update={"max_attempts": 1})}
-    )
-    return config_one_attempt, store, target_id
+    return _one_attempt(config), store, target_id
 
 
 def test_drop_removes_session_and_log_and_reports_void_signals(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_one_attempt, store, target_id = _setup_drop_scenario(
@@ -290,7 +280,6 @@ def test_rerun_after_drop_skips_the_dropped_session_and_carries_its_rows(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_one_attempt, store, target_id = _setup_drop_scenario(
@@ -301,7 +290,7 @@ def test_rerun_after_drop_skips_the_dropped_session_and_carries_its_rows(
     sessions_before = store.path(SESSIONS).read_bytes()
     logs_before = store.path(DIALOGUE_LOGS).read_bytes()
 
-    run_stage(make_validate_stage(_raising_factory), config_one_attempt, store, force=True)
+    run_stage(make_validate_stage(raising_factory), config_one_attempt, store, force=True)
 
     metadata = store.read_run_metadata("validate")
     assert metadata is not None
@@ -317,42 +306,24 @@ def test_rerun_after_full_pm_drop_still_lists_the_pm_and_carries_its_rows(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A rerun must still visit a PM whose sessions all dropped, not silently drop it too."""
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     skeletons = store.read(SKELETONS)
     target_pm_id = sorted({sk.pm_id for sk in skeletons})[0]
     target_session_ids = tuple(
         sorted(sk.session_id for sk in skeletons if sk.pm_id == target_pm_id)
     )
     target_skeleton = next(sk for sk in skeletons if sk.session_id == target_session_ids[0])
-    signal = Signal(
-        signal_id="sg_001",
-        pm_id=target_pm_id,
-        session_id=target_session_ids[0],
-        date=target_skeleton.date,
-        trait_id="t_01",
-        mode=SignalMode.STATED,
-        trade_idea_id=None,
-        valence=Valence.CONFIRM,
-        ownership=Ownership.SELF,
-        third_party_value=None,
-        claim_session_id=None,
-    )
-    store.write(SIGNALS, [signal])
+    store.write(SIGNALS, [_void_signal(target_skeleton)])
 
     dialogue_stage = faithful_dialogue_stage(
-        monkeypatch,
-        store,
-        bad_text_by_session=dict.fromkeys(target_session_ids, "my herding_weight is showing today"),
+        monkeypatch, store, bad_text_by_session=dict.fromkeys(target_session_ids, _BAD_TEXT)
     )
     run_stage(dialogue_stage, config, store)
 
-    config_one_attempt = config.model_copy(
-        update={"validation": config.validation.model_copy(update={"max_attempts": 1})}
-    )
+    config_one_attempt = _one_attempt(config)
     run_stage(_clean_validate_stage(store), config_one_attempt, store)
     assert target_pm_id not in {s.pm_id for s in store.read(SESSIONS)}
     validation_rows_before = [
@@ -362,7 +333,7 @@ def test_rerun_after_full_pm_drop_still_lists_the_pm_and_carries_its_rows(
     sessions_before = store.path(SESSIONS).read_bytes()
     logs_before = store.path(DIALOGUE_LOGS).read_bytes()
 
-    run_stage(make_validate_stage(_raising_factory), config_one_attempt, store, force=True)
+    run_stage(make_validate_stage(raising_factory), config_one_attempt, store, force=True)
 
     metadata = store.read_run_metadata("validate")
     assert metadata is not None
@@ -382,25 +353,23 @@ def test_missing_dialogue_metadata_raises_validate_error_before_any_call(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
     (tmp_path / "run_metadata" / "dialogue.json").unlink()
 
     with pytest.raises(ValidateError, match="dialogue run metadata is missing"):
-        run_stage(make_validate_stage(_raising_factory), config, store)
+        run_stage(make_validate_stage(raising_factory), config, store)
 
 
 def test_advisor_prompt_hash_mismatch_raises(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
 
     other_prompt = tmp_path / "other_prompt.md"
@@ -412,97 +381,71 @@ def test_advisor_prompt_hash_mismatch_raises(
     )
 
     with pytest.raises(ValidateError, match="advisor prompt"):
-        run_stage(make_validate_stage(_raising_factory), config, store)
+        run_stage(make_validate_stage(raising_factory), config, store)
 
 
-def test_missing_voices_key_raises(
+@pytest.mark.parametrize("key", ["voices", "advisor_prompt_sha256"])
+def test_missing_dialogue_metadata_key_raises(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
+    key: str,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
+    _edit_dialogue_meta(tmp_path, lambda meta: meta.pop(key))
 
-    meta_path = tmp_path / "run_metadata" / "dialogue.json"
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    del meta["voices"]
-    meta_path.write_text(json.dumps(meta), encoding="utf-8")
-
-    with pytest.raises(ValidateError, match="voices"):
-        run_stage(make_validate_stage(_raising_factory), config, store)
-
-
-def test_missing_advisor_prompt_sha256_key_raises(
-    tmp_path: Path,
-    fixture_market: dict,
-    neutral_pm,
-    catalogue: Catalogue,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
-
-    meta_path = tmp_path / "run_metadata" / "dialogue.json"
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    del meta["advisor_prompt_sha256"]
-    meta_path.write_text(json.dumps(meta), encoding="utf-8")
-
-    with pytest.raises(ValidateError, match="advisor_prompt_sha256"):
-        run_stage(make_validate_stage(_raising_factory), config, store)
+    with pytest.raises(ValidateError, match=f"missing key '{key}'"):
+        run_stage(make_validate_stage(raising_factory), config, store)
 
 
 def test_voice_mismatch_raises_validate_error(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
 
-    meta_path = tmp_path / "run_metadata" / "dialogue.json"
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    tampered_pm_id = next(iter(meta["voices"]))
-    meta["voices"][tampered_pm_id] = "not-a-real-voice-id"
-    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    def tamper(meta: dict) -> None:
+        meta["voices"][next(iter(meta["voices"]))] = "not-a-real-voice-id"
+
+    _edit_dialogue_meta(tmp_path, tamper)
 
     with pytest.raises(ValidateError, match="voice draw"):
-        run_stage(make_validate_stage(_raising_factory), config, store)
+        run_stage(make_validate_stage(raising_factory), config, store)
 
 
 def test_one_missing_row_raises(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A skeleton missing exactly one of its session/log rows reflects a corrupted data
     dir, not a legitimate drop, and must raise.
     """
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
     target_id = sorted(sk.session_id for sk in store.read(SKELETONS))[0]
     store.write(SESSIONS, [s for s in store.read(SESSIONS) if s.session_id != target_id])
 
     with pytest.raises(ValidateError, match=f"session '{target_id}' has no narrated"):
-        run_stage(make_validate_stage(_raising_factory), config, store)
+        run_stage(make_validate_stage(raising_factory), config, store)
 
 
 def test_missing_session_and_log_with_no_validation_table_raises(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A skeleton missing both its session and log rows, with no `validation` table at
     all, has never been checked and never dropped: it must raise, not be skipped.
     """
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
     target_id = sorted(sk.session_id for sk in store.read(SKELETONS))[0]
     store.write(SESSIONS, [s for s in store.read(SESSIONS) if s.session_id != target_id])
@@ -512,14 +455,13 @@ def test_missing_session_and_log_with_no_validation_table_raises(
     assert not store.exists(VALIDATION)
 
     with pytest.raises(ValidateError, match=f"session '{target_id}' has no narrated"):
-        run_stage(make_validate_stage(_raising_factory), config, store)
+        run_stage(make_validate_stage(raising_factory), config, store)
 
 
 def test_confirmed_dropped_id_with_only_one_row_missing_raises(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A session id an earlier run's `validation` table confirms `DROPPED` is only
@@ -539,14 +481,13 @@ def test_confirmed_dropped_id_with_only_one_row_missing_raises(
     store.write(DIALOGUE_LOGS, [*store.read(DIALOGUE_LOGS), stray_log])
 
     with pytest.raises(ValidateError, match=f"session '{target_id}' has no narrated"):
-        run_stage(make_validate_stage(_raising_factory), config_one_attempt, store, force=True)
+        run_stage(make_validate_stage(raising_factory), config_one_attempt, store, force=True)
 
 
 def test_missing_rows_for_a_passed_session_raises(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A `validation` table that exists but holds no `DROPPED` row for a missing session
@@ -562,27 +503,26 @@ def test_missing_rows_for_a_passed_session_raises(
     )
 
     with pytest.raises(ValidateError, match=f"session '{target_id}' has no narrated"):
-        run_stage(make_validate_stage(_raising_factory), config, store, force=True)
+        run_stage(make_validate_stage(raising_factory), config, store, force=True)
 
 
 def test_pm_with_no_skeletons_raises_and_leaves_sessions_untouched(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A PM the dialogue metadata's `voices` names but that now has no skeletons must
     raise rather than have its narrated `sessions`/`dialogue_logs` rows silently dropped.
     """
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
     target_pm_id = sorted({sk.pm_id for sk in store.read(SKELETONS)})[0]
     store.write(SKELETONS, [sk for sk in store.read(SKELETONS) if sk.pm_id != target_pm_id])
     sessions_before = store.path(SESSIONS).read_bytes()
 
     with pytest.raises(ValidateError, match=target_pm_id):
-        run_stage(make_validate_stage(_raising_factory), config, store)
+        run_stage(make_validate_stage(raising_factory), config, store)
 
     assert store.path(SESSIONS).read_bytes() == sessions_before
 
@@ -591,10 +531,9 @@ def test_budget_error_writes_nothing(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
     sessions_before = store.path(SESSIONS).read_bytes()
     logs_before = store.path(DIALOGUE_LOGS).read_bytes()
@@ -615,13 +554,12 @@ def test_unparsable_forbidden_judge_raises_validate_error_and_writes_nothing(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A forbidden judge that never returns parsable JSON must surface as the validate
     stage's own error, not the dialogue stage's, and leave every table untouched.
     """
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     run_stage(faithful_dialogue_stage(monkeypatch, store), config, store)
     sessions_before = store.path(SESSIONS).read_bytes()
     logs_before = store.path(DIALOGUE_LOGS).read_bytes()
@@ -647,7 +585,6 @@ def test_rerun_from_cache_is_byte_identical_with_zero_inner_calls(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config, store = _run_clean_corpus(tmp_path, fixture_market, neutral_pm, monkeypatch)
@@ -655,7 +592,7 @@ def test_rerun_from_cache_is_byte_identical_with_zero_inner_calls(
     sessions_before = store.path(SESSIONS).read_bytes()
     logs_before = store.path(DIALOGUE_LOGS).read_bytes()
 
-    run_stage(make_validate_stage(_raising_factory), config, store, force=True)
+    run_stage(make_validate_stage(raising_factory), config, store, force=True)
 
     assert store.path(VALIDATION).read_bytes() == validation_before
     assert store.path(SESSIONS).read_bytes() == sessions_before
@@ -666,14 +603,14 @@ def test_run_metadata_keys_and_typicality_rate(
     tmp_path: Path,
     fixture_market: dict,
     neutral_pm,
-    catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config, store = _run_clean_corpus(tmp_path, fixture_market, neutral_pm, monkeypatch)
 
     metadata = store.read_run_metadata("validate")
     assert metadata is not None
-    for key in (
+    # The stage's own keys; the rest is the runner's shared metadata envelope.
+    assert set(metadata) >= {
         "judge_model",
         "pms",
         "sessions_checked",
@@ -691,18 +628,11 @@ def test_run_metadata_keys_and_typicality_rate(
         "output_tokens",
         "cache_read_tokens",
         "rejected_replies",
-    ):
-        assert key in metadata
+    }
 
     assert metadata["regeneration_rate_by_typicality"] == {"typical": 0.0}
     assert metadata["dropped"] == 0
     assert metadata["regenerated"] == 0
-
-
-def _unit_of(pm_id: str, typicality: Typicality) -> SimpleNamespace:
-    """A stand-in for `_Unit`, carrying only the attributes `_run_metadata` reads."""
-    skeleton = SimpleNamespace(pm_id=pm_id)
-    return SimpleNamespace(ctx=SimpleNamespace(skeleton=skeleton), typicality=typicality)
 
 
 def _validation_row(
@@ -729,10 +659,10 @@ def test_regeneration_rate_counts_a_twice_regenerated_session_once() -> None:
     """A session regenerated twice before passing must count once toward the rate, not
     twice, so the rate stays a share of sessions rather than a count of attempts.
     """
-    units = (
-        _unit_of("pm_001", Typicality.TYPICAL),
-        _unit_of("pm_002", Typicality.TYPICAL),
-    )
+    typicality_by_session = {
+        "s_pm001_2026-01-05_a": Typicality.TYPICAL,
+        "s_pm002_2026-01-05_a": Typicality.TYPICAL,
+    }
     rows = [
         _validation_row("pm_001", "s_pm001_2026-01-05_a", 1, ValidationStatus.REGENERATE),
         _validation_row("pm_001", "s_pm001_2026-01-05_a", 2, ValidationStatus.REGENERATE),
@@ -742,7 +672,7 @@ def test_regeneration_rate_counts_a_twice_regenerated_session_once() -> None:
 
     metadata = _run_metadata(
         Config(),
-        units,
+        typicality_by_session,
         rows,
         session_warnings=(),
         rejected_replies=0,

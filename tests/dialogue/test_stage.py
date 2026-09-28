@@ -9,16 +9,20 @@ import pytest
 
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config, DialogueConfig, PmFilter
-from pm_traitbench.dialogue.client import CachedClient, LlmClient, Reply, request_key
+from pm_traitbench.dialogue.client import CachedClient, Reply, request_key
 from pm_traitbench.dialogue.stage import make_stage
-from pm_traitbench.engine.stage import ENGINE_STAGE
 from pm_traitbench.errors import DialogueBudgetError, DialogueError
-from pm_traitbench.signals.stage import PLAN_STAGE
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.specs import DIALOGUE_LOGS, SESSIONS, SKELETONS
 from pm_traitbench.tables.store import DataStore
-from tests.dialogue.fixtures import FakeClient, default_responder, fake_message
-from tests.engine.fixtures import MULTI_ASSET_PM_ID, stage_config, write_stage_inputs
+from tests.dialogue.fixtures import (
+    FakeClient,
+    default_responder,
+    fake_message,
+    raising_factory,
+    run_engine_and_plan,
+)
+from tests.engine.fixtures import MULTI_ASSET_PM_ID
 
 _TARGET_PM_ID = "pm_003"
 _MANY_SESSIONS_PM_ID = "pm_001"
@@ -72,30 +76,14 @@ def _refusal(text: str = "no") -> dict:
     return fake_message([{"type": "text", "text": text}], stop_reason="refusal")
 
 
-def _run_engine_and_plan(
-    tmp_path: Path, fixture_market: dict, neutral_pm
-) -> tuple[Config, DataStore]:
-    config = stage_config()
-    store = DataStore(tmp_path, config.output)
-    write_stage_inputs(store, fixture_market, neutral_pm)
-
-    run_stage(ENGINE_STAGE, config, store)
-    run_stage(PLAN_STAGE, config, store)
-    return config, store
-
-
 def _run_full(
     tmp_path: Path, fixture_market: dict, neutral_pm, *, dialogue: DialogueConfig | None = None
 ) -> tuple[Config, DataStore]:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     if dialogue is not None:
         config = config.model_copy(update={"dialogue": dialogue})
     run_stage(make_stage(lambda c: FakeClient(default_responder)), config, store)
     return config, store
-
-
-def _raising_factory(config: Config) -> LlmClient:
-    raise AssertionError("the inner client must not be constructed on a fully cached rerun")
 
 
 def test_dialogue_stage_writes_one_session_and_log_per_skeleton(
@@ -134,7 +122,7 @@ def test_failed_session_writes_no_tables_and_raises(
     catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
         update={
             "dialogue": config.dialogue.model_copy(
@@ -161,7 +149,7 @@ def test_several_failed_sessions_are_listed_in_session_order(
     catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
         update={
             "dialogue": config.dialogue.model_copy(
@@ -195,7 +183,7 @@ def test_client_raised_error_is_prefixed_with_its_session_id(
     'session {id}: ' prefix of its own; the stage must add one so a rerun can be pointed
     at the right session.
     """
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
         update={
             "dialogue": config.dialogue.model_copy(
@@ -222,7 +210,7 @@ def test_budget_error_takes_precedence_over_a_plain_dialogue_error(
     catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
         update={
             "dialogue": config.dialogue.model_copy(
@@ -251,7 +239,7 @@ def test_non_dialogue_exception_is_re_raised_and_writes_no_tables(
     catalogue: Catalogue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
         update={
             "dialogue": config.dialogue.model_copy(
@@ -272,7 +260,7 @@ def test_non_dialogue_exception_is_re_raised_and_writes_no_tables(
 def test_session_concurrency_never_exceeds_max_concurrency(
     tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
         update={"dialogue": config.dialogue.model_copy(update={"max_concurrency": 2})}
     )
@@ -288,7 +276,7 @@ def test_session_concurrency_never_exceeds_max_concurrency(
 def test_budget_error_writes_no_tables(
     tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
         update={"dialogue": config.dialogue.model_copy(update={"token_budget": 1})}
     )
@@ -307,7 +295,7 @@ def test_second_run_from_cache_is_byte_identical_with_zero_inner_calls(
     sessions_before = store.path(SESSIONS).read_bytes()
     logs_before = store.path(DIALOGUE_LOGS).read_bytes()
 
-    run_stage(make_stage(_raising_factory), config, store, force=True)
+    run_stage(make_stage(raising_factory), config, store, force=True)
 
     assert store.path(SESSIONS).read_bytes() == sessions_before
     assert store.path(DIALOGUE_LOGS).read_bytes() == logs_before
@@ -316,7 +304,7 @@ def test_second_run_from_cache_is_byte_identical_with_zero_inner_calls(
 def test_pm_filter_matching_no_pm_raises_before_any_call_and_writes_nothing(
     tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
         update={
             "dialogue": config.dialogue.model_copy(
@@ -326,7 +314,7 @@ def test_pm_filter_matching_no_pm_raises_before_any_call_and_writes_nothing(
     )
 
     with pytest.raises(DialogueError, match="dialogue.pm_filter selects no PMs"):
-        run_stage(make_stage(_raising_factory), config, store)
+        run_stage(make_stage(raising_factory), config, store)
 
     assert not store.exists(SESSIONS)
     assert not store.exists(DIALOGUE_LOGS)
@@ -335,7 +323,7 @@ def test_pm_filter_matching_no_pm_raises_before_any_call_and_writes_nothing(
 def test_run_metadata_totals_rejected_replies_across_sessions(
     tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     calls = {"n": 0}
 
     def responder(request: dict) -> dict:
@@ -361,7 +349,7 @@ def test_transient_and_rejected_failures_are_both_listed(
     """A transient SDK error, already mapped to a `DialogueError` by the client, must be
     grouped by session alongside a plain rejected-reply failure, not silently dropped.
     """
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
         update={
             "dialogue": config.dialogue.model_copy(
@@ -389,7 +377,7 @@ def test_client_is_closed_after_a_successful_run(
     tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
 ) -> None:
     fake = FakeClient(default_responder)
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
 
     run_stage(make_stage(lambda c: fake), config, store)
 
@@ -404,7 +392,7 @@ def test_client_is_closed_even_when_the_run_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = FakeClient(default_responder)
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     config = config.model_copy(
         update={
             "dialogue": config.dialogue.model_copy(
@@ -424,7 +412,7 @@ def test_client_is_closed_even_when_the_run_fails(
 def test_missing_plan_metadata_raises(
     tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
 ) -> None:
-    config, store = _run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
+    config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
     (tmp_path / "run_metadata" / "plan.json").unlink()
 
     with pytest.raises(DialogueError, match="plan run metadata is missing"):

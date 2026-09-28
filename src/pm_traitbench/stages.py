@@ -26,10 +26,12 @@ class Append:
 
 @dataclass(frozen=True)
 class Stage:
-    """A pipeline step: the tables it reads, writes and appends to, and its run function.
+    """A pipeline step: the tables it reads, writes, appends to and rewrites, and its run function.
 
-    `verdict`, if set, is a check on the run's extras that may raise after the
-    stage's outputs and metadata are on disk.
+    A `rewrites` table must exist before the run and be written by it, like an
+    append with no pre-existing rows to keep and no overwrite refusal. `verdict`,
+    if set, is a check on the run's extras that may raise after the stage's
+    outputs and metadata are on disk.
     """
 
     number: int
@@ -39,6 +41,7 @@ class Stage:
     reads: tuple[TableSpec, ...] = ()
     writes: tuple[TableSpec, ...] = ()
     appends: tuple[Append, ...] = ()
+    rewrites: tuple[TableSpec, ...] = ()
     verdict: Callable[[dict[str, Any]], None] | None = None
 
 
@@ -48,8 +51,9 @@ def _frozen(record: dict[str, Any]) -> str:
 
 def run_stage(stage: Stage, config: Config, store: DataStore, *, force: bool = False) -> None:
     """Check preconditions, run the stage, verify outputs, then record metadata."""
-    appended = tuple(append.spec for append in stage.appends)
-    missing = [spec.name for spec in (*stage.reads, *appended) if not store.exists(spec)]
+    # Tables that must exist before the run and be written by it.
+    updated = (*(append.spec for append in stage.appends), *stage.rewrites)
+    missing = [spec.name for spec in (*stage.reads, *updated) if not store.exists(spec)]
     if missing:
         raise StageIOError(
             f"stage '{stage.name}' is missing required table(s): {', '.join(missing)}"
@@ -74,7 +78,7 @@ def run_stage(stage: Stage, config: Config, store: DataStore, *, force: bool = F
     extra = stage.run(config, store)
 
     # Existence is not enough: under force an older file would pass for a fresh one.
-    unwritten = [spec.name for spec in (*stage.writes, *appended) if not store.was_written(spec)]
+    unwritten = [spec.name for spec in (*stage.writes, *updated) if not store.was_written(spec)]
     if unwritten:
         raise StageIOError(
             f"stage '{stage.name}' did not write expected table(s): {', '.join(unwritten)}"

@@ -9,7 +9,7 @@ writes `validation`, `sessions` and `dialogue_logs` or none of them.
 """
 
 import asyncio
-import hashlib
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -23,15 +23,19 @@ from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config
 from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, LlmClient, UsageTotals
 from pm_traitbench.dialogue.context import SessionContext, build_contexts
-from pm_traitbench.dialogue.prompts import read_advisor_prompt
-from pm_traitbench.dialogue.stage import partition_pm_tables, raise_on_failure
-from pm_traitbench.dialogue.tools import MarketLookup
+from pm_traitbench.dialogue.prompts import prompt_sha256, read_advisor_prompt
+from pm_traitbench.dialogue.stage import (
+    build_lookups,
+    partition_pm_tables,
+    raise_on_failure,
+    run_bounded,
+)
 from pm_traitbench.dialogue.validate.grep import grep_params
 from pm_traitbench.dialogue.validate.loop import SessionOutcome, run_session
 from pm_traitbench.dialogue.voices import draw_voice
 from pm_traitbench.enums import Typicality, ValidationStatus
 from pm_traitbench.errors import ValidateError
-from pm_traitbench.stages import Append, Stage
+from pm_traitbench.stages import Stage
 from pm_traitbench.tables.schema import DialogueLog, LedgerRow, Session, Signal, ValidationRow
 from pm_traitbench.tables.specs import (
     DIALOGUE_LOGS,
@@ -71,71 +75,17 @@ class _Unit:
     typicality: Typicality
 
 
-async def _validate_one(
-    unit: _Unit,
-    client: CachedClient,
-    config: Config,
-    catalogue: Catalogue,
-    advisor_prompt: str,
-    grep_terms: Sequence[str],
-    semaphore: asyncio.Semaphore,
-) -> SessionOutcome:
-    async with semaphore:
-        return await run_session(
-            unit.ctx,
-            unit.session,
-            unit.log,
-            client,
-            config,
-            catalogue,
-            advisor_prompt,
-            unit.ledger,
-            grep_terms,
-            unit.trait_param_by_id,
-        )
-
-
-async def _validate_all(
-    units: tuple[_Unit, ...],
-    client: CachedClient,
-    config: Config,
-    catalogue: Catalogue,
-    advisor_prompt: str,
-    grep_terms: Sequence[str],
-) -> list[SessionOutcome | BaseException]:
-    semaphore = asyncio.Semaphore(config.validation.max_concurrency)
-    try:
-        return await asyncio.gather(
-            *(
-                _validate_one(
-                    unit, client, config, catalogue, advisor_prompt, grep_terms, semaphore
-                )
-                for unit in units
-            ),
-            return_exceptions=True,
-        )
-    finally:
-        await client.aclose()
-
-
-@dataclass(frozen=True)
-class _BuildResult:
-    """Every session this run will check, plus session ids an earlier run already dropped."""
-
-    units: tuple[_Unit, ...]
-    previously_dropped_session_ids: tuple[str, ...]
-
-
 def _build_units(
     config: Config,
     store: DataStore,
     catalogue: Catalogue,
     voices_meta: Mapping[str, Any],
-    pm_ids: set[str],
     sessions_by_key: Mapping[tuple[str, str], Session],
     logs_by_key: Mapping[tuple[str, str], DialogueLog],
     previously_dropped_ids_confirmed: set[str],
-) -> _BuildResult:
+) -> tuple[tuple[_Unit, ...], tuple[str, ...]]:
+    """Every session this run will check, plus the session ids an earlier run already dropped."""
+    pm_ids = set(voices_meta)
     all_pm_tables = partition_pm_tables(store)
     selected = [pm for pm in all_pm_tables if pm.persona.pm_id in pm_ids]
     missing_pms = sorted(pm_ids - {pm.persona.pm_id for pm in selected})
@@ -144,15 +94,7 @@ def _build_units(
         # `dialogue_logs` for it anyway would silently delete its narrated rows.
         raise ValidateError(f"pm(s) {', '.join(missing_pms)} were narrated but have no skeletons")
 
-    instruments = store.read(MARKET_INSTRUMENTS)
-    prices = store.read(MARKET_PRICES)
-    curves = store.read(MARKET_CURVES)
-    consensus = store.read(MARKET_CONSENSUS)
-    calendar = store.read(MARKET_CALENDAR)
-    lookups = {
-        seed: MarketLookup.build(seed, instruments, prices, curves, consensus, calendar)
-        for seed in sorted({pm.persona.market_seed for pm in selected})
-    }
+    lookups = build_lookups(store, (pm.persona.market_seed for pm in selected))
 
     units: list[_Unit] = []
     previously_dropped: list[str] = []
@@ -194,14 +136,12 @@ def _build_units(
                     typicality=pm.persona.typicality,
                 )
             )
-    return _BuildResult(
-        units=tuple(units), previously_dropped_session_ids=tuple(previously_dropped)
-    )
+    return tuple(units), tuple(previously_dropped)
 
 
 def _run_metadata(
     config: Config,
-    frozen_units: tuple[_Unit, ...],
+    typicality_by_session: Mapping[str, Typicality],
     new_rows: Sequence[ValidationRow],
     session_warnings: Sequence[str],
     rejected_replies: int,
@@ -212,35 +152,39 @@ def _run_metadata(
 ) -> dict[str, Any]:
     """Build the validate stage's run metadata from this run's own attempts and outcomes.
 
-    `new_rows` is this run's own attempt rows (not counting rows carried
-    forward from an earlier run's dropped sessions), so `fails_by_layer`,
-    `regenerated` and the typicality rates all describe this run alone.
-    `dropped`, `dropped_session_ids`, `void_signal_ids` and `void_signals_by_pm`
-    are cumulative across every run instead, since a dropped session stays dropped.
+    `typicality_by_session` covers every session this run checked. `new_rows` is this
+    run's own attempt rows (not counting rows carried forward from an earlier run's
+    dropped sessions), so `fails_by_layer`, `regenerated` and the typicality rates all
+    describe this run alone. `dropped`, `dropped_session_ids`, `void_signal_ids` and
+    `void_signals_by_pm` are cumulative across every run instead, since a dropped
+    session stays dropped.
     """
-    void_signal_set = set(dropped_session_ids)
-    void_signal_ids = sorted(sig.signal_id for sig in signals if sig.session_id in void_signal_set)
-    void_signals_by_pm: dict[str, int] = {}
+    dropped = set(dropped_session_ids)
+    void_signal_ids: list[str] = []
+    void_signals_by_pm: Counter[str] = Counter()
     for sig in signals:
-        if sig.session_id in void_signal_set:
-            void_signals_by_pm[sig.pm_id] = void_signals_by_pm.get(sig.pm_id, 0) + 1
-    void_signals_by_pm = dict(sorted(void_signals_by_pm.items()))
+        if sig.session_id in dropped:
+            void_signal_ids.append(sig.signal_id)
+            void_signals_by_pm[sig.pm_id] += 1
 
-    sessions_by_typicality: dict[Typicality, int] = {}
-    typicality_by_pm: dict[str, Typicality] = {}
-    for unit in frozen_units:
-        typicality_by_pm[unit.ctx.skeleton.pm_id] = unit.typicality
-        sessions_by_typicality[unit.typicality] = sessions_by_typicality.get(unit.typicality, 0) + 1
+    fails_by_layer = dict.fromkeys(("ledger", "grep", "leak", "forbidden"), 0)
+    regenerate_rows = 0
     # A session regenerated more than once still counts once: the rate is the share of
     # sessions that needed regeneration, not the number of regenerate attempts.
-    regenerated_sessions_by_typicality: dict[Typicality, set[str]] = {}
+    regenerated_sessions: set[str] = set()
     for row in new_rows:
+        fails_by_layer["ledger"] += not row.ledger_ok
+        fails_by_layer["grep"] += not row.grep_ok
+        fails_by_layer["leak"] += not row.leak_ok
+        fails_by_layer["forbidden"] += not row.forbidden_ok
         if row.status == ValidationStatus.REGENERATE:
-            t = typicality_by_pm[row.pm_id]
-            regenerated_sessions_by_typicality.setdefault(t, set()).add(row.session_id)
+            regenerate_rows += 1
+            regenerated_sessions.add(row.session_id)
+
+    sessions_by_typicality = Counter(typicality_by_session.values())
+    regenerated_by_typicality = Counter(typicality_by_session[sid] for sid in regenerated_sessions)
     regeneration_rate_by_typicality = {
-        t: len(regenerated_sessions_by_typicality.get(t, ())) / n
-        for t, n in sorted(sessions_by_typicality.items())
+        t: regenerated_by_typicality[t] / n for t, n in sorted(sessions_by_typicality.items())
     }
 
     warnings = list(session_warnings)
@@ -254,25 +198,16 @@ def _run_metadata(
     return {
         "judge_model": config.validation.judge_model,
         "pms": sorted(pm_ids),
-        "sessions_checked": len(frozen_units),
-        "fails_by_layer": {
-            "ledger": sum(1 for r in new_rows if not r.ledger_ok),
-            "grep": sum(1 for r in new_rows if not r.grep_ok),
-            "leak": sum(1 for r in new_rows if not r.leak_ok),
-            "forbidden": sum(1 for r in new_rows if not r.forbidden_ok),
-        },
-        "regenerated": sum(1 for r in new_rows if r.status == ValidationStatus.REGENERATE),
+        "sessions_checked": len(typicality_by_session),
+        "fails_by_layer": fails_by_layer,
+        "regenerated": regenerate_rows,
         "dropped": len(dropped_session_ids),
         "dropped_session_ids": sorted(dropped_session_ids),
-        "void_signal_ids": void_signal_ids,
-        "void_signals_by_pm": void_signals_by_pm,
+        "void_signal_ids": sorted(void_signal_ids),
+        "void_signals_by_pm": dict(sorted(void_signals_by_pm.items())),
         "regeneration_rate_by_typicality": regeneration_rate_by_typicality,
         "warnings": warnings,
-        "calls": totals.calls,
-        "cache_hits": totals.cache_hits,
-        "input_tokens": totals.input_tokens,
-        "output_tokens": totals.output_tokens,
-        "cache_read_tokens": totals.cache_read_tokens,
+        **totals.as_metadata(),
         "rejected_replies": rejected_replies,
     }
 
@@ -289,13 +224,13 @@ def _run(
     check_validate_catalogue(catalogue)
 
     advisor_prompt = read_advisor_prompt(config.dialogue.advisor_prompt_path)
-    prompt_sha256 = hashlib.sha256(advisor_prompt.encode("utf-8")).hexdigest()
+    advisor_sha256 = prompt_sha256(advisor_prompt)
     if "advisor_prompt_sha256" not in dialogue_meta:
         raise ValidateError("dialogue run metadata is missing key 'advisor_prompt_sha256'")
-    if prompt_sha256 != dialogue_meta["advisor_prompt_sha256"]:
+    if advisor_sha256 != dialogue_meta["advisor_prompt_sha256"]:
         raise ValidateError(
             "the advisor prompt has changed since the dialogue run narrated against it: "
-            f"expected sha256 {dialogue_meta['advisor_prompt_sha256']}, got {prompt_sha256}"
+            f"expected sha256 {dialogue_meta['advisor_prompt_sha256']}, got {advisor_sha256}"
         )
     if "voices" not in dialogue_meta:
         raise ValidateError("dialogue run metadata is missing key 'voices'")
@@ -317,23 +252,35 @@ def _run(
     }
 
     grep_terms = grep_params(catalogue)
-    build_result = _build_units(
+    frozen_units, previously_dropped_session_ids = _build_units(
         config,
         store,
         catalogue,
         dialogue_meta["voices"],
-        pm_ids,
         sessions_by_key,
         logs_by_key,
         previously_dropped_ids_confirmed,
     )
-    frozen_units = build_result.units
-    previously_dropped_session_ids = build_result.previously_dropped_session_ids
 
     cache_dir = store.data_dir / "cache" / "llm"
     client = CachedClient(lambda: client_factory(config), cache_dir, config.validation.token_budget)
+
+    async def validate(unit: _Unit) -> SessionOutcome:
+        return await run_session(
+            unit.ctx,
+            unit.session,
+            unit.log,
+            client,
+            config,
+            catalogue,
+            advisor_prompt,
+            unit.ledger,
+            grep_terms,
+            unit.trait_param_by_id,
+        )
+
     outcomes = asyncio.run(
-        _validate_all(frozen_units, client, config, catalogue, advisor_prompt, grep_terms)
+        run_bounded(frozen_units, validate, client, config.validation.max_concurrency)
     )
     raise_on_failure(
         tuple(unit.ctx for unit in frozen_units),
@@ -353,7 +300,7 @@ def _run(
     session_warnings = [w for outcome in session_outcomes for w in outcome.warnings]
     rejected_replies = sum(o.rejected_replies for o in session_outcomes)
     finals = {
-        (unit.ctx.skeleton.pm_id, unit.ctx.skeleton.session_id): outcome.final
+        unit.ctx.skeleton.session_id: outcome.final
         for unit, outcome in zip(frozen_units, session_outcomes, strict=True)
     }
 
@@ -362,7 +309,7 @@ def _run(
     new_sessions = [final.session for final in finals.values() if final is not None]
     new_logs = [final.log for final in finals.values() if final is not None]
 
-    newly_dropped_ids = [session_id for (_, session_id), final in finals.items() if final is None]
+    newly_dropped_ids = [session_id for session_id, final in finals.items() if final is None]
     dropped_session_ids = sorted({*newly_dropped_ids, *previously_dropped_session_ids})
 
     # A session an earlier run already dropped keeps its earlier validation rows,
@@ -377,7 +324,7 @@ def _run(
     signals = store.read(SIGNALS)
     return _run_metadata(
         config,
-        frozen_units,
+        {unit.ctx.skeleton.session_id: unit.typicality for unit in frozen_units},
         new_rows,
         session_warnings,
         rejected_replies,
@@ -419,11 +366,8 @@ def make_stage(client_factory: Callable[[Config], LlmClient]) -> Stage:
             SIGNALS,
         ),
         writes=(VALIDATION,),
-        appends=(
-            # Validate checks every PM dialogue narrated, so it owns the whole table.
-            Append(SESSIONS, owned=lambda record: True),
-            Append(DIALOGUE_LOGS, owned=lambda record: True),
-        ),
+        # Validate checks every PM dialogue narrated, so it rewrites both tables whole.
+        rewrites=(SESSIONS, DIALOGUE_LOGS),
     )
 
 

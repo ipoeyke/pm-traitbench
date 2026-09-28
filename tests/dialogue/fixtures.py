@@ -1,5 +1,6 @@
 """Shared dialogue-test fixtures: fake message builders, an in-memory `LlmClient`, a
-`MarketLookup` built on the shared fixture market, and a small `SessionContext` builder.
+`MarketLookup` built on the shared fixture market, a small `SessionContext` builder and
+an engine-plus-plan corpus builder for stage tests.
 
 Consumed by client, tools, prompt and session tests, so a canned response's
 shape only has to match `Message.to_dict()` in one place.
@@ -8,18 +9,25 @@ shape only has to match `Message.to_dict()` in one place.
 import json
 from collections.abc import Callable, Mapping
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from pm_traitbench.catalogues.models import Voice
 from pm_traitbench.config import Config, TurnRanges
+from pm_traitbench.dialogue.client import LlmClient
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import MarketLookup
 from pm_traitbench.dialogue.turns import TurnPlan, plan_turns
+from pm_traitbench.engine.stage import ENGINE_STAGE
 from pm_traitbench.enums import Action, Op, RuleScope, RuleSource, SessionKind
 from pm_traitbench.rng import stream
+from pm_traitbench.signals.stage import PLAN_STAGE
+from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.schema import LedgerRow, Rule, Skeleton, Stance
+from pm_traitbench.tables.store import DataStore
+from tests.engine.fixtures import stage_config, write_stage_inputs
 from tests.gates.fixtures import PM_ID, idea_row
 from tests.signals.fixtures import persona
 
@@ -80,6 +88,23 @@ def default_responder(request: Mapping[str, Any]) -> dict:
     if "tools" in request:
         return fake_message([turn_text("Sounds reasonable, tell me more.")])
     return fake_message([turn_text("Feeling good about the book today.")])
+
+
+def raising_factory(_config: Config) -> LlmClient:
+    """A client factory for a run that must never reach the inner client."""
+    raise AssertionError("the inner client must not be constructed here")
+
+
+def run_engine_and_plan(
+    tmp_path: Path, fixture_market: dict, neutral_pm
+) -> tuple[Config, DataStore]:
+    """Write the stage inputs into a fresh store under `tmp_path`, then run engine and plan."""
+    config = stage_config()
+    store = DataStore(tmp_path, config.output)
+    write_stage_inputs(store, fixture_market, neutral_pm)
+    run_stage(ENGINE_STAGE, config, store)
+    run_stage(PLAN_STAGE, config, store)
+    return config, store
 
 
 @pytest.fixture(scope="module")
