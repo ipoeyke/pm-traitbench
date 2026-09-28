@@ -11,7 +11,13 @@ import pytest
 
 from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, request_key
 from pm_traitbench.errors import DialogueBudgetError, DialogueError
-from tests.dialogue.fixtures import FakeClient, default_responder, fake_message, turn_text
+from tests.dialogue.fixtures import (
+    SESSION_ID,
+    FakeClient,
+    default_responder,
+    fake_message,
+    turn_text,
+)
 
 _API_URL = "https://api.anthropic.com/v1/messages"
 
@@ -28,7 +34,7 @@ def _connection_error(
 
 
 _REQUEST = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
-_SCOPE = "s_pm001_2026-01-05_a"
+_SCOPE = SESSION_ID
 
 _CREDENTIAL_ENV_VARS = (
     "ANTHROPIC_API_KEY",

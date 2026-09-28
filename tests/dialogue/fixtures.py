@@ -7,7 +7,7 @@ shape only has to match `Message.to_dict()` in one place.
 """
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -16,13 +16,14 @@ import pytest
 
 from pm_traitbench.catalogues.models import Voice
 from pm_traitbench.config import DEFAULT_MODEL, Config, TurnRanges
-from pm_traitbench.dialogue.client import LlmClient
+from pm_traitbench.dialogue.client import CachedClient, LlmClient, Reply
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import MarketLookup
 from pm_traitbench.dialogue.turns import TurnPlan, plan_turns
 from pm_traitbench.engine.stage import ENGINE_STAGE
 from pm_traitbench.enums import Action, Op, RuleScope, RuleSource, SessionKind
 from pm_traitbench.rng import stream
+from pm_traitbench.signals.assemble import session_id
 from pm_traitbench.signals.stage import PLAN_STAGE
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.schema import LedgerRow, Rule, Skeleton, Stance
@@ -30,6 +31,8 @@ from pm_traitbench.tables.store import DataStore
 from tests.engine.fixtures import stage_config, write_stage_inputs
 from tests.gates.fixtures import PM_ID, idea_row
 from tests.signals.fixtures import persona
+
+SESSION_ID = session_id(PM_ID, date(2026, 1, 5), 0)
 
 
 def fake_message(
@@ -88,6 +91,32 @@ def default_responder(request: Mapping[str, Any]) -> dict:
     if "tools" in request:
         return fake_message([turn_text("Sounds reasonable, tell me more.")])
     return fake_message([turn_text("Feeling good about the book today.")])
+
+
+def with_section(config: Config, section: str, **fields: Any) -> Config:
+    """`config` with the named section's `fields` replaced."""
+    return config.model_copy(update={section: getattr(config, section).model_copy(update=fields)})
+
+
+type SendHook = Callable[[Mapping[str, Any], str, Callable[[], Awaitable[Reply]]], Awaitable[Reply]]
+
+
+def patch_send(monkeypatch: pytest.MonkeyPatch, hook: SendHook) -> None:
+    """Route every `CachedClient.send` through `hook(request, scope, send)`.
+
+    `send()` returns the real send's coroutine for this call, so the hook decides
+    whether to delegate, replace the reply or raise.
+    """
+    real_send = CachedClient.send
+
+    async def patched_send(
+        self: CachedClient, request: dict, *, scope: str, refresh: bool = False
+    ) -> Reply:
+        return await hook(
+            request, scope, lambda: real_send(self, request, scope=scope, refresh=refresh)
+        )
+
+    monkeypatch.setattr(CachedClient, "send", patched_send)
 
 
 def raising_factory(_config: Config) -> LlmClient:
@@ -164,7 +193,7 @@ def session_context(
     resolved_day_trades = () if is_silence else day_trades
 
     skeleton = Skeleton(
-        session_id=f"s_{pm.pm_id.replace('_', '')}_2026-01-05_a",
+        session_id=SESSION_ID,
         pm_id=pm.pm_id,
         date=date(2026, 1, 5),
         kind=kind,

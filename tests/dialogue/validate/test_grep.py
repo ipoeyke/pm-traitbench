@@ -3,13 +3,14 @@
 from pm_traitbench.catalogues.loader import leak_param_names, load_catalogue
 from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.dialogue.validate.grep import check_grep
+from tests.dialogue.fixtures import SESSION_ID
 from tests.dialogue.validate.fixtures import advisor_turn, log_of, pm_turn
 
 PARAMS = ("register", "loss_aversion_lambda")
 
 
 def _log(*turns):
-    return log_of("s_pm001_2026-01-05_a", "pm_001", turns)
+    return log_of(SESSION_ID, "pm_001", turns)
 
 
 def test_clean_transcript_passes():

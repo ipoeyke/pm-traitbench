@@ -8,10 +8,15 @@ import pytest
 from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.config import Config
 from pm_traitbench.dialogue.session import SessionResult
-from pm_traitbench.dialogue.validate.loop import feedback_text, run_session, validate_once
+from pm_traitbench.dialogue.validate.loop import (
+    FEEDBACK_HEADER,
+    feedback_text,
+    run_session,
+    validate_once,
+)
 from pm_traitbench.enums import SignalMode, StanceEntry, TurnRole, ValidationStatus
 from pm_traitbench.tables.schema import Session, Turn
-from tests.dialogue.fixtures import fake_message, turn_text
+from tests.dialogue.fixtures import SESSION_ID, fake_message, turn_text, with_section
 from tests.dialogue.validate.fixtures import (
     advisor_turn,
     forbidden_reply,
@@ -26,7 +31,6 @@ from tests.dialogue.validate.fixtures import (
 from tests.gates.fixtures import ledger_row
 
 _ADVISOR_PROMPT = "You are a market advisor for the PM's book."
-_SESSION_ID = "s_pm001_2026-01-05_a"
 _BAD_TEXT = "my loss_aversion_lambda is high"
 
 
@@ -44,7 +48,7 @@ def _turn_reply(text: str, mentions: list[dict]) -> dict:
 
 def _log_saying(pm_text: str):
     """A one-exchange log on the default session: the PM says `pm_text`, the advisor notes it."""
-    return log_of(_SESSION_ID, "pm_001", [pm_turn(pm_text), advisor_turn("noted")])
+    return log_of(SESSION_ID, "pm_001", [pm_turn(pm_text), advisor_turn("noted")])
 
 
 _CLEAN_LOG = _log_saying("all clear on the book")
@@ -154,7 +158,7 @@ def test_explicit_label_of_the_revealed_param_fails_and_other_labels_pass(market
     unquoted = once("d", lambda _r: leak_reply(True, "disposition effect", "not in the turn"))
     assert unquoted.leak_reasons == ()
     assert unquoted.warnings == (
-        f"session {_SESSION_ID}: leak judge quote not in a PM turn: not in the turn",
+        f"session {SESSION_ID}: leak judge quote not in a PM turn: not in the turn",
     )
     assert unquoted.passed is True
 
@@ -212,7 +216,7 @@ def test_unmapped_label_is_a_warning_not_a_failure(market_lookup, tmp_path):
 
     assert result.leak_reasons == ()
     assert result.warnings == (
-        f"session {_SESSION_ID}: judge label unmapped: a label nobody catalogued",
+        f"session {SESSION_ID}: judge label unmapped: a label nobody catalogued",
     )
     assert result.passed is True
 
@@ -335,14 +339,12 @@ def _run_always_bad_narrator(market_lookup, tmp_path, max_attempts):
     systems_by_attempt: dict[int, set[str]] = {}
 
     def narrator_reply(request):
-        match = re.search(r"Attempt (\d+)\.", request["system"])
+        match = re.search(rf"Attempt (\d+)\. {re.escape(FEEDBACK_HEADER)}", request["system"])
         assert match is not None
         systems_by_attempt.setdefault(int(match.group(1)), set()).add(request["system"])
         return _turn_reply("still naming my loss_aversion_lambda here", [])
 
-    config = Config(
-        validation=Config().validation.model_copy(update={"max_attempts": max_attempts})
-    )
+    config = with_section(Config(), "validation", max_attempts=max_attempts)
     client = scripted_client(tmp_path, narrator_reply, _raise, _clean_forbidden)
 
     outcome = _run(

@@ -28,6 +28,7 @@ from pm_traitbench.tables.schema import DialogueLog, LedgerRow, Session, Validat
 # The check layers that can reject a session; each has `<layer>_reasons` on `LayerResult`
 # and `<layer>_ok` on `ValidationRow`.
 LAYERS = ("ledger", "grep", "leak", "forbidden")
+FEEDBACK_HEADER = "A validator rejected the previous version of this session"
 
 
 @dataclass(frozen=True)
@@ -155,7 +156,7 @@ def feedback_text(attempt: int, reasons: Sequence[str]) -> str:
     """The narrator correction text for a regenerated attempt, listing every reject reason."""
     lines = "\n".join(f"- {reason}" for reason in reasons)
     return (
-        f"Attempt {attempt}. A validator rejected the previous version of this session:\n"
+        f"Attempt {attempt}. {FEEDBACK_HEADER}:\n"
         f"{lines}\n"
         "Fix these and keep everything else as instructed."
     )

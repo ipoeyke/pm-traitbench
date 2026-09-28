@@ -22,7 +22,7 @@ from pm_traitbench.dialogue.validate.judge import (
     transcript_text,
 )
 from pm_traitbench.errors import ValidateError
-from tests.dialogue.fixtures import FakeClient, fake_message
+from tests.dialogue.fixtures import SESSION_ID, FakeClient, fake_message
 from tests.dialogue.validate.fixtures import (
     advisor_turn,
     forbidden_reply,
@@ -38,7 +38,7 @@ _CONFIG = Config().validation
 
 def _log():
     return log_of(
-        "s_pm001_2026-01-05_a",
+        SESSION_ID,
         "pm_001",
         [pm_turn("I bought the dip"), advisor_turn("noted, anything else")],
     )
@@ -88,7 +88,7 @@ def test_judge_requests_never_carry_a_turn_directive():
     """
     directive = "push to run this at twice the usual size"
     log = log_of(
-        "s_pm001_2026-01-05_a",
+        SESSION_ID,
         "pm_001",
         [pm_turn("I bought the dip", directive=directive), advisor_turn("noted")],
     )

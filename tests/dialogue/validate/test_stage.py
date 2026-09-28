@@ -4,20 +4,23 @@ wired through a real (but scripted) dialogue corpus.
 
 import json
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from pm_traitbench import pipeline
 from pm_traitbench.config import Config
-from pm_traitbench.dialogue.client import CachedClient, UsageTotals
+from pm_traitbench.dialogue.client import Reply, UsageTotals
 from pm_traitbench.dialogue.stage import make_stage
+from pm_traitbench.dialogue.validate.loop import FEEDBACK_HEADER
 from pm_traitbench.dialogue.validate.stage import _run_metadata
 from pm_traitbench.dialogue.validate.stage import make_stage as make_validate_stage
 from pm_traitbench.enums import Ownership, SignalMode, Typicality, Valence, ValidationStatus
 from pm_traitbench.errors import DialogueBudgetError, ValidateError
+from pm_traitbench.signals.assemble import session_id
 from pm_traitbench.stages import Stage, run_stage
 from pm_traitbench.tables.schema import Signal, Skeleton, ValidationRow, to_record
 from pm_traitbench.tables.specs import (
@@ -30,11 +33,14 @@ from pm_traitbench.tables.specs import (
 )
 from pm_traitbench.tables.store import DataStore
 from tests.dialogue.fixtures import (
+    SESSION_ID,
     FakeClient,
     fake_message,
+    patch_send,
     raising_factory,
     run_engine_and_plan,
     turn_text,
+    with_section,
 )
 from tests.dialogue.validate.fixtures import (
     advisor_turn,
@@ -78,13 +84,12 @@ def _intercept_scope(monkeypatch: pytest.MonkeyPatch) -> None:
     patched method only stashes `scope` before delegating to the real one, so
     a scope-blind `LlmClient` responder can still answer per session.
     """
-    real_send = CachedClient.send
 
-    async def patched_send(self: CachedClient, request: dict, *, scope: str, refresh: bool = False):
+    async def hook(_request: dict, scope: str, send: Callable[[], Awaitable[Reply]]) -> Reply:
         _current_scope.set(scope)
-        return await real_send(self, request, scope=scope, refresh=refresh)
+        return await send()
 
-    monkeypatch.setattr(CachedClient, "send", patched_send)
+    patch_send(monkeypatch, hook)
 
 
 def _faithful_responder(
@@ -102,7 +107,7 @@ def _faithful_responder(
 
     def narrator(request: dict) -> dict:
         scope = _current_scope.get()
-        is_regeneration = "A validator rejected the previous version" in request.get("system", "")
+        is_regeneration = FEEDBACK_HEADER in request.get("system", "")
         text = bad_text_by_session.get(scope, _CLEAN_TEXT) if not is_regeneration else _CLEAN_TEXT
         mentions = mentions_by_session.get(scope, [])
         return fake_message([turn_text(text, mentions)])
@@ -156,9 +161,7 @@ def _void_signal(skeleton: Skeleton) -> Signal:
 
 def _one_attempt(config: Config) -> Config:
     """`config` with `validation.max_attempts` set to 1, so any failure drops the session."""
-    return config.model_copy(
-        update={"validation": config.validation.model_copy(update={"max_attempts": 1})}
-    )
+    return with_section(config, "validation", max_attempts=1)
 
 
 def _edit_dialogue_meta(tmp_path: Path, edit: Callable[[dict], None]) -> None:
@@ -374,11 +377,7 @@ def test_advisor_prompt_hash_mismatch_raises(
 
     other_prompt = tmp_path / "other_prompt.md"
     other_prompt.write_text("A different advisor system prompt.", encoding="utf-8")
-    config = config.model_copy(
-        update={
-            "dialogue": config.dialogue.model_copy(update={"advisor_prompt_path": other_prompt})
-        }
-    )
+    config = with_section(config, "dialogue", advisor_prompt_path=other_prompt)
 
     with pytest.raises(ValidateError, match="advisor prompt"):
         run_stage(make_validate_stage(raising_factory), config, store)
@@ -538,9 +537,7 @@ def test_budget_error_writes_nothing(
     sessions_before = store.path(SESSIONS).read_bytes()
     logs_before = store.path(DIALOGUE_LOGS).read_bytes()
 
-    config = config.model_copy(
-        update={"validation": config.validation.model_copy(update={"token_budget": 1})}
-    )
+    config = with_section(config, "validation", token_budget=1)
 
     with pytest.raises(DialogueBudgetError):
         run_stage(_clean_validate_stage(store), config, store)
@@ -659,15 +656,13 @@ def test_regeneration_rate_counts_a_twice_regenerated_session_once() -> None:
     """A session regenerated twice before passing must count once toward the rate, not
     twice, so the rate stays a share of sessions rather than a count of attempts.
     """
-    typicality_by_session = {
-        "s_pm001_2026-01-05_a": Typicality.TYPICAL,
-        "s_pm002_2026-01-05_a": Typicality.TYPICAL,
-    }
+    other_id = session_id("pm_002", date(2026, 1, 5), 0)
+    typicality_by_session = {SESSION_ID: Typicality.TYPICAL, other_id: Typicality.TYPICAL}
     rows = [
-        _validation_row("pm_001", "s_pm001_2026-01-05_a", 1, ValidationStatus.REGENERATE),
-        _validation_row("pm_001", "s_pm001_2026-01-05_a", 2, ValidationStatus.REGENERATE),
-        _validation_row("pm_001", "s_pm001_2026-01-05_a", 3, ValidationStatus.PASS),
-        _validation_row("pm_002", "s_pm002_2026-01-05_a", 1, ValidationStatus.PASS),
+        _validation_row("pm_001", SESSION_ID, 1, ValidationStatus.REGENERATE),
+        _validation_row("pm_001", SESSION_ID, 2, ValidationStatus.REGENERATE),
+        _validation_row("pm_001", SESSION_ID, 3, ValidationStatus.PASS),
+        _validation_row("pm_002", other_id, 1, ValidationStatus.PASS),
     ]
 
     metadata = _run_metadata(

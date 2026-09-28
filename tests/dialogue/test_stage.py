@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,7 @@ import pytest
 
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config, DialogueConfig, PmFilter
-from pm_traitbench.dialogue.client import CachedClient, Reply, request_key
+from pm_traitbench.dialogue.client import Reply, request_key
 from pm_traitbench.dialogue.stage import make_stage
 from pm_traitbench.errors import DialogueBudgetError, DialogueError
 from pm_traitbench.stages import run_stage
@@ -19,8 +20,10 @@ from tests.dialogue.fixtures import (
     FakeClient,
     default_responder,
     fake_message,
+    patch_send,
     raising_factory,
     run_engine_and_plan,
+    with_section,
 )
 from tests.engine.fixtures import MULTI_ASSET_PM_ID
 
@@ -57,19 +60,16 @@ def _intercept_by_scope(monkeypatch: pytest.MonkeyPatch, outcomes: dict[str, Any
     client unchanged. This targets one exact session regardless of whether
     its rendered request body happens to collide with another session's.
     """
-    real_send = CachedClient.send
 
-    async def patched_send(
-        self: CachedClient, request: dict, *, scope: str, refresh: bool = False
-    ) -> Reply:
+    async def hook(request: dict, scope: str, send: Callable[[], Awaitable[Reply]]) -> Reply:
         outcome = outcomes.get(scope)
         if outcome is None:
-            return await real_send(self, request, scope=scope, refresh=refresh)
+            return await send()
         if isinstance(outcome, BaseException):
             raise outcome
         return Reply(key=request_key(request, scope), response=outcome, cached=False)
 
-    monkeypatch.setattr(CachedClient, "send", patched_send)
+    patch_send(monkeypatch, hook)
 
 
 def _refusal(text: str = "no") -> dict:
@@ -123,13 +123,7 @@ def test_failed_session_writes_no_tables_and_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    config = config.model_copy(
-        update={
-            "dialogue": config.dialogue.model_copy(
-                update={"pm_filter": PmFilter(pm_ids=(_TARGET_PM_ID,))}
-            )
-        }
-    )
+    config = with_section(config, "dialogue", pm_filter=PmFilter(pm_ids=(_TARGET_PM_ID,)))
     session_ids = _sorted_skeleton_ids(store, _TARGET_PM_ID)
     assert len(session_ids) >= 2  # a session unaffected by the refusal must still exist
     target_id = session_ids[-1]
@@ -150,13 +144,7 @@ def test_several_failed_sessions_are_listed_in_session_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    config = config.model_copy(
-        update={
-            "dialogue": config.dialogue.model_copy(
-                update={"pm_filter": PmFilter(pm_ids=(_MANY_SESSIONS_PM_ID,))}
-            )
-        }
-    )
+    config = with_section(config, "dialogue", pm_filter=PmFilter(pm_ids=(_MANY_SESSIONS_PM_ID,)))
     session_ids = _sorted_skeleton_ids(store, _MANY_SESSIONS_PM_ID)
     assert len(session_ids) >= 3  # at least one session must survive unrefused
     first_id, second_id = session_ids[0], session_ids[1]
@@ -184,13 +172,7 @@ def test_client_raised_error_is_prefixed_with_its_session_id(
     at the right session.
     """
     config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    config = config.model_copy(
-        update={
-            "dialogue": config.dialogue.model_copy(
-                update={"pm_filter": PmFilter(pm_ids=(_TARGET_PM_ID,))}
-            )
-        }
-    )
+    config = with_section(config, "dialogue", pm_filter=PmFilter(pm_ids=(_TARGET_PM_ID,)))
     session_ids = _sorted_skeleton_ids(store, _TARGET_PM_ID)
     target_id = session_ids[0]
     credentials_error = DialogueError("no Anthropic credentials: run `ant auth login`")
@@ -211,12 +193,8 @@ def test_budget_error_takes_precedence_over_a_plain_dialogue_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    config = config.model_copy(
-        update={
-            "dialogue": config.dialogue.model_copy(
-                update={"pm_filter": PmFilter(pm_ids=(_TARGET_PM_ID,)), "token_budget": 1}
-            )
-        }
+    config = with_section(
+        config, "dialogue", pm_filter=PmFilter(pm_ids=(_TARGET_PM_ID,)), token_budget=1
     )
     session_ids = _sorted_skeleton_ids(store, _TARGET_PM_ID)
     assert len(session_ids) >= 2
@@ -240,13 +218,7 @@ def test_non_dialogue_exception_is_re_raised_and_writes_no_tables(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    config = config.model_copy(
-        update={
-            "dialogue": config.dialogue.model_copy(
-                update={"pm_filter": PmFilter(pm_ids=(_TARGET_PM_ID,))}
-            )
-        }
-    )
+    config = with_section(config, "dialogue", pm_filter=PmFilter(pm_ids=(_TARGET_PM_ID,)))
     session_ids = _sorted_skeleton_ids(store, _TARGET_PM_ID)
     _intercept_by_scope(monkeypatch, {session_ids[0]: ValueError("boom")})
 
@@ -261,9 +233,7 @@ def test_session_concurrency_never_exceeds_max_concurrency(
     tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
 ) -> None:
     config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    config = config.model_copy(
-        update={"dialogue": config.dialogue.model_copy(update={"max_concurrency": 2})}
-    )
+    config = with_section(config, "dialogue", max_concurrency=2)
     tracker = _ConcurrencyTrackingClient()
 
     run_stage(make_stage(lambda c: tracker), config, store)
@@ -277,9 +247,7 @@ def test_budget_error_writes_no_tables(
     tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
 ) -> None:
     config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    config = config.model_copy(
-        update={"dialogue": config.dialogue.model_copy(update={"token_budget": 1})}
-    )
+    config = with_section(config, "dialogue", token_budget=1)
 
     with pytest.raises(DialogueBudgetError):
         run_stage(make_stage(lambda c: FakeClient(default_responder)), config, store)
@@ -305,13 +273,7 @@ def test_pm_filter_matching_no_pm_raises_before_any_call_and_writes_nothing(
     tmp_path: Path, fixture_market: dict, neutral_pm, catalogue: Catalogue
 ) -> None:
     config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    config = config.model_copy(
-        update={
-            "dialogue": config.dialogue.model_copy(
-                update={"pm_filter": PmFilter(pm_ids=("no_such_pm",))}
-            )
-        }
-    )
+    config = with_section(config, "dialogue", pm_filter=PmFilter(pm_ids=("no_such_pm",)))
 
     with pytest.raises(DialogueError, match="dialogue.pm_filter selects no PMs"):
         run_stage(make_stage(raising_factory), config, store)
@@ -350,13 +312,7 @@ def test_transient_and_rejected_failures_are_both_listed(
     grouped by session alongside a plain rejected-reply failure, not silently dropped.
     """
     config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    config = config.model_copy(
-        update={
-            "dialogue": config.dialogue.model_copy(
-                update={"pm_filter": PmFilter(pm_ids=(_MANY_SESSIONS_PM_ID,))}
-            )
-        }
-    )
+    config = with_section(config, "dialogue", pm_filter=PmFilter(pm_ids=(_MANY_SESSIONS_PM_ID,)))
     session_ids = _sorted_skeleton_ids(store, _MANY_SESSIONS_PM_ID)
     assert len(session_ids) >= 3
     first_id, second_id = session_ids[0], session_ids[1]
@@ -393,13 +349,7 @@ def test_client_is_closed_even_when_the_run_fails(
 ) -> None:
     fake = FakeClient(default_responder)
     config, store = run_engine_and_plan(tmp_path, fixture_market, neutral_pm)
-    config = config.model_copy(
-        update={
-            "dialogue": config.dialogue.model_copy(
-                update={"pm_filter": PmFilter(pm_ids=(_TARGET_PM_ID,))}
-            )
-        }
-    )
+    config = with_section(config, "dialogue", pm_filter=PmFilter(pm_ids=(_TARGET_PM_ID,)))
     session_ids = _sorted_skeleton_ids(store, _TARGET_PM_ID)
     _intercept_by_scope(monkeypatch, {session_ids[0]: _refusal()})
 
