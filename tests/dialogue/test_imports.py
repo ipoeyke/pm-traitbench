@@ -1,6 +1,7 @@
 """Enforces the dialogue package's dependency boundary in both directions: no module under
 it may import the behaviour engine, signal plan, gate 1 or market packages, and no module
-outside it (besides pipeline.py) may import the dialogue package itself.
+outside it (besides pipeline.py and gate 2, which reuses its client and prompt plumbing)
+may import the dialogue package itself.
 """
 
 import ast
@@ -17,6 +18,7 @@ _DIALOGUE_PREFIX = "pm_traitbench.dialogue"
 _SRC_ROOT = Path(__file__).resolve().parents[2] / "src"
 _DIALOGUE_ROOT = _SRC_ROOT / "pm_traitbench" / "dialogue"
 _PIPELINE_PATH = _SRC_ROOT / "pm_traitbench" / "pipeline.py"
+_GATE2_ROOT = _SRC_ROOT / "pm_traitbench" / "gates" / "gate2"
 
 
 def _package_for(path: Path) -> str:
@@ -86,8 +88,8 @@ def test_dialogue_package_never_imports_engine_signals_gates_or_market():
 def test_only_pipeline_imports_the_dialogue_package():
     violations = []
     for path in sorted(_SRC_ROOT.rglob("*.py")):
-        if _DIALOGUE_ROOT in path.parents or path == _PIPELINE_PATH:
-            continue  # dialogue/ may import within itself; pipeline.py is the one caller
+        if _DIALOGUE_ROOT in path.parents or path == _PIPELINE_PATH or _GATE2_ROOT in path.parents:
+            continue  # dialogue/ may import within itself; pipeline.py and gate2/ also reuse it
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         package = _package_for(path)
         for name in sorted(_imported_names(tree, package)):
