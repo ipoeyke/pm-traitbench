@@ -104,14 +104,14 @@ async def validate_once(
 
     # A judge finding counts only with its evidence: the quote must appear in a PM turn,
     # so a verdict invented from the topic rather than the text cannot fail a session.
-    pm_text = _normalised(" ".join(t.text for t in log.turns if t.role == TurnRole.PM))
+    pm_text = " ".join(t.text for t in log.turns if t.role == TurnRole.PM)
     leak_reasons: tuple[str, ...] = ()
     warnings: list[str] = []
     if verdict is not None and verdict.explicit:
         label = (verdict.label or "").strip()
         mapped = map_label(label, catalogue.bias_labels)
         if mapped is not None and mapped in revealed:
-            if _quoted(pm_text, verdict.quote):
+            if is_direct_quote(verdict.quote, pm_text):
                 leak_reasons = (f'leaks {mapped}: "{verdict.quote}"',)
             else:
                 warnings.append(
@@ -124,7 +124,7 @@ async def validate_once(
     for v in violations:
         if not (1 <= v.index <= len(ctx.avoid_lines)):
             warnings.append(f"session {session_id}: forbidden judge index out of range: {v.index}")
-        elif not _quoted(pm_text, v.quote):
+        elif not is_direct_quote(v.quote, pm_text):
             warnings.append(
                 f"session {session_id}: forbidden judge quote not in a PM turn: {v.quote}"
             )
@@ -143,15 +143,15 @@ async def validate_once(
     )
 
 
-def _normalised(text: str) -> str:
-    """Case-folded text with runs of whitespace collapsed, for verbatim-quote matching."""
+def normalise(text: str) -> str:
+    """Case-fold `text` and collapse runs of whitespace, for verbatim-quote matching."""
     return " ".join(text.split()).casefold()
 
 
-def _quoted(pm_text: str, quote: str) -> bool:
+def is_direct_quote(quote: str, pm_text: str) -> bool:
     """Whether a judge's quote appears verbatim (up to case and spacing) in the PM turns."""
-    needle = _normalised(quote)
-    return bool(needle) and needle in pm_text
+    needle = normalise(quote)
+    return bool(needle) and needle in normalise(pm_text)
 
 
 def feedback_text(attempt: int, reasons: Sequence[str]) -> str:
