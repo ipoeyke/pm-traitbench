@@ -195,10 +195,8 @@ async def run_bounded[I, T](
 def _reason_of(unit_id: str, error: PmTraitbenchError, label: str) -> str:
     """The failure reason for one unit, stripped of a `{label} {id}: ` prefix if present.
 
-    An error raised inside the unit's own worker (e.g. `narrate_session`)
-    already carries that prefix; one raised by the inner client (a credential
-    or 400 error) does not, so this normalises both to a plain reason before
-    regrouping by unit.
+    Normalises a reason already prefixed by the unit's own worker and one raised bare
+    by the inner client to the same plain form, so both group by unit consistently.
     """
     message = str(error)
     prefix = scope_prefix(label, unit_id)
@@ -217,16 +215,9 @@ def raise_on_failure(
     """Raise a budget error, else a combined error of `error_type`, else re-raise any other
     exception.
 
-    A budget error takes priority since it means the whole run should stop
-    spending; its message names `budget_label` so a validate run's budget
-    error points at `validation.token_budget`, not the dialogue config.
-    Otherwise every failed unit is named, in `unit_ids` order, with units
-    that failed for the identical reason collapsed onto one line under
-    `label` (singular) or `label + "s"` (plural), so a rerun's cache can
-    skip the units that already succeeded. Any `PmTraitbenchError` result is
-    grouped this way and raised as `error_type`, so the validate stage's
-    `ValidateError` results are reported under validate's own error, not
-    dialogue's.
+    A budget error (named by `budget_label`) takes priority; otherwise every failed unit
+    is named under `label` singular or `label + "s"` plural, in `unit_ids` order, with
+    units sharing a reason collapsed onto one line and raised together as `error_type`.
     """
     if any(isinstance(r, DialogueBudgetError) for r in results):
         totals = client.totals
