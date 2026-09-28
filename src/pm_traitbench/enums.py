@@ -6,6 +6,8 @@ depend on these without pulling in unrelated code.
 
 from enum import StrEnum
 
+# Sampling: the PM population and its traits
+
 
 class AssetClass(StrEnum):
     EQUITIES = "equities"
@@ -39,6 +41,9 @@ class RuleScope(StrEnum):
     IDEA = "idea"
 
 
+# Rules: the condition grammar and what firing one does
+
+
 class Op(StrEnum):
     LE = "<="
     GE = ">="
@@ -60,10 +65,16 @@ class Action(StrEnum):
     ROLL = "roll"
 
 
+# Drift
+
+
 class DriftEventType(StrEnum):
     UPDATE = "update"
     DORMANT = "dormant"
     REVIVE = "revive"
+
+
+# Market: universe, regimes, events and consensus
 
 
 class Regime(StrEnum):
@@ -151,6 +162,9 @@ class ExpiryRule(StrEnum):
     MONTHLY_THIRD_FRIDAY = "monthly_third_friday"
 
 
+# Engine: trades, ideas and position days
+
+
 class Side(StrEnum):
     BUY = "buy"
     SELL = "sell"
@@ -186,6 +200,9 @@ class PnlState(StrEnum):
     FLAT = "flat"
 
 
+# Gate 1
+
+
 class Gate1Verdict(StrEnum):
     PASS = "pass"
     FAIL = "fail"
@@ -214,6 +231,9 @@ class SeedGroupKind(StrEnum):
     REAL_SEED = "real_seed"
 
 
+# Derived groupings
+
+
 SOVEREIGN_TENORS: tuple[Tenor, ...] = (Tenor.Y2, Tenor.Y5, Tenor.Y10, Tenor.Y30)
 FUTURES_TENORS: tuple[Tenor, ...] = (
     Tenor.M1,
@@ -240,6 +260,9 @@ IG_BANDS: frozenset[RatingBand] = frozenset(RatingBand) - HY_BANDS
 MULTI_LEG_FORMS: frozenset[Expression] = frozenset(
     {Expression.PAIR, Expression.CURVE, Expression.CALENDAR_SPREAD}
 )
+
+
+# Signal plan: signals, sessions and stances
 
 
 class SignalMode(StrEnum):
@@ -285,6 +308,9 @@ class CarrierSource(StrEnum):
     IDEA = "idea"
 
 
+# Dialogue
+
+
 class TurnRole(StrEnum):
     PM = "pm"
     ADVISOR = "advisor"
@@ -295,10 +321,16 @@ class MentionKind(StrEnum):
     LEVEL = "level"
 
 
+# Validate
+
+
 class ValidationStatus(StrEnum):
     PASS = "pass"
     REGENERATE = "regenerate"
     DROPPED = "dropped"
+
+
+# Cross-stage helpers and API settings
 
 
 class DriftStatus(StrEnum):
