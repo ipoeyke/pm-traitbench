@@ -10,6 +10,7 @@ import yaml
 from pm_traitbench.catalogues.loader import (
     banned_words_in,
     check_catalogue,
+    check_gate2_catalogue,
     check_validate_catalogue,
     load_catalogue,
     matched_params,
@@ -37,6 +38,7 @@ _CATALOGUE_FILES = (
     "voices.yaml",
     "avoid.yaml",
     "bias_labels.yaml",
+    "bias_definitions.yaml",
 )
 _ASSET_CLASSES = list(AssetClass)
 _N_PREFERENCES_MAX = 8
@@ -823,3 +825,39 @@ def test_matched_params_is_whole_word_and_returns_every_match() -> None:
 def test_banned_words_in_is_a_case_insensitive_substring_scan() -> None:
     assert banned_words_in("Loss Aversion and herding") == ("loss aversion", "herd")
     assert banned_words_in("a plain line") == ()
+
+
+# --- check_gate2_catalogue: bias definition catalogue for gate 2's judge prompt ---
+
+
+def test_bias_definitions_missing_a_param_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_definitions.yaml"
+    data = _load_yaml(path)
+    del data["definitions"]["exit_deficiency"]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="bias_definitions.*exit_deficiency"):
+        check_gate2_catalogue(catalogue)
+
+
+def test_bias_definitions_blank_line_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_definitions.yaml"
+    data = _load_yaml(path)
+    data["definitions"]["exit_deficiency"] = "   "
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="exit_deficiency.*blank"):
+        check_gate2_catalogue(catalogue)
+
+
+def test_bias_definitions_line_naming_a_param_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_definitions.yaml"
+    data = _load_yaml(path)
+    data["definitions"]["loss_aversion_lambda"] = "shows herding weight on every trade"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="herding_weight"):
+        check_gate2_catalogue(catalogue)

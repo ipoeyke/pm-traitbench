@@ -11,6 +11,7 @@ from pm_traitbench.catalogues.loader import (
     CLOSER_PHRASES,
     check_catalogue,
     check_dialogue_catalogue,
+    check_gate2_catalogue,
     check_validate_catalogue,
     load_catalogue,
     render_signpost,
@@ -207,6 +208,7 @@ def test_packaged_yaml_files_exist() -> None:
         "voices.yaml",
         "avoid.yaml",
         "bias_labels.yaml",
+        "bias_definitions.yaml",
     ):
         assert base.joinpath(name).is_file()
 
@@ -383,6 +385,18 @@ def test_bias_labels_phrases_have_no_period_or_em_dash() -> None:
         for phrase in phrases:
             assert not phrase.endswith("."), phrase
             assert "—" not in phrase, phrase
+
+
+def test_bias_definitions_cover_every_bias_param_and_pass_the_check() -> None:
+    catalogue = load_catalogue()
+    check_gate2_catalogue(catalogue)
+
+
+def test_bias_definitions_are_lowercase_no_period() -> None:
+    data = _load_shipped_yaml("bias_definitions.yaml")
+    for line in data["definitions"].values():
+        assert line == line.lower(), line
+        assert not line.endswith("."), line
 
 
 _ADVISOR_PROMPT_BANNED_STEMS = ("simulat", "placeholder", "dataset")

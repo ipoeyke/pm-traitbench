@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from pm_traitbench.catalogues.models import (
     ADAPTER_FORMS,
     AvoidLines,
+    BiasDefinitions,
     BiasLabels,
     Catalogue,
     Phrasings,
@@ -42,6 +43,7 @@ _FILE_NAMES = (
     "voices.yaml",
     "avoid.yaml",
     "bias_labels.yaml",
+    "bias_definitions.yaml",
 )
 
 # A stance line's slots vary by (kind of trait, kind of evidence): which parts of the
@@ -174,6 +176,7 @@ def _build_catalogue(base: Any) -> Catalogue:
         voices = _VoicesFile.model_validate(raw["voices.yaml"]).voices
         avoid = AvoidLines.model_validate(raw["avoid.yaml"])
         bias_labels = BiasLabels.model_validate(raw["bias_labels.yaml"])
+        bias_definitions = BiasDefinitions.model_validate(raw["bias_definitions.yaml"])
     except ValidationError as e:
         raise CatalogueError(f"invalid catalogue content: {e}") from e
     return Catalogue(
@@ -187,6 +190,7 @@ def _build_catalogue(base: Any) -> Catalogue:
         voices=voices,
         avoid=avoid,
         bias_labels=bias_labels,
+        bias_definitions=bias_definitions,
     )
 
 
@@ -690,6 +694,29 @@ def check_validate_catalogue(catalogue: Catalogue) -> None:
                     f"'{seen[phrase]}' and '{param}'"
                 )
             seen[phrase] = param
+
+
+def check_gate2_catalogue(catalogue: Catalogue) -> None:
+    """Check the bias definition catalogue gate 2's judge prompt shows beside each param name.
+
+    Since the prompt already names the param next to its line, a line that also names
+    any bias param, its own or another's, would make the judge's read redundant rather
+    than a description of behaviour.
+    """
+    definitions = catalogue.bias_definitions.definitions
+    _check_key_set(
+        "bias_definitions: keys", set(definitions), set(BIAS_PARAMS), "the bias parameter set"
+    )
+    for param, line in definitions.items():
+        if not line.strip():
+            raise CatalogueError(f"bias_definitions: param '{param}' line is blank")
+        if "—" in line:
+            raise CatalogueError(f"bias_definitions: param '{param}' line contains an em dash")
+        matched = matched_params(line, BIAS_PARAMS)
+        if matched:
+            raise CatalogueError(
+                f"bias_definitions: param '{param}' line names param '{matched[0]}'"
+            )
 
 
 def check_catalogue(
