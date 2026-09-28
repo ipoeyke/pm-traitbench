@@ -113,6 +113,14 @@ def test_classify_units_keep_only_own_confirm_stated_signals_in_surviving_sessio
     assert n == 2
 
 
+def test_classify_units_raises_when_a_surviving_session_has_no_log_or_skeleton():
+    session = session_of(PM_A, date(2026, 1, 5), ["I always cut losers fast"])
+    sig = signal(PM_A, session.session_id, date(2026, 1, 5), "t_01", signal_id="sg_001")
+
+    with pytest.raises(Gate2Error, match=rf"session '{session.session_id}'"):
+        classify_units({session.session_id: session}, {}, {}, [sig])
+
+
 def test_signal_turn_index_finds_the_directive_turn_and_raises_on_zero_or_two_matches():
     session = session_of(PM_A, date(2026, 1, 5), ["yes I do that", "unrelated", "yes I do that"])
     good_stance = Stance(
@@ -167,6 +175,9 @@ def test_classify_request_carries_rules_ledger_and_no_vocabulary():
         text="Stop the other idea at 50.",
     )
     ledger = ledger_row(pm_id=persona.pm_id, trade_idea_id="ti_001", price_or_yield=101.5)
+    ledger_after = ledger_row(
+        pm_id=persona.pm_id, trade_idea_id="ti_001", date=date(2026, 1, 6), price_or_yield=999.0
+    )
     session = session_of(
         persona.pm_id, date(2026, 1, 5), ["hello there"], trade_idea_ids=("ti_001",)
     )
@@ -176,7 +187,7 @@ def test_classify_request_carries_rules_ledger_and_no_vocabulary():
         persona,
         [pm_rule],
         [stop_rule, target_rule, other_idea_rule],
-        [ledger],
+        [ledger, ledger_after],
         session,
         2,
         config,
@@ -191,7 +202,8 @@ def test_classify_request_carries_rules_ledger_and_no_vocabulary():
     assert stop_rule.text in system
     assert target_rule.text in system
     assert other_idea_rule.text not in system
-    assert "101.5" in user
+    assert "2026-01-05 ti_001 EQ-0001 buy size 100.0 at 101.5" in user
+    assert "999.0" not in user
     assert "hello there" in user
     assert "Find 2 statements." in user
 
@@ -199,6 +211,19 @@ def test_classify_request_carries_rules_ledger_and_no_vocabulary():
     assert not any(param in dump for param in BIAS_PARAMS)
     assert "Preferences to decide on" not in dump
     assert "Tendencies to decide on" not in dump
+
+
+def test_classify_request_ledger_section_says_none_when_empty():
+    persona = build_persona(AssetClass.EQUITIES)
+    session = session_of(
+        persona.pm_id, date(2026, 1, 5), ["hello there"], trade_idea_ids=("ti_001",)
+    )
+    config = Config().gate2
+
+    request = classify_request(persona, [], [], [], session, 1, config)
+
+    user = request["messages"][0]["content"]
+    assert "Trades on the ideas discussed, on or before this session:\nnone" in user
 
 
 def test_parse_classification_bounds_and_enum():
@@ -249,6 +274,32 @@ def test_score_classification_scores_each_signal_on_its_own_turn():
         f"session {session.session_id}: classification quote not in a PM turn: "
         '"this line never appears anywhere"',
     )
+
+
+def test_score_classification_drops_empty_quote_and_credits_no_signal():
+    session = session_of(
+        PM_A, date(2026, 1, 5), ["I always cut losers fast", "I like short bullets"]
+    )
+    sig_a = signal(PM_A, session.session_id, date(2026, 1, 5), "t_01", signal_id="sg_001")
+    sig_b = signal(PM_A, session.session_id, date(2026, 1, 5), "t_02", signal_id="sg_002")
+    log = log_with_directives(session, [None, None])
+    skeleton = skeleton_with_stances(session, [])
+    unit = ClassifyUnit(
+        session=session,
+        log=log,
+        skeleton=skeleton,
+        signals=(sig_a, sig_b),
+        turn_index_by_signal={sig_a.signal_id: 0, sig_b.signal_id: 2},
+    )
+    kind_by_trait = {"t_01": Kind.BIAS, "t_02": Kind.PREFERENCE}
+
+    statements = (Statement(quote="  ", kind=Kind.BIAS),)
+
+    scores, warnings = score_classification(unit, statements, kind_by_trait)
+
+    assert scores[sig_a.signal_id] == (None, False)
+    assert scores[sig_b.signal_id] == (None, False)
+    assert warnings == (f"session {session.session_id}: classification quote is empty",)
 
 
 def test_send_classification_labels_failure_by_session(tmp_path):

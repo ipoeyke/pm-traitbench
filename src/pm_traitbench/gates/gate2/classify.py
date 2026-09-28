@@ -1,10 +1,7 @@
-"""Gate 2 stated-signal classification: a per-session request that asks a model to quote and
-classify the PM's own confirmed stated statements, and the scorer that credits a quote only
-against the signal whose own PM turn it lies in.
+"""Gate 2 stated-signal classification: a per-session request, its reply parser and scorer.
 
-The request carries no trait vocabulary: no bias param name, no catalogue value list -
-only the materiality definitions, mandate facts, rule texts, the session's ledger rows,
-its transcript and N.
+The request carries no trait vocabulary: only the materiality definitions, mandate
+facts, rule texts, the session's ledger rows, its transcript and N.
 """
 
 from collections.abc import Mapping, Sequence
@@ -82,9 +79,8 @@ def is_classifiable(signal: Signal) -> bool:
 def signal_turn_index(skeleton: Skeleton, log: DialogueLog, signal_id: str) -> int:
     """The index into `log.turns` of the PM turn that rendered `signal_id`'s stance.
 
-    Raises `Gate2Error` when the skeleton does not carry exactly one non-claim stance
-    for `signal_id`, or when that stance's text matches zero or more than one PM
-    turn's directive.
+    Raises `Gate2Error` when the skeleton lacks exactly one non-claim stance for
+    `signal_id`, or that stance's text matches zero or more than one PM turn's directive.
     """
     stances = tuple(
         stance
@@ -143,8 +139,10 @@ def classify_units(
         if session is None:
             continue
         session_signals = tuple(sorted(by_session[session_id], key=lambda sig: sig.signal_id))
-        log = logs_by_id[session_id]
-        skeleton = skeletons_by_id[session_id]
+        log = logs_by_id.get(session_id)
+        skeleton = skeletons_by_id.get(session_id)
+        if log is None or skeleton is None:
+            raise Gate2Error(f"session '{session_id}': survived but has no log or skeleton")
         turn_index_by_signal = {
             sig.signal_id: signal_turn_index(skeleton, log, sig.signal_id)
             for sig in session_signals
@@ -293,10 +291,10 @@ def score_classification(
 ) -> tuple[dict[str, tuple[Kind | None, bool]], tuple[str, ...]]:
     """Per-signal kind prediction and correctness, plus warnings for unlocated quotes.
 
-    A statement survives when its quote lies, once normalised, inside some PM turn's
-    text; one that does not is dropped and reported as a warning. Each signal is then
-    scored against the first surviving statement whose quote lies inside its own turn
-    only, so a statement quoting a different turn is never credited to it.
+    A statement survives when its quote, once normalised, is non-empty and lies inside
+    some PM turn's text; one that does not is dropped and warned about instead. Each
+    signal is scored against the first surviving statement whose quote lies inside its
+    own turn only, so a statement quoting a different turn is never credited to it.
     """
     all_turns = [normalise(turn.text) for turn in unit.log.turns]
     pm_turns = [normalise(turn.text) for turn in unit.log.turns if turn.role == TurnRole.PM]
@@ -305,7 +303,9 @@ def score_classification(
     warnings: list[str] = []
     for statement in statements:
         needle = normalise(statement.quote)
-        if any(needle in haystack for haystack in pm_turns):
+        if not needle:
+            warnings.append(f"session {unit.session.session_id}: classification quote is empty")
+        elif any(needle in haystack for haystack in pm_turns):
             surviving.append(statement)
         else:
             warnings.append(
