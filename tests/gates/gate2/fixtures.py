@@ -1,5 +1,6 @@
-"""Shared gate 2 test fixtures: `Session`, `Trait` and `Signal` builders, and recovery
-reply and request-routing helpers used across the gate 2 test modules.
+"""Shared gate 2 test fixtures: `Session`, `Trait` and `Signal` builders, dialogue log and
+skeleton builders, and recovery and classification reply and request-routing helpers used
+across the gate 2 test modules.
 
 Extended by later gate 2 test modules, so a row's shape only has to match
 `schema.py` in one place.
@@ -10,9 +11,20 @@ from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any
 
+from pm_traitbench.config import DEFAULT_MODEL
+from pm_traitbench.dialogue.usage import ZERO_USAGE
 from pm_traitbench.enums import Kind, Ownership, SessionKind, SignalMode, TurnRole, Valence
 from pm_traitbench.signals.assemble import session_id
-from pm_traitbench.tables.schema import Session, Signal, Trait, Turn
+from pm_traitbench.tables.schema import (
+    DialogueLog,
+    Session,
+    Signal,
+    Skeleton,
+    Stance,
+    Trait,
+    Turn,
+    TurnLog,
+)
 from tests.dialogue.fixtures import fake_message
 
 PM_A = "pm_001"
@@ -126,3 +138,63 @@ def is_recovery_request(request: Mapping[str, Any]) -> bool:
     """True when `request` is a gate 2 recovery request, by its schema's title."""
     schema = request.get("output_config", {}).get("format", {}).get("schema", {})
     return schema.get("title") == "gate2_recovery"
+
+
+_REQUEST_HASH = "0" * 64
+
+
+def _turn_log(role: TurnRole, text: str, directive: str | None) -> TurnLog:
+    """A turn log entry with one request hash, zero usage and no tool calls or mentions."""
+    return TurnLog(
+        role=role,
+        text=text,
+        mentions=(),
+        directive=directive,
+        scripted_violation=False,
+        tool_calls=(),
+        model=DEFAULT_MODEL,
+        request_hashes=(_REQUEST_HASH,),
+        usage=ZERO_USAGE,
+    )
+
+
+def log_with_directives(session: Session, directives: Sequence[str | None]) -> DialogueLog:
+    """A `DialogueLog` mirroring `session`'s turns; `directives` fills its PM turns in order,
+    one per PM turn, and every advisor turn carries none.
+    """
+    pm_positions = [i for i, turn in enumerate(session.turns) if turn.role == TurnRole.PM]
+    directive_by_position = dict(zip(pm_positions, directives, strict=True))
+    turns = tuple(
+        _turn_log(turn.role, turn.text, directive_by_position.get(i))
+        for i, turn in enumerate(session.turns)
+    )
+    return DialogueLog(
+        session_id=session.session_id, pm_id=session.pm_id, voice_id="v_01", turns=turns
+    )
+
+
+def skeleton_with_stances(session: Session, stances: Sequence[Stance]) -> Skeleton:
+    """A skeleton sitting on `session`'s own id, date and ideas, with no advisor violation."""
+    return Skeleton(
+        session_id=session.session_id,
+        pm_id=session.pm_id,
+        date=session.date,
+        kind=session.kind,
+        trade_idea_ids=session.trade_idea_ids,
+        stances=tuple(stances),
+        advisor_violation=None,
+        forbidden_trait_ids=(),
+        forbidden_pref_params=(),
+    )
+
+
+def classify_reply(statements: Sequence[tuple[str, str]]) -> dict:
+    """A `fake_message` whose text is a classification reply: `(quote, kind)` pairs."""
+    payload = {"statements": [{"quote": quote, "kind": kind} for quote, kind in statements]}
+    return fake_message([{"type": "text", "text": json.dumps(payload)}])
+
+
+def is_classify_request(request: Mapping[str, Any]) -> bool:
+    """True when `request` is a gate 2 classification request, by its schema's title."""
+    schema = request.get("output_config", {}).get("format", {}).get("schema", {})
+    return schema.get("title") == "gate2_classification"
