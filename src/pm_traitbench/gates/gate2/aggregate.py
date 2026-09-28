@@ -43,8 +43,10 @@ def blocking_id(row: Gate2CellRow) -> str:
 
 
 def blocking_failures(rows: Sequence[Gate2CellRow]) -> list[str]:
-    """Sorted ids of blocking rows whose verdict is not pass."""
-    failing = (row for row in rows if row.blocking and row.verdict != Gate2Verdict.PASS)
+    """Sorted ids of blocking rows whose verdict is fail. Insufficient rows never block:
+    a class below `min_class` says nothing about narration recovery either way.
+    """
+    failing = (row for row in rows if row.blocking and row.verdict == Gate2Verdict.FAIL)
     return sorted(blocking_id(row) for row in failing)
 
 

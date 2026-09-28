@@ -140,7 +140,9 @@ def check_inputs(store: DataStore, session_pm_ids: Collection[str]) -> dict:
 
 
 def raise_on_failures(extra: dict[str, Any]) -> None:
-    """Raise `Gate2Error` naming every failed or insufficient blocking cell, if any."""
+    """Raise `Gate2Error` naming every failed blocking cell, if any. Insufficient blocking
+    cells are reported in `extra["insufficient"]` but never raise.
+    """
     failed = extra["failed"]
     if failed:
         raise Gate2Error("gate 2 failed for: " + ", ".join(failed))

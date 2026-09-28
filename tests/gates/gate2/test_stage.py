@@ -13,6 +13,7 @@ from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.enums import Gate2Slice, Gate2Verdict
 from pm_traitbench.errors import DialogueBudgetError, Gate2Error
+from pm_traitbench.gates.gate2.aggregate import blocking_id
 from pm_traitbench.gates.gate2.stage import make_stage
 from pm_traitbench.signals.assemble import session_id as build_session_id
 from pm_traitbench.stages import run_stage
@@ -74,8 +75,7 @@ def test_truthful_corpus_writes_four_tables_one_row_per_unit_and_passes_or_is_in
 
     gate2_stage = make_stage(lambda c: FakeClient(truthful_responder(store)))
 
-    with pytest.raises(Gate2Error, match="^gate 2 failed for:"):
-        run_stage(gate2_stage, config, store)
+    run_stage(gate2_stage, config, store)
 
     trait_rows = store.read(GATE2_TRAITS)
     assert len(trait_rows) == expected_trait_rows
@@ -114,29 +114,31 @@ def test_truthful_corpus_writes_four_tables_one_row_per_unit_and_passes_or_is_in
     expected_sha256 = hashlib.sha256(store.path(SESSIONS).read_bytes()).hexdigest()
     assert metadata["sessions_sha256"] == expected_sha256
     # This fixture corpus plants no active bias and holds no preference, so every
-    # blocking row comes back insufficient rather than failed outright.
-    assert metadata["insufficient"] == metadata["failed"]
+    # blocking row comes back insufficient, and insufficient never blocks.
+    assert metadata["failed"] == []
+    assert metadata["insufficient"] == sorted(blocking_id(c) for c in cells if c.blocking)
 
 
-def test_wrong_responder_fails_blocking_rows_after_writing_tables(
+def test_wrong_responder_on_neutral_corpus_still_reports_insufficient_after_writing_tables(
     tmp_path: Path, fixture_market: dict, neutral_pm, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """This corpus plants no active bias and holds no preference, so every blocking row's
+    class sizes are structurally below `min_class` no matter what the responder predicts:
+    every row comes back insufficient, and insufficient never blocks.
+    """
     config, store = _run_validated_corpus(tmp_path, fixture_market, neutral_pm, monkeypatch)
     gate2_stage = make_stage(lambda c: FakeClient(wrong_responder(store)))
 
-    with pytest.raises(Gate2Error, match="^gate 2 failed for:") as exc_info:
-        run_stage(gate2_stage, config, store)
+    run_stage(gate2_stage, config, store)
 
     for spec in GATE2_TABLES:
         assert store.exists(spec)
 
+    cells = store.read(GATE2_CELLS)
     metadata = store.read_run_metadata("gate2")
     assert metadata is not None
-    assert metadata["failed"]
-    # Insufficient rows block too, so every insufficient id is also a failed id.
-    assert set(metadata["insufficient"]) <= set(metadata["failed"])
-    for failed_id in metadata["failed"]:
-        assert failed_id in str(exc_info.value)
+    assert metadata["failed"] == []
+    assert metadata["insufficient"] == sorted(blocking_id(c) for c in cells if c.blocking)
 
 
 def test_forced_second_run_is_byte_identical_and_makes_no_inner_calls(
@@ -145,13 +147,13 @@ def test_forced_second_run_is_byte_identical_and_makes_no_inner_calls(
     config, store = _run_validated_corpus(tmp_path, fixture_market, neutral_pm, monkeypatch)
     gate2_stage = make_stage(lambda c: FakeClient(truthful_responder(store)))
 
-    with pytest.raises(Gate2Error):
-        run_stage(gate2_stage, config, store)
+    run_stage(gate2_stage, config, store)
 
     before = {spec.name: store.path(spec).read_bytes() for spec in GATE2_TABLES}
 
-    with pytest.raises(Gate2Error):
-        run_stage(make_stage(raising_factory), config, store, force=True)
+    # A forced rerun with a client that raises on any call must still succeed, reading
+    # every request back from the cache built by the first run.
+    run_stage(make_stage(raising_factory), config, store, force=True)
 
     for spec in GATE2_TABLES:
         assert store.path(spec).read_bytes() == before[spec.name]
@@ -210,8 +212,7 @@ def test_pm_with_all_sessions_dropped_is_listed_not_scored(
     store.write(SESSIONS, [s for s in sessions if s.pm_id != target_pm])
 
     gate2_stage = make_stage(lambda c: FakeClient(truthful_responder(store)))
-    with pytest.raises(Gate2Error):
-        run_stage(gate2_stage, config, store)
+    run_stage(gate2_stage, config, store)
 
     metadata = store.read_run_metadata("gate2")
     assert metadata is not None
@@ -244,8 +245,7 @@ def test_planted_corpus_truthful_responder_passes_disposition_and_pooled_prefere
     config, store = _write_planted(tmp_path)
     gate2_stage = make_stage(lambda c: FakeClient(truthful_responder(store)))
 
-    with pytest.raises(Gate2Error, match="^gate 2 failed for:"):
-        run_stage(gate2_stage, config, store)
+    run_stage(gate2_stage, config, store)
 
     cells = store.read(GATE2_CELLS)
     disposition = _cell(cells, Gate2Slice.ALL, "all", "disposition_ratio")
@@ -262,7 +262,7 @@ def test_planted_corpus_truthful_responder_passes_disposition_and_pooled_prefere
     metadata = store.read_run_metadata("gate2")
     assert metadata is not None
     assert metadata["insufficient"] == other_bias_ids
-    assert metadata["failed"] == other_bias_ids
+    assert metadata["failed"] == []
 
     signal_rows = store.read(GATE2_SIGNALS)
     assert len(signal_rows) == len(PLANTED_PMS)

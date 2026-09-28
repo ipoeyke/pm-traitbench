@@ -56,9 +56,10 @@ and writes the hidden `validation` table while rewriting `sessions` and
 `dialogue_logs` in place. The `gate2` stage asks one strong model, per PM,
 which traits the validated dialogue shows and writes `gate2_traits`,
 `gate2_signals`, `gate2_pm` and `gate2_cells`; it exits 1 when a blocking
-row fails or is insufficient - one one-sided Fisher exact test per bias
-parameter and one pooled Poisson-binomial test over every held preference,
-at `gate2.alpha`. Pass `--force` to overwrite a table that already
+row fails - one one-sided Fisher exact test per bias parameter and one
+pooled Poisson-binomial test over every held preference, at `gate2.alpha`.
+A blocking row below `gate2.min_class` PMs either side is `insufficient`
+and reported but never blocks. Pass `--force` to overwrite a table that already
 exists. Run `uv run pm-traitbench --help` for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
@@ -628,10 +629,14 @@ per PM per parameter), `gate2_signals` (one row per surviving signal,
 joined to its recovery and classification), `gate2_pm` (one row per PM)
 and `gate2_cells` (the pooled verdicts). Nine rows block: a Fisher exact
 test per bias parameter and a pooled Poisson-binomial test over held
-preferences against chance, at `gate2.alpha`; a class under
-`gate2.min_class` PMs either side is `insufficient`, blocking like a
-fail. Every other row - by kind, mode, held-versus-not, asset class,
-typicality, drift, and one per preference parameter - is report-only. A
+preferences against chance, at `gate2.alpha`. A class under
+`gate2.min_class` PMs either side is `insufficient`: it is reported but
+never blocks, since a trait active on too few PMs says nothing about
+whether narration carries it. Only a `fail` row exits 1. At pilot size
+(about 12 PMs) a pass needs near-perfect recovery on every bias; the full
+split is where the gate has power. Every other row - by kind, mode,
+held-versus-not, asset class, typicality, drift, and one per preference
+parameter - is report-only. A
 second pass classifies each stated signal as bias or preference from the
 session transcript, the mandate, the rules and the session's ledger rows,
 with no trait vocabulary. Cross-PM 5-gram

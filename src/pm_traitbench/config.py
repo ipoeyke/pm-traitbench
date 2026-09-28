@@ -2128,7 +2128,8 @@ class Gate2Config(BaseModel):
             "basis": "guess",
             "note": (
                 "one-sided exact test level per blocking row; nine rows give a "
-                "family-wise false-fail bound of about 0.37"
+                "family-wise false-pass bound of about 0.37 under no recovery, and power "
+                "at pilot size is low, so a pass needs near-perfect recovery on 12 PMs"
             ),
         },
     )

@@ -393,7 +393,10 @@ def test_validate_then_gate2_on_synthetic_seeds(tmp_path: Path) -> None:
 
     assert main(["dialogue", *dialogue_args], stages=stages) == 0
     assert main(["validate", *dialogue_args], stages=stages) == 0
-    assert main(["gate2", *dialogue_args], stages=stages) in (0, 1)
+    # Only one PM runs gate 2 here, so every bias row's class sizes are structurally
+    # below `min_class` and insufficient never blocks; the pooled preference row is the
+    # only sufficient blocking row, and the truthful responder passes it.
+    assert main(["gate2", *dialogue_args], stages=stages) == 0
 
     for spec in GATE2_TABLES:
         assert (data_dir / f"{spec.name}.jsonl").exists()

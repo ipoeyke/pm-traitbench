@@ -325,7 +325,7 @@ def test_blocking_ids():
     assert failures == sorted(failures)
     assert insufficient == sorted(insufficient)
     assert f"all/{BIAS_PARAM}" in insufficient
-    assert f"all/{BIAS_PARAM}" in failures
+    assert f"all/{BIAS_PARAM}" not in failures
 
 
 def test_build_cells_pooled_preference_all_wrong_gives_fail_with_p_one():
