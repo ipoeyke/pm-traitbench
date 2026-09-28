@@ -52,7 +52,7 @@ def _pref_row(pm_id: str, param: str, truth_value: str | None, predicted_value: 
     return Gate2TraitRow(
         pm_id=pm_id,
         param=param,
-        trait_id=None,
+        trait_id="t_09" if truth_value is not None else None,
         kind=Kind.PREFERENCE,
         truth_active=None,
         truth_value=truth_value,

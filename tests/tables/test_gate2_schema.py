@@ -136,6 +136,15 @@ def test_preference_trait_row_requires_null_active_fields() -> None:
         _pref_trait_row(truth_active=True)
 
 
+def test_preference_trait_row_requires_trait_id_exactly_when_held() -> None:
+    held = _pref_trait_row(trait_id="t_09", truth_value="short bullets")
+    assert held.trait_id == "t_09"
+    with pytest.raises(ValidationError):
+        _pref_trait_row(trait_id="t_09")
+    with pytest.raises(ValidationError):
+        _pref_trait_row(truth_value="short bullets")
+
+
 def test_trait_row_cited_ids_sorted_unique_and_own_pm() -> None:
     with pytest.raises(ValidationError):
         _bias_trait_row(

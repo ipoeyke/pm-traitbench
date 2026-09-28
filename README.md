@@ -615,7 +615,7 @@ traits) is a later stage's job, not this one's.
 
 The `gate2` stage asks whether a strong model can recover every planted
 trait from the validated dialogue alone. It needs validate's run
-metadata newer than dialogue's, or it refuses to run. For each PM it sends
+metadata at or after dialogue's, or it refuses to run. For each PM it sends
 one full-context call over every session's transcript in date order, with
 the mandate, the PM-scope rules, the bias vocabulary and the catalogue's
 candidate preferences for that PM's asset class - never a trait id,
@@ -633,7 +633,8 @@ preferences against chance, at `gate2.alpha`; a class under
 fail. Every other row - by kind, mode, held-versus-not, asset class,
 typicality, drift, and one per preference parameter - is report-only. A
 second pass classifies each stated signal as bias or preference from the
-ledger and rules alone, with no trait vocabulary. Cross-PM 5-gram
+session transcript, the mandate, the rules and the session's ledger rows,
+with no trait vocabulary. Cross-PM 5-gram
 containment is reported and warned above `gate2.overlap_warning`, never
 blocking. A failing row is fixed by editing the plan stage's signal-mode
 weights and rerunning stages 5-8. Caching and credentials match the

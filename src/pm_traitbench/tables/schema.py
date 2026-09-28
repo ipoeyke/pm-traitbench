@@ -1203,7 +1203,8 @@ class Gate2TraitRow(BaseModel):
     pm_id: str = Field(pattern=_PM_ID_PATTERN, description="Identifier of the PM the row covers.")
     param: str = Field(description="Name of the underlying trait parameter.")
     trait_id: str | None = Field(
-        pattern=_TRAIT_ID_PATTERN, description="Trait identifier; set for a bias, null otherwise."
+        pattern=_TRAIT_ID_PATTERN,
+        description="Trait identifier; set for a bias, and for a preference that is held.",
     )
     kind: Kind = Field(description="Whether the trait is a bias or a preference.")
     truth_active: bool | None = Field(
@@ -1246,6 +1247,16 @@ class Gate2TraitRow(BaseModel):
         ):
             raise ValueError(
                 "kind 'preference' requires truth_active and predicted_active to be null"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_preference_trait_id(self) -> "Gate2TraitRow":
+        if self.kind == Kind.PREFERENCE and (self.trait_id is not None) != (
+            self.truth_value is not None
+        ):
+            raise ValueError(
+                "kind 'preference' requires trait_id to be set exactly when truth_value is set"
             )
         return self
 
@@ -1359,7 +1370,10 @@ class Gate2PmRow(BaseModel):
     sessions: int = Field(ge=1, description="Number of sessions in the PM's context.")
     context_chars: int = Field(ge=0, description="Character count of the PM's context.")
     ngram_containment: float = Field(
-        ge=0, le=1, description="Share of the reply's n-grams found verbatim in the context."
+        ge=0,
+        le=1,
+        description="Share of this PM's word n-grams that the nearest other PM's PM turns "
+        "also contain.",
     )
     biases_correct: int = Field(
         ge=0, le=8, description="Number of the PM's 8 biases correctly predicted."
@@ -1398,7 +1412,12 @@ class Gate2CellRow(BaseModel):
     )
     n: int = Field(ge=0, description="Number of observations contributing to the cell.")
     n_positive: int = Field(ge=0, description="Number of correct or recovered observations.")
-    rate: float | None = Field(ge=0, le=1, description="n_positive over n; null when n is 0.")
+    rate: float | None = Field(
+        ge=0,
+        le=1,
+        description="The cell's rate: balanced accuracy on a two-by-two cell, otherwise "
+        "n_positive over n; null when n is 0.",
+    )
     chance: float | None = Field(description="Chance-level rate the cell is tested against.")
     p: float | None = Field(
         ge=0, le=1, description="One-sided exact test p-value; set only for a judged cell."

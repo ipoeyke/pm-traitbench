@@ -1,9 +1,6 @@
 """Shared gate 2 test fixtures: `Session`, `Trait` and `Signal` builders, dialogue log and
 skeleton builders, and recovery and classification reply and request-routing helpers used
 across the gate 2 test modules.
-
-Extended by later gate 2 test modules, so a row's shape only has to match
-`schema.py` in one place.
 """
 
 import json

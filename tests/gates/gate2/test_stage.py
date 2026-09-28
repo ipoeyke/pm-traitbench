@@ -4,6 +4,7 @@ through a real (but scripted) validated dialogue corpus.
 
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.enums import Gate2Slice, Gate2Verdict
 from pm_traitbench.errors import DialogueBudgetError, Gate2Error
 from pm_traitbench.gates.gate2.stage import make_stage
+from pm_traitbench.signals.assemble import session_id as build_session_id
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.specs import (
     GATE2_CELLS,
@@ -36,6 +38,7 @@ from tests.dialogue.validate.test_stage import _clean_validate_stage, faithful_d
 from tests.engine.fixtures import stage_config
 from tests.gates.gate2.fixtures import (
     PLANTED_PMS,
+    is_classify_request,
     is_recovery_request,
     truthful_responder,
     write_planted_corpus,
@@ -112,8 +115,7 @@ def test_truthful_corpus_writes_four_tables_one_row_per_unit_and_passes_or_is_in
     assert metadata["sessions_sha256"] == expected_sha256
     # This fixture corpus plants no active bias and holds no preference, so every
     # blocking row comes back insufficient rather than failed outright.
-    if set(metadata["failed"]) <= set(metadata["insufficient"]):
-        assert metadata["insufficient"] == metadata["failed"]
+    assert metadata["insufficient"] == metadata["failed"]
 
 
 def test_wrong_responder_fails_blocking_rows_after_writing_tables(
@@ -253,6 +255,9 @@ def test_planted_corpus_truthful_responder_passes_disposition_and_pooled_prefere
     pooled_preferences = _cell(cells, Gate2Slice.ALL, "all", None)
     assert pooled_preferences.verdict == Gate2Verdict.PASS
 
+    pref_rows = [r for r in store.read(GATE2_TRAITS) if r.param == "response_format"]
+    assert pref_rows and all(r.trait_id == "t_09" for r in pref_rows)
+
     other_bias_ids = sorted(f"all/{param}" for param in BIAS_PARAMS if param != "disposition_ratio")
     metadata = store.read_run_metadata("gate2")
     assert metadata is not None
@@ -318,6 +323,34 @@ def test_budget_error_wins_over_a_failed_recovery_unit(tmp_path: Path) -> None:
 
     with pytest.raises(DialogueBudgetError, match="gate2"):
         run_stage(gate2_stage, config, store)
+
+    for spec in GATE2_TABLES:
+        assert not store.exists(spec)
+
+
+def test_stage_names_a_failed_unit_on_each_half_when_neither_hits_budget(tmp_path: Path) -> None:
+    """A recovery unit and a classification unit that both stay unparsable after retries,
+    with no budget error, must both be named in one `Gate2Error`, and write nothing.
+    """
+    config, store = _write_planted(tmp_path)
+    truthful = truthful_responder(store)
+    fail_session_id = build_session_id("pm_002", date(2026, 1, 5), 0)
+
+    def responder(request: dict) -> dict:
+        if is_recovery_request(request) and "s_pm001_" in request["messages"][0]["content"]:
+            return fake_message([{"type": "text", "text": "not valid json"}])
+        if is_classify_request(request) and fail_session_id in request["messages"][0]["content"]:
+            return fake_message([{"type": "text", "text": "not valid json"}])
+        return truthful(request)
+
+    gate2_stage = make_stage(lambda c: FakeClient(responder))
+
+    with pytest.raises(Gate2Error) as exc_info:
+        run_stage(gate2_stage, config, store)
+
+    message = str(exc_info.value)
+    assert "pm pm_001" in message
+    assert fail_session_id in message
 
     for spec in GATE2_TABLES:
         assert not store.exists(spec)

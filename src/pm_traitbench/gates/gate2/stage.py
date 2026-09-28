@@ -1,11 +1,8 @@
-"""Gate 2 stage: recover every planted trait from one PM's full validated transcript with a
-strong model, classify each stated signal, and block the pipeline on nine pooled exact-test
-rows.
+"""Gate 2 stage: recover every planted trait from a PM's validated transcript with a strong
+model, classify each stated signal, and block on nine pooled exact-test rows.
 
 Every recovery and classification request goes through one shared `CachedClient`, scoped by
-PM id for recovery and by session id for classification, mirroring the dialogue and validate
-stages' own concurrency, cache and budget handling; the whole run still writes all four
-tables or none.
+PM id for recovery and by session id for classification; the run writes all four tables or none.
 """
 
 import asyncio
@@ -94,8 +91,6 @@ GATE2_READS: tuple[TableSpec, ...] = (
     SESSIONS,
     DIALOGUE_LOGS,
 )
-
-_IDEA_RULE_PARAMS = frozenset({"stop", "target"})
 
 
 @dataclass(frozen=True)
@@ -211,9 +206,7 @@ def _run(
         units = classify_units(sessions_by_id, logs_by_id, skeletons_by_id, pm_signals)
         classify_units_by_pm[pm_id] = units
 
-        idea_rules = [
-            r for r in pm_rules if r.scope == RuleScope.IDEA and r.param in _IDEA_RULE_PARAMS
-        ]
+        idea_rules = [r for r in pm_rules if r.scope == RuleScope.IDEA]
         pm_ledger: list[LedgerRow] = ledger_by_pm.get(pm_id, [])
         for unit in units:
             n = len(unit.signals)
@@ -246,38 +239,35 @@ def _run(
     recovery_results = results[:n_recovery]
     classify_results = results[n_recovery:]
 
-    # A budget error on either half must win over a failed unit on the other half,
-    # so check for one across the combined results before either per-half call below
-    # can raise a plain `Gate2Error` first.
     combined_ids = tuple(
         u.pm_id if isinstance(u, RecoveryUnit) else u.session_id for u in combined_units
     )
-    budget_pairs = [
-        (unit_id, result)
-        for unit_id, result in zip(combined_ids, results, strict=True)
-        if isinstance(result, DialogueBudgetError)
-    ]
-    if budget_pairs:
-        ids, budget_results = zip(*budget_pairs, strict=True)
+    # A budget error on either half must win over a failed unit on the other half.
+    if any(isinstance(r, DialogueBudgetError) for r in results):
         raise_on_failure(
-            tuple(ids), list(budget_results), client, error_type=Gate2Error, budget_label="gate2"
+            combined_ids, list(results), client, error_type=Gate2Error, budget_label="gate2"
         )
 
-    raise_on_failure(
-        tuple(u.pm_id for u in recovery_units),
-        recovery_results,
-        client,
-        error_type=Gate2Error,
-        budget_label="gate2",
-        label="pm",
-    )
-    raise_on_failure(
-        tuple(u.session_id for u in classify_request_units),
-        classify_results,
-        client,
-        error_type=Gate2Error,
-        budget_label="gate2",
-    )
+    # No budget error: report a failed unit from each half in one Gate2Error, not just
+    # whichever half is checked first.
+    messages: list[str] = []
+    for unit_ids, unit_results, label in (
+        (tuple(u.pm_id for u in recovery_units), recovery_results, "pm"),
+        (tuple(u.session_id for u in classify_request_units), classify_results, "session"),
+    ):
+        try:
+            raise_on_failure(
+                unit_ids,
+                unit_results,
+                client,
+                error_type=Gate2Error,
+                budget_label="gate2",
+                label=label,
+            )
+        except Gate2Error as error:
+            messages.append(str(error))
+    if messages:
+        raise Gate2Error("\n".join(messages))
 
     recovery_success = collect_results(recovery_results, tuple, n_recovery, Gate2Error)
     classify_success = collect_results(

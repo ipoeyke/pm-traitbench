@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pm_traitbench.config import Gate2Config
-from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_until_accepted
+from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_parsed
 from pm_traitbench.dialogue.prompts import base_request
 from pm_traitbench.enums import (
     Kind,
@@ -23,11 +23,11 @@ from pm_traitbench.enums import (
     Valence,
 )
 from pm_traitbench.errors import Gate2Error
+from pm_traitbench.gates.gate2.prompt_parts import mandate_line, pm_rules_section
 from pm_traitbench.gates.gate2.transcript import render_session
 from pm_traitbench.tables.schema import (
     DialogueLog,
     LedgerRow,
-    Mandate,
     Persona,
     Rule,
     Session,
@@ -162,25 +162,9 @@ def classify_units(
 def _role_line(n: int) -> str:
     return (
         "You are reviewing one session between a portfolio manager and their advisor. "
-        f"Find up to {n} statements where the PM describes a habit or a preference about "
-        "how they invest, and classify each one."
+        f"The PM makes {n} statements about how they trade or about what they want from "
+        "their advisor. Find each one and classify it as a bias or a preference."
     )
-
-
-def _mandate_line(mandate: Mandate) -> str:
-    return (
-        f"Mandate: asset class {mandate.asset_class.value}, sub-style {mandate.sub_style}, "
-        f"book size {mandate.book_size}, risk unit {mandate.risk_unit}, "
-        f"benchmark {mandate.benchmark}."
-    )
-
-
-def _pm_rules_section(pm_rules: Sequence[Rule]) -> str:
-    ordered = sorted(
-        (rule for rule in pm_rules if rule.scope == RuleScope.PM), key=lambda rule: rule.rule_id
-    )
-    lines = "\n".join(rule.text for rule in ordered)
-    return f"Rules the PM is held to:\n{lines}"
 
 
 def _idea_rules_section(idea_rules: Sequence[Rule], trade_idea_ids: Sequence[str]) -> str:
@@ -236,8 +220,8 @@ def classify_request(
         [
             _role_line(n),
             _MATERIALITY,
-            _mandate_line(persona.mandate),
-            _pm_rules_section(pm_rules),
+            mandate_line(persona.mandate),
+            pm_rules_section(pm_rules),
             _idea_rules_section(idea_rules, session.trade_idea_ids),
             _QUOTE_INSTRUCTION,
         ]
@@ -291,10 +275,8 @@ def score_classification(
 ) -> tuple[dict[str, tuple[Kind | None, bool]], tuple[str, ...]]:
     """Per-signal kind prediction and correctness, plus warnings for unlocated quotes.
 
-    A statement survives when its quote, once normalised, is non-empty and lies inside
-    some PM turn's text; one that does not is dropped and warned about instead. Each
-    signal is scored against the first surviving statement whose quote lies inside its
-    own turn only, so a statement quoting a different turn is never credited to it.
+    A statement survives when its quote lies inside some PM turn's text; each signal
+    is scored against the first surviving statement whose quote lies inside its own turn.
     """
     all_turns = [normalise(turn.text) for turn in unit.log.turns]
     pm_turns = [normalise(turn.text) for turn in unit.log.turns if turn.role == TurnRole.PM]
@@ -328,17 +310,13 @@ async def send_classification(
     session_id: str,
     max_retries: int,
 ) -> tuple[tuple[Statement, ...], int]:
-    """Send the classification request through `send_until_accepted`; raises `Gate2Error`
-    at the retry cap.
-    """
-
-    def classify(response: Mapping[str, Any]) -> tuple[tuple[Statement, ...] | None, str]:
-        return (
-            parse_classification(response, n),
-            "the classification reply was unparsable, schema-invalid or out of bounds",
-        )
-
-    _, statements, rejected = await send_until_accepted(
-        client, request, classify, scope=session_id, max_retries=max_retries, error_type=Gate2Error
+    """Send the classification request through `send_parsed`; raises `Gate2Error` at the cap."""
+    return await send_parsed(
+        client,
+        request,
+        lambda response: parse_classification(response, n),
+        scope=session_id,
+        max_retries=max_retries,
+        error_type=Gate2Error,
+        reason="the classification reply was unparsable, schema-invalid or out of bounds",
     )
-    return statements, rejected

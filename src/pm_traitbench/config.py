@@ -2110,9 +2110,15 @@ class Gate2Config(BaseModel):
         },
     )
     classify_max_output_tokens: int = Field(
-        2000,
+        8000,
         ge=256,
-        json_schema_extra={"basis": "design", "note": "thinking plus one or two quotes"},
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "high-effort thinking plus one or two quotes; a max_tokens stop is an "
+                "unparsable reply that identical retries repeat"
+            ),
+        },
     )
     alpha: float = Field(
         0.05,

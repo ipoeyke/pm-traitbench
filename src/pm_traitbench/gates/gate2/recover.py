@@ -16,13 +16,13 @@ from pm_traitbench.catalogues.models import BiasDefinitions, PreferenceEntry
 from pm_traitbench.config import BIAS_PARAMS, Gate2Config
 from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_parsed
 from pm_traitbench.dialogue.prompts import base_request
-from pm_traitbench.enums import DriftEventType, Kind, Ownership, RuleScope, Valence
+from pm_traitbench.enums import DriftEventType, Kind, Ownership, Valence
 from pm_traitbench.errors import Gate2Error
+from pm_traitbench.gates.gate2.prompt_parts import mandate_line, pm_rules_section
 from pm_traitbench.tables.schema import (
     DriftEvent,
     Gate2SignalRow,
     Gate2TraitRow,
-    Mandate,
     Persona,
     Rule,
     Signal,
@@ -119,22 +119,6 @@ def _normalized(value: str) -> str:
     return value.strip().lower()
 
 
-def _mandate_line(mandate: Mandate) -> str:
-    return (
-        f"Mandate: asset class {mandate.asset_class.value}, sub-style {mandate.sub_style}, "
-        f"book size {mandate.book_size}, risk unit {mandate.risk_unit}, "
-        f"benchmark {mandate.benchmark}."
-    )
-
-
-def _rules_section(pm_rules: Sequence[Rule]) -> str:
-    ordered = sorted(
-        (rule for rule in pm_rules if rule.scope == RuleScope.PM), key=lambda rule: rule.rule_id
-    )
-    lines = "\n".join(rule.text for rule in ordered)
-    return f"Rules the PM is held to:\n{lines}"
-
-
 def _biases_section(definitions: BiasDefinitions) -> str:
     lines = "\n".join(f"- {param}: {definitions.definitions[param]}" for param in BIAS_PARAMS)
     return f'Tendencies to decide on, one entry each in "biases":\n{lines}'
@@ -160,8 +144,8 @@ def recovery_request(
     system = "\n\n".join(
         [
             ROLE_LINE,
-            _mandate_line(persona.mandate),
-            _rules_section(pm_rules),
+            mandate_line(persona.mandate),
+            pm_rules_section(pm_rules),
             _biases_section(definitions),
             _preferences_section(entries),
             _CITATION_INSTRUCTION,
@@ -296,7 +280,10 @@ def compute_truth(
             _preference_truth_value(held, drift_events, last_date) if held is not None else None
         )
         truth[entry.param] = TraitTruth(
-            kind=Kind.PREFERENCE, trait_id=None, truth_active=None, truth_value=truth_value
+            kind=Kind.PREFERENCE,
+            trait_id=held.trait_id if held is not None else None,
+            truth_active=None,
+            truth_value=truth_value,
         )
     return truth
 

@@ -194,7 +194,9 @@ def test_compute_truth_drift_rules() -> None:
     assert truth[BIAS_PARAMS[1]].truth_active is False
     assert truth[BIAS_PARAMS[2]].truth_active is True
     assert truth["response_format"].truth_value == "a table with columns"
+    assert truth["response_format"].trait_id == held_pref.trait_id
     assert truth["register"].truth_value is None
+    assert truth["register"].trait_id is None
 
     with pytest.raises(Gate2Error):
         compute_truth(traits[:-2], drift_events, last_date, _ENTRIES)
@@ -296,7 +298,7 @@ def test_signal_rows_join_citations_and_classification() -> None:
     trait_row_pref = Gate2TraitRow(
         pm_id=PM_A,
         param="response_format",
-        trait_id=None,
+        trait_id=pref_trait.trait_id,
         kind=Kind.PREFERENCE,
         truth_active=None,
         truth_value="short bullets",
