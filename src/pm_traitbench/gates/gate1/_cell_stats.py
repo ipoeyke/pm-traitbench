@@ -73,6 +73,7 @@ class CellStats:
     floor: float | None
     active_share_past_floor: float | None
     rank_corr: float | None
+    active_rank_corr: float | None
     pop_z: float | None
     count_p10: float | None
     count_ok: bool | None
@@ -186,6 +187,9 @@ def build_cell(
 
     combined = neutral + active
     rank_corr = _rank_corr([e.planted for e in combined], [e.estimate.value for e in combined])
+    # Active PMs only: bimodal planted values let the combined rho score high by
+    # separating groups alone, not by ordering PMs within the active group.
+    active_rank_corr = _rank_corr([e.planted for e in active], [e.estimate.value for e in active])
     pairs = tuple(pair for e in members for pair in e.estimate.pairs)
     calibration = _calibration(param, pairs)
 
@@ -205,6 +209,7 @@ def build_cell(
         floor=floor,
         active_share_past_floor=active_share_past_floor,
         rank_corr=rank_corr,
+        active_rank_corr=active_rank_corr,
         pop_z=pop_z,
         count_p10=count_p10,
         count_ok=count_ok,

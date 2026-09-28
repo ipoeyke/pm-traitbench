@@ -536,12 +536,14 @@ class Gate1Config(BaseModel):
         },
     )
     min_rank_corr: float = Field(
-        0.5,
+        0.4,
         ge=0,
         lt=1,
         json_schema_extra={
             "basis": "design",
-            "note": "about three standard errors of a rank correlation on 33 PMs under no recovery",
+            "note": (
+                "about two null standard errors of a Spearman correlation over about 30 active PMs"
+            ),
         },
     )
     min_pms: int = Field(

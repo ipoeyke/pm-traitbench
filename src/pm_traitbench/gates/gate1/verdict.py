@@ -4,13 +4,15 @@
 against the cell's `Gate1Config` thresholds, and marks a cell as gate-blocking
 only when it is the synthetic pool's cross-class comparison over the full run
 (`asset_class` null) for a parameter that is not report-only; a per-asset-class
-pooled row is judged the same way but never blocks. `blocking_failures` and
-`count_warnings` then summarise a whole run's rows for reporting.
+pooled row is judged the same way but never blocks. `blocking_failures` also
+fails a non-report-only parameter that has no blocking row at all, so a run
+that never sampled the synthetic full population cannot pass by omission.
+`count_warnings` summarises a whole run's rows for reporting.
 """
 
 from collections.abc import Sequence
 
-from pm_traitbench.config import Gate1Config
+from pm_traitbench.config import BIAS_PARAMS, Gate1Config
 from pm_traitbench.enums import Gate1Split, Gate1Test, Gate1Verdict, SeedGroupKind
 from pm_traitbench.gates.gate1._cell_stats import CellStats
 from pm_traitbench.tables.schema import Gate1CellRow
@@ -26,13 +28,10 @@ def judge(stats: CellStats, knobs: Gate1Config) -> Gate1CellRow:
         and (stats.active_mean - stats.neutral_mean) * direction > 0
         and stats.neutral_sd <= knobs.gap_fraction * abs(stats.active_mean - stats.neutral_mean)
     )
-    rank_ok = stats.rank_corr is not None and stats.rank_corr >= knobs.min_rank_corr
-    pop_ok = (
-        stats.pop_z is not None
-        and stats.pop_z >= knobs.min_pop_z
-        and stats.rank_corr is not None
-        and stats.rank_corr > 0
-    )
+    rank_ok = stats.active_rank_corr is not None and stats.active_rank_corr >= knobs.min_rank_corr
+    # No rank condition: a population-tested parameter's per-PM estimates are
+    # too noisy to order, so a within-active correlation would fail it on noise.
+    pop_ok = stats.pop_z is not None and stats.pop_z >= knobs.min_pop_z
 
     test = Gate1Test.POPULATION if stats.param in knobs.population_params else Gate1Test.PER_PM
 
@@ -67,6 +66,7 @@ def judge(stats: CellStats, knobs: Gate1Config) -> Gate1CellRow:
         floor=stats.floor,
         active_share_past_floor=stats.active_share_past_floor,
         rank_corr=stats.rank_corr,
+        active_rank_corr=stats.active_rank_corr,
         count_p10=stats.count_p10,
         calibration=stats.calibration,
         test=test,
@@ -81,11 +81,20 @@ def judge(stats: CellStats, knobs: Gate1Config) -> Gate1CellRow:
     )
 
 
-def blocking_failures(rows: Sequence[Gate1CellRow]) -> list[str]:
-    """`all/param` for every blocking (cross-class) row whose verdict is not pass, sorted."""
-    return sorted(
+def blocking_failures(rows: Sequence[Gate1CellRow], knobs: Gate1Config) -> list[str]:
+    """`all/param` for every blocking (cross-class) row whose verdict is not pass, plus
+    `all/param: missing` for a non-report-only parameter with no blocking row at all, sorted.
+    """
+    failures = [
         f"all/{row.param}" for row in rows if row.blocking and row.verdict != Gate1Verdict.PASS
-    )
+    ]
+    blocking_params = {row.param for row in rows if row.blocking}
+    missing = [
+        f"all/{param}: missing"
+        for param in BIAS_PARAMS
+        if param not in knobs.report_only_params and param not in blocking_params
+    ]
+    return sorted(failures + missing)
 
 
 def count_warnings(rows: Sequence[Gate1CellRow]) -> list[str]:
