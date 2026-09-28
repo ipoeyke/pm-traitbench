@@ -7,6 +7,7 @@ from pydantic import BaseModel, ValidationError
 
 from pm_traitbench.config import (
     BIAS_PARAMS,
+    DEFAULT_MODEL,
     BiasesConfig,
     BiasSpec,
     CalendarConfig,
@@ -15,6 +16,7 @@ from pm_traitbench.config import (
     DriftConfig,
     EngineConfig,
     EventSpec,
+    Gate2Config,
     MarketConfig,
     PlanConfig,
     PmFilter,
@@ -1111,3 +1113,30 @@ def test_validate_config_rejects_out_of_range() -> None:
         ValidateConfig(size_tolerance=1.0)
     with pytest.raises(ValidationError):
         ValidateConfig(max_attempts=0)
+
+
+def test_gate2_config_defaults_and_basis() -> None:
+    config = Config().gate2
+    assert config.model == DEFAULT_MODEL
+    assert config.effort == Effort.HIGH
+    assert config.recovery_max_output_tokens == 32000
+    assert config.classify_max_output_tokens == 2000
+    assert config.alpha == 0.05
+    assert config.min_class == 2
+    assert config.ngram_n == 5
+    assert config.overlap_warning == 0.15
+    assert config.max_concurrency == 4
+    assert config.token_budget is None
+
+    paths = {row.path for row in Config().dump_with_basis()}
+    for name in Gate2Config.model_fields:
+        assert f"gate2.{name}" in paths
+
+
+def test_gate2_config_rejects_out_of_range() -> None:
+    with pytest.raises(ValidationError):
+        Gate2Config(alpha=1.0)
+    with pytest.raises(ValidationError):
+        Gate2Config(min_class=0)
+    with pytest.raises(ValidationError):
+        Gate2Config(ngram_n=1)

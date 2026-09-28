@@ -2079,6 +2079,93 @@ class ValidateConfig(BaseModel):
     )
 
 
+class Gate2Config(BaseModel):
+    """Settings for Gate 2: the recovery model, exact-test level, overlap measure and limits."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: str = Field(
+        DEFAULT_MODEL,
+        json_schema_extra={"basis": "design", "note": "strongest current model, one model"},
+    )
+    effort: Effort = Field(
+        Effort.HIGH,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "the recovery ceiling wants the strong model at strength, unlike the "
+                "narrator and judges at low"
+            ),
+        },
+    )
+    recovery_max_output_tokens: int = Field(
+        32000,
+        ge=256,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "high-effort thinking over about 100k transcript tokens plus one JSON "
+                "object; a max_tokens stop is an unparsable reply that identical retries repeat"
+            ),
+        },
+    )
+    classify_max_output_tokens: int = Field(
+        2000,
+        ge=256,
+        json_schema_extra={"basis": "design", "note": "thinking plus one or two quotes"},
+    )
+    alpha: float = Field(
+        0.05,
+        gt=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "one-sided exact test level per blocking row; nine rows give a "
+                "family-wise false-fail bound of about 0.37"
+            ),
+        },
+    )
+    min_class: int = Field(
+        2,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": "the smallest class an exact test can say anything about",
+        },
+    )
+    ngram_n: int = Field(
+        5,
+        ge=2,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "long enough to be a phrase, short enough to recur",
+        },
+    )
+    overlap_warning: float = Field(
+        0.15,
+        ge=0,
+        le=1,
+        json_schema_extra={"basis": "guess", "note": "to be re-centred on pilot output"},
+    )
+    max_concurrency: int = Field(
+        4,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": "long-context calls, half the dialogue stage's",
+        },
+    )
+    token_budget: int | None = Field(
+        None,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": "fresh input plus output tokens per run, as dialogue",
+        },
+    )
+
+
 class Config(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -2097,6 +2184,7 @@ class Config(BaseModel):
     plan: PlanConfig = Field(default_factory=PlanConfig)
     dialogue: DialogueConfig = Field(default_factory=DialogueConfig)
     validation: ValidateConfig = Field(default_factory=ValidateConfig)
+    gate2: Gate2Config = Field(default_factory=Gate2Config)
 
     @model_validator(mode="after")
     def _check_week_ranges_within_calendar(self) -> "Config":

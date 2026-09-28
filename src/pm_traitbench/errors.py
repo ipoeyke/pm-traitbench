@@ -79,3 +79,11 @@ class ValidateError(PmTraitbenchError):
     """Raised when the validate stage cannot run or a session cannot be judged or regenerated."""
 
     exit_code = 1
+
+
+class Gate2Error(PmTraitbenchError):
+    """Raised when Gate 2 cannot run, a reply cannot be parsed, or a blocking recovery test
+    fails.
+    """
+
+    exit_code = 1
