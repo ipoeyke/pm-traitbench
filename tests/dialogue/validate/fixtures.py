@@ -1,5 +1,5 @@
-"""Shared validate-stage test fixtures and builders: turns, dialogue logs, ledger rows,
-skeletons and mentions built from plausible constants.
+"""Shared validate-stage test fixtures and builders: turns, dialogue logs, skeletons,
+mentions and judge replies built from plausible constants.
 
 Consumed by every validate-stage test module, so a fixture's shape only has
 to match `schema.py` in one place.
@@ -16,15 +16,14 @@ from pm_traitbench.dialogue.client import CachedClient
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import MarketLookup
 from pm_traitbench.enums import (
-    InstrumentKind,
     MentionKind,
     SessionKind,
-    Side,
     SignalMode,
     StanceEntry,
     Tenor,
     TurnRole,
 )
+from pm_traitbench.signals.assemble import session_id
 from pm_traitbench.tables.schema import (
     CallUsage,
     DialogueLog,
@@ -44,36 +43,38 @@ _ZERO_USAGE = CallUsage(
 )
 
 
-def pm_turn(text: str, mentions: tuple[Mention, ...] = (), directive: str | None = None) -> TurnLog:
-    """A PM turn log entry with no tool calls, one request hash and zero usage."""
+def _turn(
+    role: TurnRole,
+    text: str,
+    *,
+    mentions: tuple[Mention, ...] = (),
+    directive: str | None = None,
+    tool_calls: tuple[ToolCall, ...] = (),
+) -> TurnLog:
+    """A turn log entry with one request hash and zero usage."""
     return TurnLog(
-        role=TurnRole.PM,
+        role=role,
         text=text,
         mentions=mentions,
         directive=directive,
-        scripted_violation=False,
-        tool_calls=(),
-        model=_MODEL,
-        request_hashes=(_REQUEST_HASH,),
-        usage=_ZERO_USAGE,
-    )
-
-
-def advisor_turn(
-    text: str, mentions: tuple[Mention, ...] = (), tool_calls: tuple[ToolCall, ...] = ()
-) -> TurnLog:
-    """An advisor turn log entry with no directive, one request hash and zero usage."""
-    return TurnLog(
-        role=TurnRole.ADVISOR,
-        text=text,
-        mentions=mentions,
-        directive=None,
         scripted_violation=False,
         tool_calls=tool_calls,
         model=_MODEL,
         request_hashes=(_REQUEST_HASH,),
         usage=_ZERO_USAGE,
     )
+
+
+def pm_turn(text: str, mentions: tuple[Mention, ...] = (), directive: str | None = None) -> TurnLog:
+    """A PM turn log entry with no tool calls."""
+    return _turn(TurnRole.PM, text, mentions=mentions, directive=directive)
+
+
+def advisor_turn(
+    text: str, mentions: tuple[Mention, ...] = (), tool_calls: tuple[ToolCall, ...] = ()
+) -> TurnLog:
+    """An advisor turn log entry with no directive."""
+    return _turn(TurnRole.ADVISOR, text, mentions=mentions, tool_calls=tool_calls)
 
 
 def log_of(session_id: str, pm_id: str, turns: Sequence[TurnLog]) -> DialogueLog:
@@ -108,33 +109,6 @@ def level_mention(
         size=None,
         field=field,
         value=value,
-    )
-
-
-def ledger_row(
-    pm_id: str,
-    date: date,
-    trade_idea_id: str,
-    instrument_id: str,
-    side: Side,
-    size: float,
-    tenor: Tenor | None = None,
-) -> LedgerRow:
-    """A ledger row with plausible constants for the fields not under test."""
-    return LedgerRow(
-        pm_id=pm_id,
-        date=date,
-        trade_idea_id=trade_idea_id,
-        instrument_id=instrument_id,
-        tenor=tenor,
-        instrument_type=InstrumentKind.EQUITY,
-        side=side,
-        size=size,
-        risk_amount=1.0,
-        price_or_yield=100.0,
-        stated_conviction=3,
-        bias_flag=None,
-        rule_id=None,
     )
 
 
@@ -185,13 +159,12 @@ def stance(trait_id: str, mode: SignalMode, entry: StanceEntry, text: str) -> St
     return Stance(signal_id="sg_001", trait_id=trait_id, mode=mode, entry=entry, stance=text)
 
 
-def scripted_client(
-    tmp_path: Path,
-    narrator_reply: Callable[[dict], dict],
+def routing_responder(
+    narrator: Callable[[dict], dict],
     leak: Callable[[dict], dict],
     forbidden: Callable[[dict], dict],
-) -> CachedClient:
-    """A `CachedClient` over a `FakeClient` that routes each request to its own script."""
+) -> Callable[[Mapping[str, Any]], dict]:
+    """A `FakeClient` responder routing judge, advisor and narrator requests to their scripts."""
 
     def responder(request: Mapping[str, Any]) -> dict:
         if is_leak_request(request):
@@ -200,9 +173,19 @@ def scripted_client(
             return forbidden(request)
         if "tools" in request:
             return default_responder(request)
-        return narrator_reply(request)
+        return narrator(request)
 
-    fake = FakeClient(responder)
+    return responder
+
+
+def scripted_client(
+    tmp_path: Path,
+    narrator_reply: Callable[[dict], dict],
+    leak: Callable[[dict], dict],
+    forbidden: Callable[[dict], dict],
+) -> CachedClient:
+    """A `CachedClient` over a `FakeClient` that routes each request to its own script."""
+    fake = FakeClient(routing_responder(narrator_reply, leak, forbidden))
     return CachedClient(lambda: fake, tmp_path, token_budget=None)
 
 
@@ -217,7 +200,7 @@ def skeleton_of(
 ) -> Skeleton:
     """A skeleton with no advisor violation, sitting on the given pm and date."""
     return Skeleton(
-        session_id=f"s_{pm_id.replace('_', '')}_{date.isoformat()}_a",
+        session_id=session_id(pm_id, date, 0),
         pm_id=pm_id,
         date=date,
         kind=kind,

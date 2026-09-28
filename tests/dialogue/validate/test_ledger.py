@@ -1,23 +1,21 @@
 """Tests for the ledger consistency layer: trade-mention checks and level warnings."""
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 from pm_traitbench.dialogue.validate.ledger import check_trades, count_level_warnings
-from pm_traitbench.enums import AdvisorTool, MentionKind, Side, Tenor
-from pm_traitbench.tables.schema import Mention, ToolCall, canonical_json
+from pm_traitbench.enums import AdvisorTool, Side, Tenor
+from pm_traitbench.tables.schema import ToolCall, canonical_json
 from tests.dialogue.validate.fixtures import (
     advisor_turn,
-    ledger_row,
     level_mention,
     log_of,
     pm_turn,
     skeleton_of,
     trade_mention,
 )
-
-PM_ID = "pm_001"
-DATE = date(2026, 1, 5)
-IDEA = "ti_001"
+from tests.gates.fixtures import DEFAULT_DATE as DATE
+from tests.gates.fixtures import DEFAULT_IDEA_ID as IDEA
+from tests.gates.fixtures import PM_ID, ledger_row
 
 
 def _log(skeleton, *turns):
@@ -25,7 +23,7 @@ def _log(skeleton, *turns):
 
 
 def test_exact_mention_of_the_days_trade_passes():
-    row = ledger_row(PM_ID, DATE, IDEA, "EQ-0001", Side.BUY, 100.0)
+    row = ledger_row()
     skeleton = skeleton_of(PM_ID, DATE, (IDEA,))
     mention = trade_mention(row)
     log = _log(skeleton, pm_turn("bought it", mentions=(mention,)), advisor_turn("noted"))
@@ -34,7 +32,7 @@ def test_exact_mention_of_the_days_trade_passes():
 
 
 def test_size_within_tolerance_passes_and_beyond_fails():
-    row = ledger_row(PM_ID, DATE, IDEA, "EQ-0001", Side.BUY, 100.0)
+    row = ledger_row()
     skeleton = skeleton_of(PM_ID, DATE, (IDEA,))
 
     within = trade_mention(row, size=104.0)
@@ -50,18 +48,9 @@ def test_size_within_tolerance_passes_and_beyond_fails():
 
 
 def test_wrong_side_fails():
-    row = ledger_row(PM_ID, DATE, IDEA, "EQ-0001", Side.BUY, 100.0)
+    row = ledger_row()
     skeleton = skeleton_of(PM_ID, DATE, (IDEA,))
-    mention = Mention(
-        kind=MentionKind.TRADE,
-        instrument_id="EQ-0001",
-        trade_idea_id=IDEA,
-        tenor=None,
-        side=Side.SELL,
-        size=100.0,
-        field=None,
-        value=None,
-    )
+    mention = trade_mention(row).model_copy(update={"side": Side.SELL})
     log = _log(skeleton, pm_turn("sold it", mentions=(mention,)), advisor_turn("noted"))
 
     assert check_trades(log, skeleton, (row,), size_tolerance=0.05) == (
@@ -71,18 +60,9 @@ def test_wrong_side_fails():
 
 
 def test_wrong_tenor_fails():
-    row = ledger_row(PM_ID, DATE, IDEA, "CM-CRD", Side.BUY, 100.0, tenor=Tenor.M1)
+    row = ledger_row(instrument_id="CM-CRD", tenor=Tenor.M1)
     skeleton = skeleton_of(PM_ID, DATE, (IDEA,))
-    mention = Mention(
-        kind=MentionKind.TRADE,
-        instrument_id="CM-CRD",
-        trade_idea_id=IDEA,
-        tenor=Tenor.M2,
-        side=Side.BUY,
-        size=100.0,
-        field=None,
-        value=None,
-    )
+    mention = trade_mention(row).model_copy(update={"tenor": Tenor.M2})
     log = _log(skeleton, pm_turn("bought M2", mentions=(mention,)), advisor_turn("noted"))
 
     assert check_trades(log, skeleton, (row,), size_tolerance=0.05) == (
@@ -93,7 +73,7 @@ def test_wrong_tenor_fails():
 
 def test_earlier_row_of_a_session_idea_may_be_mentioned():
     earlier = DATE - timedelta(days=3)
-    row = ledger_row(PM_ID, earlier, IDEA, "EQ-0001", Side.BUY, 100.0)
+    row = ledger_row(date=earlier)
     skeleton = skeleton_of(PM_ID, DATE, (IDEA,))
     mention = trade_mention(row)
     log = _log(skeleton, pm_turn("recall that buy", mentions=(mention,)), advisor_turn("noted"))
@@ -103,7 +83,7 @@ def test_earlier_row_of_a_session_idea_may_be_mentioned():
 
 def test_row_dated_after_the_session_is_not_matchable():
     later = DATE + timedelta(days=3)
-    row = ledger_row(PM_ID, later, IDEA, "EQ-0001", Side.BUY, 100.0)
+    row = ledger_row(date=later)
     skeleton = skeleton_of(PM_ID, DATE, (IDEA,))
     mention = trade_mention(row)
     log = _log(skeleton, pm_turn("bought it", mentions=(mention,)), advisor_turn("noted"))
@@ -114,8 +94,8 @@ def test_row_dated_after_the_session_is_not_matchable():
 
 
 def test_every_same_day_row_must_be_mentioned():
-    row_a = ledger_row(PM_ID, DATE, IDEA, "EQ-0001", Side.BUY, 100.0)
-    row_b = ledger_row(PM_ID, DATE, IDEA, "EQ-0002", Side.BUY, 50.0)
+    row_a = ledger_row()
+    row_b = ledger_row(instrument_id="EQ-0002", size=50.0)
     skeleton = skeleton_of(PM_ID, DATE, (IDEA,))
     mention = trade_mention(row_a)
     log = _log(skeleton, pm_turn("bought EQ-0001", mentions=(mention,)), advisor_turn("noted"))
@@ -127,7 +107,7 @@ def test_every_same_day_row_must_be_mentioned():
 
 def test_same_day_row_of_an_idea_not_in_the_skeleton_is_not_required():
     other_idea = "ti_002"
-    row = ledger_row(PM_ID, DATE, other_idea, "EQ-0001", Side.BUY, 100.0)
+    row = ledger_row(trade_idea_id=other_idea)
     skeleton = skeleton_of(PM_ID, DATE, (IDEA,))
     log = _log(skeleton, pm_turn("no mention"), advisor_turn("noted"))
 
@@ -135,18 +115,9 @@ def test_same_day_row_of_an_idea_not_in_the_skeleton_is_not_required():
 
 
 def test_reasons_are_sorted_and_unique():
-    row = ledger_row(PM_ID, DATE, IDEA, "EQ-0001", Side.BUY, 100.0)
+    row = ledger_row()
     skeleton = skeleton_of(PM_ID, DATE, (IDEA,))
-    mention = Mention(
-        kind=MentionKind.TRADE,
-        instrument_id="EQ-0001",
-        trade_idea_id=IDEA,
-        tenor=None,
-        side=Side.SELL,
-        size=100.0,
-        field=None,
-        value=None,
-    )
+    mention = trade_mention(row).model_copy(update={"side": Side.SELL})
     log = _log(
         skeleton,
         pm_turn("sold it", mentions=(mention,)),
@@ -163,26 +134,8 @@ def test_reasons_are_sorted_and_unique():
 
     # Two not-in-ledger mentions in reverse-sorted order prove the tuple is sorted,
     # not in insertion order.
-    later_idea = Mention(
-        kind=MentionKind.TRADE,
-        instrument_id="EQ-0001",
-        trade_idea_id="ti_002",
-        tenor=None,
-        side=Side.BUY,
-        size=10.0,
-        field=None,
-        value=None,
-    )
-    earlier_idea = Mention(
-        kind=MentionKind.TRADE,
-        instrument_id="EQ-0001",
-        trade_idea_id="ti_001",
-        tenor=None,
-        side=Side.BUY,
-        size=10.0,
-        field=None,
-        value=None,
-    )
+    later_idea = trade_mention(ledger_row(trade_idea_id="ti_002", size=10.0))
+    earlier_idea = trade_mention(ledger_row(trade_idea_id="ti_001", size=10.0))
     reverse_skeleton = skeleton_of(PM_ID, DATE, ())
     reverse_log = _log(
         reverse_skeleton,

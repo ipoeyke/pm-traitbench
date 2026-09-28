@@ -2,6 +2,7 @@
 regenerates or drops a session that fails until it passes or the attempt cap is hit.
 """
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -18,6 +19,7 @@ from pm_traitbench.dialogue.validate.judge import (
     parse_forbidden,
     parse_leak,
     send_judged,
+    transcript_text,
 )
 from pm_traitbench.dialogue.validate.ledger import check_trades, count_level_warnings
 from pm_traitbench.enums import SignalMode, ValidationStatus
@@ -36,7 +38,6 @@ class LayerResult:
     leak_reasons: tuple[str, ...]
     forbidden_reasons: tuple[str, ...]
     level_warnings: int
-    unmapped_labels: tuple[str, ...]
     warnings: tuple[str, ...]
     rejected_replies: int
 
@@ -69,7 +70,6 @@ async def validate_once(
     """Run every check layer once against `log` and return their combined outcome."""
     session_id = ctx.skeleton.session_id
     max_retries = config.dialogue.max_retries
-    rejected_replies = 0
 
     ledger_reasons = check_trades(log, ctx.skeleton, ledger, config.validation.size_tolerance)
     grep_reasons = check_grep(log, grep_params)
@@ -79,34 +79,45 @@ async def validate_once(
 
     revealed = revealed_params(ctx, trait_param_by_id)
     leak_judged = bool(revealed)
-    leak_reasons: tuple[str, ...] = ()
-    unmapped_labels: tuple[str, ...] = ()
-    if leak_judged:
-        verdict, rejected = await send_judged(
-            client, leak_request(log, config.validation), parse_leak, session_id, max_retries
-        )
-        rejected_replies += rejected
-        if verdict.explicit:
-            mapped = map_label(verdict.label, catalogue.bias_labels)
-            if mapped is not None and mapped in revealed:
-                leak_reasons = (f'leaks {mapped}: "{verdict.quote}"',)
-            elif mapped is None and verdict.label and verdict.label.strip():
-                unmapped_labels = (verdict.label,)
-
-    violations, rejected = await send_judged(
+    transcript = transcript_text(log)
+    forbidden_send = send_judged(
         client,
-        forbidden_request(log, ctx.avoid_lines, config.validation),
+        forbidden_request(log, ctx.avoid_lines, config.validation, transcript),
         parse_forbidden,
         session_id,
         max_retries,
     )
-    rejected_replies += rejected
+    if leak_judged:
+        leak_send = send_judged(
+            client,
+            leak_request(log, config.validation, transcript),
+            parse_leak,
+            session_id,
+            max_retries,
+        )
+        (verdict, leak_rejected), (violations, forbidden_rejected) = await asyncio.gather(
+            leak_send, forbidden_send
+        )
+    else:
+        verdict, leak_rejected = None, 0
+        violations, forbidden_rejected = await forbidden_send
+
+    leak_reasons: tuple[str, ...] = ()
+    warnings: list[str] = []
+    if verdict is not None and verdict.explicit:
+        label = (verdict.label or "").strip()
+        mapped = map_label(label, catalogue.bias_labels)
+        if mapped is not None and mapped in revealed:
+            leak_reasons = (f'leaks {mapped}: "{verdict.quote}"',)
+        elif mapped is None and label:
+            warnings.append(f"session {session_id}: judge label unmapped: {verdict.label}")
+
     forbidden_reasons = tuple(
         f'forbidden: {ctx.avoid_lines[v.index - 1]}: "{v.quote}"'
         for v in violations
         if 1 <= v.index <= len(ctx.avoid_lines)
     )
-    out_of_range_warnings = tuple(
+    warnings.extend(
         f"session {session_id}: forbidden judge index out of range: {v.index}"
         for v in violations
         if not (1 <= v.index <= len(ctx.avoid_lines))
@@ -119,9 +130,8 @@ async def validate_once(
         leak_reasons=leak_reasons,
         forbidden_reasons=forbidden_reasons,
         level_warnings=level_warnings,
-        unmapped_labels=unmapped_labels,
-        warnings=out_of_range_warnings,
-        rejected_replies=rejected_replies,
+        warnings=tuple(warnings),
+        rejected_replies=leak_rejected + forbidden_rejected,
     )
 
 
@@ -143,7 +153,6 @@ class SessionOutcome:
     final: SessionResult | None
     warnings: tuple[str, ...]
     rejected_replies: int
-    unmapped_labels: tuple[str, ...]
 
 
 async def run_session(
@@ -162,22 +171,15 @@ async def run_session(
     max_attempts = config.validation.max_attempts
     rows: list[ValidationRow] = []
     warnings: list[str] = []
-    unmapped_labels: list[str] = []
     rejected_replies = 0
 
-    current_log = log
-    current_result: SessionResult | None = None
-    attempt = 1
-    while True:
+    current = SessionResult(session=session, log=log, warnings=(), rejected_replies=0)
+    final: SessionResult | None = None
+    for attempt in range(1, max_attempts + 1):
         layer = await validate_once(
-            ctx, current_log, client, config, catalogue, ledger, grep_params, trait_param_by_id
+            ctx, current.log, client, config, catalogue, ledger, grep_params, trait_param_by_id
         )
         rejected_replies += layer.rejected_replies
-        unmapped_labels.extend(layer.unmapped_labels)
-        warnings.extend(
-            f"session {ctx.skeleton.session_id}: judge label unmapped: {label}"
-            for label in layer.unmapped_labels
-        )
         warnings.extend(layer.warnings)
 
         if layer.passed:
@@ -205,32 +207,24 @@ async def run_session(
         )
 
         if status == ValidationStatus.PASS:
-            final = (
-                current_result
-                if current_result is not None
-                else SessionResult(session=session, log=log, warnings=(), rejected_replies=0)
-            )
+            final = current
             break
         if status == ValidationStatus.DROPPED:
-            final = None
             break
 
-        current_result = await narrate_session(
+        current = await narrate_session(
             ctx,
             client,
             config.dialogue,
             advisor_prompt,
             feedback=feedback_text(attempt + 1, layer.reasons),
         )
-        warnings.extend(current_result.warnings)
-        rejected_replies += current_result.rejected_replies
-        current_log = current_result.log
-        attempt += 1
+        warnings.extend(current.warnings)
+        rejected_replies += current.rejected_replies
 
     return SessionOutcome(
         rows=tuple(rows),
         final=final,
         warnings=tuple(warnings),
         rejected_replies=rejected_replies,
-        unmapped_labels=tuple(unmapped_labels),
     )
