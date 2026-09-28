@@ -7,15 +7,9 @@ regeneration to fix a failure only ever changes the narrator, not the advisor.
 
 from collections.abc import Sequence
 
-from pm_traitbench.catalogues.loader import banned_words_in, leak_param_names, matched_params
-from pm_traitbench.catalogues.models import Catalogue
+from pm_traitbench.catalogues.loader import banned_words_in, matched_params
 from pm_traitbench.enums import TurnRole
 from pm_traitbench.tables.schema import DialogueLog
-
-
-def grep_params(catalogue: Catalogue) -> tuple[str, ...]:
-    """The params a PM turn must never name: `leak_param_names` of the catalogue."""
-    return leak_param_names(catalogue)
 
 
 def check_grep(log: DialogueLog, params: Sequence[str]) -> tuple[str, ...]:

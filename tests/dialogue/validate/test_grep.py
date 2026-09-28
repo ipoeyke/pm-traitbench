@@ -1,8 +1,8 @@
 """Tests for the parameter-name grep layer."""
 
-from pm_traitbench.catalogues.loader import load_catalogue
+from pm_traitbench.catalogues.loader import leak_param_names, load_catalogue
 from pm_traitbench.config import BIAS_PARAMS
-from pm_traitbench.dialogue.validate.grep import check_grep, grep_params
+from pm_traitbench.dialogue.validate.grep import check_grep
 from tests.dialogue.validate.fixtures import advisor_turn, log_of, pm_turn
 
 PARAMS = ("register", "loss_aversion_lambda")
@@ -36,7 +36,7 @@ def test_param_name_as_phrase_fails():
 
 def test_preference_param_fails():
     log = _log(pm_turn("I like a wide register"), advisor_turn("noted"))
-    params = grep_params(load_catalogue())
+    params = leak_param_names(load_catalogue())
 
     assert check_grep(log, params) == ("names a parameter: register",)
 
@@ -97,8 +97,8 @@ def test_reasons_sorted_unique():
     )
 
 
-def test_grep_params_is_biases_then_catalogue_preferences():
+def test_leak_param_names_is_biases_then_catalogue_preferences():
     catalogue = load_catalogue()
-    params = grep_params(catalogue)
+    params = leak_param_names(catalogue)
 
     assert params.index("register") > params.index(BIAS_PARAMS[-1])

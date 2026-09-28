@@ -614,7 +614,6 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
     """
     if len(catalogue.voices) < 6:
         raise CatalogueError(f"voices: need at least 6 voices, got {len(catalogue.voices)}")
-    forbidden_param_names = leak_param_names(catalogue)
     seen_ids: set[str] = set()
     for voice in catalogue.voices:
         if voice.voice_id in seen_ids:
@@ -627,7 +626,7 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
             raise CatalogueError(
                 f"voices: voice '{voice.voice_id}' line contains banned word '{banned[0]}'"
             )
-        matched = matched_params(voice.line, forbidden_param_names)
+        matched = matched_params(voice.line, leak_param_names(catalogue))
         if matched:
             raise CatalogueError(
                 f"voices: voice '{voice.voice_id}' line names param '{matched[0]}'"

@@ -17,6 +17,7 @@ from typing import Any
 from pm_traitbench.catalogues.loader import (
     check_dialogue_catalogue,
     check_validate_catalogue,
+    leak_param_names,
     load_catalogue,
 )
 from pm_traitbench.catalogues.models import Catalogue
@@ -30,7 +31,6 @@ from pm_traitbench.dialogue.stage import (
     raise_on_failure,
     run_bounded,
 )
-from pm_traitbench.dialogue.validate.grep import grep_params
 from pm_traitbench.dialogue.validate.loop import SessionOutcome, run_session
 from pm_traitbench.dialogue.voices import draw_voice
 from pm_traitbench.enums import Typicality, ValidationStatus
@@ -251,7 +251,7 @@ def _run(
         row.session_id for row in previous_rows if row.status == ValidationStatus.DROPPED
     }
 
-    grep_terms = grep_params(catalogue)
+    grep_terms = leak_param_names(catalogue)
     frozen_units, previously_dropped_session_ids = _build_units(
         config,
         store,
