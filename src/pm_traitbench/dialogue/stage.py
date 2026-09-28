@@ -9,10 +9,11 @@ tables or neither.
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from pm_traitbench.catalogues.loader import check_dialogue_catalogue, load_catalogue
+from pm_traitbench.catalogues.models import Catalogue, Voice
 from pm_traitbench.config import Config
 from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, LlmClient, session_prefix
 from pm_traitbench.dialogue.context import PmTables, SessionContext, build_contexts, select_pms
@@ -48,8 +49,26 @@ from pm_traitbench.tables.specs import (
     SESSIONS,
     SKELETONS,
     TRAITS,
+    TableSpec,
 )
 from pm_traitbench.tables.store import DataStore
+
+# Every table stage 6 reads to rebuild each session's context; stage 7 rebuilds the same.
+DIALOGUE_READS: tuple[TableSpec, ...] = (
+    PERSONAS,
+    RULES,
+    TRAITS,
+    DRIFT_EVENTS,
+    IDEAS,
+    LEDGER,
+    POSITION_DAYS,
+    SKELETONS,
+    MARKET_INSTRUMENTS,
+    MARKET_PRICES,
+    MARKET_CURVES,
+    MARKET_CONSENSUS,
+    MARKET_CALENDAR,
+)
 
 
 def partition_pm_tables(store: DataStore) -> tuple[PmTables, ...]:
@@ -110,6 +129,40 @@ def build_lookups(store: DataStore, seeds: Iterable[str]) -> dict[str, MarketLoo
         seed: MarketLookup.build(seed, instruments, prices, curves, consensus, calendar)
         for seed in sorted(set(seeds))
     }
+
+
+def pm_contexts(
+    pm: PmTables, lookups: Mapping[str, MarketLookup], catalogue: Catalogue, config: Config
+) -> tuple[Voice, tuple[SessionContext, ...]]:
+    """One PM's drawn voice and a context per skeleton, on its market seed's lookup."""
+    voice = draw_voice(config.seed.root, pm.persona.pm_id, catalogue.voices)
+    lookup = lookups[pm.persona.market_seed]
+    return voice, build_contexts(pm, voice, lookup, catalogue, config)
+
+
+def stage_client(
+    store: DataStore,
+    client_factory: Callable[[Config], LlmClient],
+    config: Config,
+    token_budget: int | None,
+) -> CachedClient:
+    """A `CachedClient` over the store's shared LLM cache, building its backend on first use."""
+    return CachedClient(
+        lambda: client_factory(config), store.data_dir / "cache" / "llm", token_budget
+    )
+
+
+def collect_results[T](
+    results: Iterable[T | BaseException],
+    result_type: type[T],
+    expected: int,
+    error_type: type[PmTraitbenchError],
+) -> list[T]:
+    """The results of `result_type`, raising `error_type` unless there are `expected` of them."""
+    collected = [r for r in results if isinstance(r, result_type)]
+    if len(collected) != expected:
+        raise error_type(f"expected {expected} results but got {len(collected)}")
+    return collected
 
 
 async def run_bounded[I, T](
@@ -216,13 +269,11 @@ def _run(
     contexts: list[SessionContext] = []
     voices: dict[str, str] = {}
     for pm in selected:
-        voice = draw_voice(config.seed.root, pm.persona.pm_id, catalogue.voices)
+        voice, pm_session_contexts = pm_contexts(pm, lookups, catalogue, config)
         voices[pm.persona.pm_id] = voice.voice_id
-        lookup = lookups[pm.persona.market_seed]
-        contexts.extend(build_contexts(pm, voice, lookup, catalogue, config))
+        contexts.extend(pm_session_contexts)
 
-    cache_dir = store.data_dir / "cache" / "llm"
-    client = CachedClient(lambda: client_factory(config), cache_dir, config.dialogue.token_budget)
+    client = stage_client(store, client_factory, config, config.dialogue.token_budget)
     frozen_contexts = tuple(contexts)
 
     async def narrate(ctx: SessionContext) -> SessionResult:
@@ -233,11 +284,7 @@ def _run(
     )
     raise_on_failure(frozen_contexts, results, client)
 
-    session_results = [r for r in results if isinstance(r, SessionResult)]
-    if len(session_results) != len(frozen_contexts):
-        raise DialogueError(
-            f"expected {len(frozen_contexts)} session results but got {len(session_results)}"
-        )
+    session_results = collect_results(results, SessionResult, len(frozen_contexts), DialogueError)
 
     sessions = [r.session for r in session_results]
     logs = [r.log for r in session_results]
@@ -276,21 +323,7 @@ def make_stage(client_factory: Callable[[Config], LlmClient]) -> Stage:
         name="dialogue",
         help="narrate every planned session with a PM narrator and a simulated advisor",
         run=run,
-        reads=(
-            PERSONAS,
-            RULES,
-            TRAITS,
-            DRIFT_EVENTS,
-            IDEAS,
-            LEDGER,
-            POSITION_DAYS,
-            SKELETONS,
-            MARKET_INSTRUMENTS,
-            MARKET_PRICES,
-            MARKET_CURVES,
-            MARKET_CONSENSUS,
-            MARKET_CALENDAR,
-        ),
+        reads=DIALOGUE_READS,
         writes=DIALOGUE_TABLES,
     )
 

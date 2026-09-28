@@ -22,40 +22,25 @@ from pm_traitbench.catalogues.loader import (
 )
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config
-from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, LlmClient, UsageTotals
-from pm_traitbench.dialogue.context import SessionContext, build_contexts
+from pm_traitbench.dialogue.client import AnthropicClient, LlmClient, UsageTotals
+from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.prompts import prompt_sha256, read_advisor_prompt
 from pm_traitbench.dialogue.stage import (
+    DIALOGUE_READS,
     build_lookups,
+    collect_results,
     partition_pm_tables,
+    pm_contexts,
     raise_on_failure,
     run_bounded,
+    stage_client,
 )
 from pm_traitbench.dialogue.validate.loop import LAYERS, SessionOutcome, run_session
-from pm_traitbench.dialogue.voices import draw_voice
 from pm_traitbench.enums import Typicality, ValidationStatus
 from pm_traitbench.errors import ValidateError
 from pm_traitbench.stages import Stage
 from pm_traitbench.tables.schema import DialogueLog, LedgerRow, Session, Signal, ValidationRow
-from pm_traitbench.tables.specs import (
-    DIALOGUE_LOGS,
-    DRIFT_EVENTS,
-    IDEAS,
-    LEDGER,
-    MARKET_CALENDAR,
-    MARKET_CONSENSUS,
-    MARKET_CURVES,
-    MARKET_INSTRUMENTS,
-    MARKET_PRICES,
-    PERSONAS,
-    POSITION_DAYS,
-    RULES,
-    SESSIONS,
-    SIGNALS,
-    SKELETONS,
-    TRAITS,
-    VALIDATION,
-)
+from pm_traitbench.tables.specs import DIALOGUE_LOGS, SESSIONS, SIGNALS, VALIDATION
 from pm_traitbench.tables.store import DataStore
 
 # Above this share of a typicality cell's sessions regenerating, the narrator is
@@ -99,16 +84,15 @@ def _build_units(
     units: list[_Unit] = []
     previously_dropped: list[str] = []
     for pm in selected:
-        voice = draw_voice(config.seed.root, pm.persona.pm_id, catalogue.voices)
+        voice, contexts = pm_contexts(pm, lookups, catalogue, config)
         expected_voice_id = voices_meta.get(pm.persona.pm_id)
         if voice.voice_id != expected_voice_id:
             raise ValidateError(
                 f"pm '{pm.persona.pm_id}': voice draw '{voice.voice_id}' does not match "
                 f"dialogue run metadata's voice '{expected_voice_id}'"
             )
-        lookup = lookups[pm.persona.market_seed]
         trait_param_by_id = {trait.trait_id: trait.param for trait in pm.traits}
-        for ctx in build_contexts(pm, voice, lookup, catalogue, config):
+        for ctx in contexts:
             key = (pm.persona.pm_id, ctx.skeleton.session_id)
             session_row = sessions_by_key.get(key)
             log_row = logs_by_key.get(key)
@@ -260,8 +244,7 @@ def _run(
         previously_dropped_ids_confirmed,
     )
 
-    cache_dir = store.data_dir / "cache" / "llm"
-    client = CachedClient(lambda: client_factory(config), cache_dir, config.validation.token_budget)
+    client = stage_client(store, client_factory, config, config.validation.token_budget)
 
     async def validate(unit: _Unit) -> SessionOutcome:
         return await run_session(
@@ -288,11 +271,7 @@ def _run(
         budget_label="validation",
     )
 
-    session_outcomes = [o for o in outcomes if isinstance(o, SessionOutcome)]
-    if len(session_outcomes) != len(frozen_units):
-        raise ValidateError(
-            f"expected {len(frozen_units)} session outcomes but got {len(session_outcomes)}"
-        )
+    session_outcomes = collect_results(outcomes, SessionOutcome, len(frozen_units), ValidateError)
 
     new_rows = [row for outcome in session_outcomes for row in outcome.rows]
     session_warnings = [w for outcome in session_outcomes for w in outcome.warnings]
@@ -347,22 +326,7 @@ def make_stage(client_factory: Callable[[Config], LlmClient]) -> Stage:
             "forbidden set; regenerate or drop failures"
         ),
         run=run,
-        reads=(
-            PERSONAS,
-            RULES,
-            TRAITS,
-            DRIFT_EVENTS,
-            IDEAS,
-            LEDGER,
-            POSITION_DAYS,
-            SKELETONS,
-            MARKET_INSTRUMENTS,
-            MARKET_PRICES,
-            MARKET_CURVES,
-            MARKET_CONSENSUS,
-            MARKET_CALENDAR,
-            SIGNALS,
-        ),
+        reads=(*DIALOGUE_READS, SIGNALS),
         writes=(VALIDATION,),
         # Validate checks every PM dialogue narrated, so it rewrites both tables whole.
         rewrites=(SESSIONS, DIALOGUE_LOGS),
