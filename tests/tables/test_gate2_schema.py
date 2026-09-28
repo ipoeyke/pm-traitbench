@@ -19,6 +19,7 @@ from pm_traitbench.tables.specs import (
     GATE2_SIGNALS,
     GATE2_TABLES,
     GATE2_TRAITS,
+    HIDDEN_COLUMNS,
 )
 
 
@@ -151,6 +152,11 @@ def test_trait_row_cited_ids_sorted_unique_and_own_pm() -> None:
             cited_session_ids=("s_pm001_2026-01-05_a",),
             false_attribution_ids=("s_pm001_2026-02-01_a",),
         )
+    with pytest.raises(ValidationError):
+        _bias_trait_row(
+            cited_session_ids=("s_pm001_2026-01-05_a", "s_pm001_2026-02-01_a"),
+            false_attribution_ids=("s_pm001_2026-02-01_a", "s_pm001_2026-01-05_a"),
+        )
 
 
 def test_signal_row_recovered_implies_cited() -> None:
@@ -168,7 +174,16 @@ def test_signal_row_classification_fields_are_consistent() -> None:
     with pytest.raises(ValidationError):
         _signal_row(kind_predicted=Kind.BIAS, kind=Kind.BIAS, kind_ok=False)
     with pytest.raises(ValidationError):
+        _signal_row(classified=False, kind_predicted=Kind.BIAS, kind_ok=None)
+    with pytest.raises(ValidationError):
+        _signal_row(kind_predicted=Kind.PREFERENCE, kind=Kind.BIAS, kind_ok=True)
+    with pytest.raises(ValidationError):
         _signal_row(pre_update=True)
+
+
+def test_signal_row_session_id_must_belong_to_own_pm() -> None:
+    with pytest.raises(ValidationError):
+        _signal_row(session_id="s_pm002_2026-01-05_a")
 
 
 def test_pm_row_counts_bounded() -> None:
@@ -180,6 +195,8 @@ def test_pm_row_counts_bounded() -> None:
         _pm_row(biases_correct=9)
     with pytest.raises(ValidationError):
         _pm_row(ngram_containment=1.5)
+    with pytest.raises(ValidationError):
+        _pm_row(stated_kind_ok=6, stated_signals=5)
 
 
 def test_cell_row_verdict_and_p_consistency() -> None:
@@ -195,6 +212,10 @@ def test_cell_row_verdict_and_p_consistency() -> None:
         _cell_row(slice=Gate2Slice.KIND, slice_value="bias", blocking=True)
     with pytest.raises(ValidationError):
         _cell_row(n=5, n_positive=6)
+    with pytest.raises(ValidationError):
+        _cell_row(rate=1.5)
+    with pytest.raises(ValidationError):
+        _cell_row(p=-0.1)
 
 
 def test_gate2_specs_keys() -> None:
@@ -203,3 +224,5 @@ def test_gate2_specs_keys() -> None:
     assert GATE2_PM.key == ("pm_id",)
     assert GATE2_CELLS.key == ("slice", "slice_value", "param")
     assert GATE2_TABLES == (GATE2_TRAITS, GATE2_SIGNALS, GATE2_PM, GATE2_CELLS)
+    for spec in GATE2_TABLES:
+        assert spec.name not in HIDDEN_COLUMNS
