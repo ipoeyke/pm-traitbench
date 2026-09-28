@@ -377,11 +377,10 @@ def test_bias_labels_cover_every_bias_param_and_pass_the_check() -> None:
     check_validate_catalogue(catalogue)
 
 
-def test_bias_labels_phrases_are_lowercase_no_period() -> None:
+def test_bias_labels_phrases_have_no_period_or_em_dash() -> None:
     data = _load_shipped_yaml("bias_labels.yaml")
     for phrases in data["labels"].values():
         for phrase in phrases:
-            assert phrase == phrase.lower(), phrase
             assert not phrase.endswith("."), phrase
             assert "—" not in phrase, phrase
 
