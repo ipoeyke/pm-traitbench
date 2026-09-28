@@ -497,10 +497,9 @@ def _check_stance_lines(
                 )
             if "value" in allowed_slots and "value" not in fields:
                 raise CatalogueError(f"{context} line '{line}' does not use the {{value}} slot")
-            lowered = line.lower()
-            for banned in BANNED_STANCE_WORDS:
-                if banned in lowered:
-                    raise CatalogueError(f"{context} line '{line}' contains banned word '{banned}'")
+            banned = banned_words_in(line)
+            if banned:
+                raise CatalogueError(f"{context} line '{line}' contains banned word '{banned[0]}'")
 
 
 def check_stances(catalogue: Catalogue) -> None:
@@ -577,19 +576,33 @@ def check_stances(catalogue: Catalogue) -> None:
             )
 
 
-def matched_param(text: str, params: Iterable[str]) -> str | None:
-    """Return the first param named in text, whole-word, if any.
+def matched_params(text: str, params: Iterable[str]) -> tuple[str, ...]:
+    """Every param named in text, whole-word and case-insensitive, in `params` order.
 
     Checks both the raw param (with underscores) and its underscore-replaced
-    phrase, each as a whole word or phrase, so "register" and "loss_aversion_lambda"
-    are caught however the text spells them.
+    phrase, so "register" and "loss_aversion_lambda" are caught however the text
+    spells them.
     """
     lowered = text.lower()
-    for param in params:
-        for form in (param.lower(), param.lower().replace("_", " ")):
-            if re.search(rf"\b{re.escape(form)}\b", lowered):
-                return param
-    return None
+    return tuple(
+        param
+        for param in params
+        if any(
+            re.search(rf"\b{re.escape(form)}\b", lowered)
+            for form in (param.lower(), param.lower().replace("_", " "))
+        )
+    )
+
+
+def banned_words_in(text: str) -> tuple[str, ...]:
+    """Every `BANNED_STANCE_WORDS` entry found in text as a case-insensitive substring."""
+    lowered = text.lower()
+    return tuple(word for word in BANNED_STANCE_WORDS if word in lowered)
+
+
+def leak_param_names(catalogue: Catalogue) -> tuple[str, ...]:
+    """The bias params followed by every catalogue preference's param, in catalogue order."""
+    return (*BIAS_PARAMS, *(entry.param for entry in catalogue.preferences))
 
 
 def check_dialogue_catalogue(catalogue: Catalogue) -> None:
@@ -601,7 +614,7 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
     """
     if len(catalogue.voices) < 6:
         raise CatalogueError(f"voices: need at least 6 voices, got {len(catalogue.voices)}")
-    forbidden_param_names = (*BIAS_PARAMS, *(entry.param for entry in catalogue.preferences))
+    forbidden_param_names = leak_param_names(catalogue)
     seen_ids: set[str] = set()
     for voice in catalogue.voices:
         if voice.voice_id in seen_ids:
@@ -609,15 +622,16 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
         seen_ids.add(voice.voice_id)
         if not voice.line.strip():
             raise CatalogueError(f"voices: voice '{voice.voice_id}' line is blank")
-        lowered = voice.line.lower()
-        for banned in BANNED_STANCE_WORDS:
-            if banned in lowered:
-                raise CatalogueError(
-                    f"voices: voice '{voice.voice_id}' line contains banned word '{banned}'"
-                )
-        matched = matched_param(voice.line, forbidden_param_names)
-        if matched is not None:
-            raise CatalogueError(f"voices: voice '{voice.voice_id}' line names param '{matched}'")
+        banned = banned_words_in(voice.line)
+        if banned:
+            raise CatalogueError(
+                f"voices: voice '{voice.voice_id}' line contains banned word '{banned[0]}'"
+            )
+        matched = matched_params(voice.line, forbidden_param_names)
+        if matched:
+            raise CatalogueError(
+                f"voices: voice '{voice.voice_id}' line names param '{matched[0]}'"
+            )
 
     actual_bias_keys = set(catalogue.avoid.biases)
     expected_bias_keys = set(BIAS_PARAMS)

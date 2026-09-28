@@ -7,16 +7,15 @@ regeneration to fix a failure only ever changes the narrator, not the advisor.
 
 from collections.abc import Sequence
 
-from pm_traitbench.catalogues.loader import BANNED_STANCE_WORDS, matched_param
+from pm_traitbench.catalogues.loader import banned_words_in, leak_param_names, matched_params
 from pm_traitbench.catalogues.models import Catalogue
-from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.enums import TurnRole
 from pm_traitbench.tables.schema import DialogueLog
 
 
 def grep_params(catalogue: Catalogue) -> tuple[str, ...]:
-    """The bias params followed by every catalogue preference's param, in catalogue order."""
-    return (*BIAS_PARAMS, *(entry.param for entry in catalogue.preferences))
+    """The params a PM turn must never name: `leak_param_names` of the catalogue."""
+    return leak_param_names(catalogue)
 
 
 def check_grep(log: DialogueLog, params: Sequence[str]) -> tuple[str, ...]:
@@ -25,14 +24,7 @@ def check_grep(log: DialogueLog, params: Sequence[str]) -> tuple[str, ...]:
     for turn in log.turns:
         if turn.role != TurnRole.PM:
             continue
-        # Check one param at a time: matched_param stops at the first hit, so a
-        # single call would miss a turn that names more than one param.
-        for param in params:
-            matched = matched_param(turn.text, (param,))
-            if matched is not None:
-                reasons.add(f"names a parameter: {matched}")
         lowered = turn.text.lower()
-        for word in BANNED_STANCE_WORDS:
-            if word in lowered:
-                reasons.add(f"names a parameter: {word}")
+        for name in (*matched_params(lowered, params), *banned_words_in(lowered)):
+            reasons.add(f"names a parameter: {name}")
     return tuple(sorted(reasons))

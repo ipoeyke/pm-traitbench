@@ -8,10 +8,11 @@ import pytest
 import yaml
 
 from pm_traitbench.catalogues.loader import (
+    banned_words_in,
     check_catalogue,
     check_validate_catalogue,
     load_catalogue,
-    matched_param,
+    matched_params,
     render_signpost,
     render_template,
     render_thesis,
@@ -807,9 +808,18 @@ def test_bias_labels_upper_case_phrase_raises(tmp_path: Path) -> None:
         check_validate_catalogue(catalogue)
 
 
-def test_matched_param_is_public_and_whole_word() -> None:
-    assert matched_param("my register is fine", ("register",)) == "register"
-    assert matched_param("registered", ("register",)) is None
-    assert (
-        matched_param("loss aversion lambda", ("loss_aversion_lambda",)) == "loss_aversion_lambda"
+def test_matched_params_is_whole_word_and_returns_every_match() -> None:
+    assert matched_params("my register is fine", ("register",)) == ("register",)
+    assert matched_params("registered", ("register",)) == ()
+    assert matched_params("loss aversion lambda", ("loss_aversion_lambda",)) == (
+        "loss_aversion_lambda",
     )
+    assert matched_params("Pushback_Style and REGISTER", ("register", "pushback_style")) == (
+        "register",
+        "pushback_style",
+    )
+
+
+def test_banned_words_in_is_a_case_insensitive_substring_scan() -> None:
+    assert banned_words_in("Loss Aversion and herding") == ("loss aversion", "herd")
+    assert banned_words_in("a plain line") == ()

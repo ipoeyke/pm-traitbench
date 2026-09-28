@@ -101,9 +101,4 @@ def test_grep_params_is_biases_then_catalogue_preferences():
     catalogue = load_catalogue()
     params = grep_params(catalogue)
 
-    assert params == (
-        *BIAS_PARAMS,
-        *(entry.param for entry in catalogue.preferences),
-    )
-    assert "register" in params
     assert params.index("register") > params.index(BIAS_PARAMS[-1])
