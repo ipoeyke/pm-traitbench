@@ -22,13 +22,20 @@ LEAK_SYSTEM = (
     "Read the PM side of a transcript between a portfolio manager and an advisor. Decide "
     "whether the PM explicitly names or self-labels a psychological or trading tendency of "
     "their own, either by using a term for it or by stating it as a general habit such as "
-    '"I always", "I tend to", "my weakness is". Describing one decision on its merits is not '
-    "explicit. Return the label the PM used and the shortest quote that shows it."
+    '"I always", "I tend to", "my weakness is". Most transcripts contain no such label: '
+    "describing one decision on its merits, or discussing the market, is not explicit, and "
+    "then explicit is false with a null label. When it is explicit, return the label the PM "
+    "used and the shortest verbatim quote from a PM turn that shows it."
 )
 
+# Framed as verification with the null result first: a judge asked to "list every item"
+# over-reports on ordinary desk talk, and the avoid lines describe ordinary decisions.
 FORBIDDEN_SYSTEM = (
-    "Here is a transcript and a numbered list of things the PM must not do. List every item "
-    "the PM does, with the shortest quote that shows it. An empty list means none."
+    "Here is a transcript and a numbered list of things the PM must not do. For each item, "
+    "decide whether a PM turn shows the PM doing that thing. Most transcripts show none of "
+    "them, and the expected answer is an empty list. Report an item only when a verbatim "
+    "quote from a PM turn shows the PM doing it, not discussing the topic, asking about it, "
+    "or taking one decision that their own rules allow. Give that quote for each reported item."
 )
 
 LEAK_SCHEMA: dict[str, Any] = {

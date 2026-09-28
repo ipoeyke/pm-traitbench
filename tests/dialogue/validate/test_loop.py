@@ -141,13 +141,22 @@ def test_explicit_label_of_the_revealed_param_fails_and_other_labels_pass(market
         market_lookup, stances=(stance("t_01", SignalMode.REVEALED, StanceEntry.REVEALED, "line"),)
     )
 
+    log = _log_saying("I sold winners this week, the usual")
+
     def once(tmp_sub, leak_fn):
         client = scripted_client(tmp_path / tmp_sub, _raise, leak_fn, _clean_forbidden)
-        return _once(ctx, client, trait_param_by_id={"t_01": "disposition_ratio"})
+        return _once(ctx, client, log=log, trait_param_by_id={"t_01": "disposition_ratio"})
 
     revealed_label = once("a", lambda _r: leak_reply(True, "disposition effect", "I sold winners"))
     assert revealed_label.leak_reasons == ('leaks disposition_ratio: "I sold winners"',)
     assert revealed_label.passed is False
+
+    unquoted = once("d", lambda _r: leak_reply(True, "disposition effect", "not in the turn"))
+    assert unquoted.leak_reasons == ()
+    assert unquoted.warnings == (
+        f"session {_SESSION_ID}: leak judge quote not in a PM turn: not in the turn",
+    )
+    assert unquoted.passed is True
 
     other_label = once("b", lambda _r: leak_reply(True, "loss aversion", "average down again"))
     assert other_label.leak_reasons == ()
@@ -226,17 +235,40 @@ def test_forbidden_violation_fails_with_the_avoid_line_and_out_of_range_index_is
         tmp_path,
         _raise,
         _raise,
-        lambda _r: forbidden_reply([(1, "quoted the size"), (5, "out of range")]),
+        lambda _r: forbidden_reply([(1, "Quoted  the size"), (5, "out of range")]),
     )
 
-    result = _once(ctx, client)
+    result = _once(ctx, client, log=_log_saying("I quoted the size to the desk"))
 
     assert result.forbidden_reasons == (
-        'forbidden: never mention position size: "quoted the size"',
+        'forbidden: never mention position size: "Quoted  the size"',
     )
     assert result.passed is False
     assert result.warnings == (
         f"session {ctx.skeleton.session_id}: forbidden judge index out of range: 5",
+    )
+
+
+def test_forbidden_violation_whose_quote_is_not_in_a_pm_turn_is_a_warning(market_lookup, tmp_path):
+    ctx = validate_context(market_lookup, avoid_lines=("never mention position size",))
+    client = scripted_client(
+        tmp_path,
+        _raise,
+        _raise,
+        lambda _r: forbidden_reply([(1, "ran it at twice the size")]),
+    )
+
+    result = _once(ctx, client, log=_log_saying("all clear, ran it at twice the size"))
+    assert result.forbidden_reasons == (
+        'forbidden: never mention position size: "ran it at twice the size"',
+    )
+
+    invented = _once(ctx, client)
+    assert invented.forbidden_reasons == ()
+    assert invented.passed is True
+    assert invented.warnings == (
+        f"session {ctx.skeleton.session_id}: forbidden judge quote not in a PM turn: "
+        "ran it at twice the size",
     )
 
 

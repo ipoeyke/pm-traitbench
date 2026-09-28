@@ -22,7 +22,7 @@ from pm_traitbench.dialogue.validate.judge import (
     transcript_text,
 )
 from pm_traitbench.dialogue.validate.ledger import check_trades, count_level_warnings
-from pm_traitbench.enums import SignalMode, ValidationStatus
+from pm_traitbench.enums import SignalMode, TurnRole, ValidationStatus
 from pm_traitbench.tables.schema import DialogueLog, LedgerRow, Session, ValidationRow
 
 _REVEALING_MODES = (SignalMode.REVEALED, SignalMode.CONTRADICTION)
@@ -102,37 +102,56 @@ async def validate_once(
         verdict, leak_rejected = None, 0
         violations, forbidden_rejected = await forbidden_send
 
+    # A judge finding counts only with its evidence: the quote must appear in a PM turn,
+    # so a verdict invented from the topic rather than the text cannot fail a session.
+    pm_text = _normalised(" ".join(t.text for t in log.turns if t.role == TurnRole.PM))
     leak_reasons: tuple[str, ...] = ()
     warnings: list[str] = []
     if verdict is not None and verdict.explicit:
         label = (verdict.label or "").strip()
         mapped = map_label(label, catalogue.bias_labels)
         if mapped is not None and mapped in revealed:
-            leak_reasons = (f'leaks {mapped}: "{verdict.quote}"',)
+            if _quoted(pm_text, verdict.quote):
+                leak_reasons = (f'leaks {mapped}: "{verdict.quote}"',)
+            else:
+                warnings.append(
+                    f"session {session_id}: leak judge quote not in a PM turn: {verdict.quote}"
+                )
         elif mapped is None and label:
             warnings.append(f"session {session_id}: judge label unmapped: {verdict.label}")
 
-    forbidden_reasons = tuple(
-        f'forbidden: {ctx.avoid_lines[v.index - 1]}: "{v.quote}"'
-        for v in violations
-        if 1 <= v.index <= len(ctx.avoid_lines)
-    )
-    warnings.extend(
-        f"session {session_id}: forbidden judge index out of range: {v.index}"
-        for v in violations
-        if not (1 <= v.index <= len(ctx.avoid_lines))
-    )
+    forbidden_reasons: list[str] = []
+    for v in violations:
+        if not (1 <= v.index <= len(ctx.avoid_lines)):
+            warnings.append(f"session {session_id}: forbidden judge index out of range: {v.index}")
+        elif not _quoted(pm_text, v.quote):
+            warnings.append(
+                f"session {session_id}: forbidden judge quote not in a PM turn: {v.quote}"
+            )
+        else:
+            forbidden_reasons.append(f'forbidden: {ctx.avoid_lines[v.index - 1]}: "{v.quote}"')
 
     return LayerResult(
         ledger_reasons=ledger_reasons,
         grep_reasons=grep_reasons,
         leak_judged=leak_judged,
         leak_reasons=leak_reasons,
-        forbidden_reasons=forbidden_reasons,
+        forbidden_reasons=tuple(forbidden_reasons),
         level_warnings=level_warnings,
         warnings=tuple(warnings),
         rejected_replies=leak_rejected + forbidden_rejected,
     )
+
+
+def _normalised(text: str) -> str:
+    """Case-folded text with runs of whitespace collapsed, for verbatim-quote matching."""
+    return " ".join(text.split()).casefold()
+
+
+def _quoted(pm_text: str, quote: str) -> bool:
+    """Whether a judge's quote appears verbatim (up to case and spacing) in the PM turns."""
+    needle = _normalised(quote)
+    return bool(needle) and needle in pm_text
 
 
 def feedback_text(attempt: int, reasons: Sequence[str]) -> str:

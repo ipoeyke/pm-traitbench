@@ -72,8 +72,9 @@ Leakage judge (sessions with a `revealed` or `contradiction` stance):
 - Fail when `explicit` and `map_label(label)` equals the `trait.param` of a revealed or contradiction stance in the session: `leaks <param>: "<quote>"`.
 
 Forbidden judge (every session):
-- Instruction: here is a transcript and a numbered list of things the PM must not do; list every item the PM does, with a short quote. Return `{"violations": [{"index": int, "quote": string}]}`. The list is the session's `avoid_lines` (already rendered from `avoid.yaml` for the skeleton's forbidden sets by `context.py`), numbered from 1.
+- Instruction, framed as verification with the null result first (a judge asked to "list every item" over-reports on ordinary desk talk): here is a transcript and a numbered list of things the PM must not do; for each item decide whether a PM turn shows the PM doing it; most transcripts show none and the expected answer is an empty list; report an item only when a verbatim quote from a PM turn shows the PM doing it, not discussing the topic or taking one decision their rules allow. Return `{"violations": [{"index": int, "quote": string}]}`. The list is the session's `avoid_lines` (already rendered from `avoid.yaml` for the skeleton's forbidden sets by `context.py`), numbered from 1.
 - Fail when `violations` is non-empty and every index is in range: `forbidden: <avoid line>: "<quote>"` per item. Out-of-range indices are dropped with a warning; if nothing remains the layer passes.
+- Evidence check, both judges: a finding counts only when its `quote` appears verbatim (case and whitespace normalised) in a PM turn; otherwise it is dropped with a warning (`leak judge quote not in a PM turn`, `forbidden judge quote not in a PM turn`). The quote is evidence, not decoration, so a verdict invented from the topic cannot fail a session.
 
 ### Regeneration (`loop.py`)
 
