@@ -26,7 +26,7 @@ from pm_traitbench.dialogue.stage import (
     stage_client,
 )
 from pm_traitbench.enums import DriftStatus, Kind, RuleScope, SignalMode
-from pm_traitbench.errors import Gate2Error
+from pm_traitbench.errors import DialogueBudgetError, Gate2Error
 from pm_traitbench.gates.gate2.aggregate import (
     blocking_failures,
     build_cells,
@@ -245,6 +245,23 @@ def _run(
     n_recovery = len(recovery_units)
     recovery_results = results[:n_recovery]
     classify_results = results[n_recovery:]
+
+    # A budget error on either half must win over a failed unit on the other half,
+    # so check for one across the combined results before either per-half call below
+    # can raise a plain `Gate2Error` first.
+    combined_ids = tuple(
+        u.pm_id if isinstance(u, RecoveryUnit) else u.session_id for u in combined_units
+    )
+    budget_pairs = [
+        (unit_id, result)
+        for unit_id, result in zip(combined_ids, results, strict=True)
+        if isinstance(result, DialogueBudgetError)
+    ]
+    if budget_pairs:
+        ids, budget_results = zip(*budget_pairs, strict=True)
+        raise_on_failure(
+            tuple(ids), list(budget_results), client, error_type=Gate2Error, budget_label="gate2"
+        )
 
     raise_on_failure(
         tuple(u.pm_id for u in recovery_units),

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from pm_traitbench.catalogues.loader import load_catalogue
-from pm_traitbench.config import BIAS_PARAMS
+from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.enums import Gate2Slice, Gate2Verdict
 from pm_traitbench.errors import DialogueBudgetError, Gate2Error
 from pm_traitbench.gates.gate2.stage import make_stage
@@ -24,9 +24,23 @@ from pm_traitbench.tables.specs import (
     SESSIONS,
     SIGNALS,
 )
-from tests.dialogue.fixtures import FakeClient, raising_factory, run_engine_and_plan, with_section
+from pm_traitbench.tables.store import DataStore
+from tests.dialogue.fixtures import (
+    FakeClient,
+    fake_message,
+    raising_factory,
+    run_engine_and_plan,
+    with_section,
+)
 from tests.dialogue.validate.test_stage import _clean_validate_stage, faithful_dialogue_stage
-from tests.gates.gate2.fixtures import truthful_responder, wrong_responder
+from tests.engine.fixtures import stage_config
+from tests.gates.gate2.fixtures import (
+    PLANTED_PMS,
+    is_recovery_request,
+    truthful_responder,
+    write_planted_corpus,
+    wrong_responder,
+)
 
 
 def _run_validated_corpus(tmp_path: Path, fixture_market: dict, neutral_pm, monkeypatch):
@@ -96,6 +110,10 @@ def test_truthful_corpus_writes_four_tables_one_row_per_unit_and_passes_or_is_in
     assert metadata["pms"] == pms_with_sessions
     expected_sha256 = hashlib.sha256(store.path(SESSIONS).read_bytes()).hexdigest()
     assert metadata["sessions_sha256"] == expected_sha256
+    # This fixture corpus plants no active bias and holds no preference, so every
+    # blocking row comes back insufficient rather than failed outright.
+    if set(metadata["failed"]) <= set(metadata["insufficient"]):
+        assert metadata["insufficient"] == metadata["failed"]
 
 
 def test_wrong_responder_fails_blocking_rows_after_writing_tables(
@@ -200,3 +218,106 @@ def test_pm_with_all_sessions_dropped_is_listed_not_scored(
 
     assert all(r.pm_id != target_pm for r in store.read(GATE2_TRAITS))
     assert all(r.pm_id != target_pm for r in store.read(GATE2_PM))
+
+
+def _write_planted(tmp_path: Path) -> tuple[Config, DataStore]:
+    """A hand-seeded gate 2 corpus with a real active bias and a real held preference,
+    written straight into a fresh store, bypassing every upstream stage.
+    """
+    config = stage_config()
+    store = DataStore(tmp_path, config.output)
+    write_planted_corpus(store, config)
+    return config, store
+
+
+def _cell(cells, slice_, slice_value: str, param: str | None):
+    return next(
+        c for c in cells if c.slice == slice_ and c.slice_value == slice_value and c.param == param
+    )
+
+
+def test_planted_corpus_truthful_responder_passes_disposition_and_pooled_preferences(
+    tmp_path: Path,
+) -> None:
+    config, store = _write_planted(tmp_path)
+    gate2_stage = make_stage(lambda c: FakeClient(truthful_responder(store)))
+
+    with pytest.raises(Gate2Error, match="^gate 2 failed for:"):
+        run_stage(gate2_stage, config, store)
+
+    cells = store.read(GATE2_CELLS)
+    disposition = _cell(cells, Gate2Slice.ALL, "all", "disposition_ratio")
+    assert disposition.verdict == Gate2Verdict.PASS
+    assert disposition.p == pytest.approx(1 / 35)
+
+    pooled_preferences = _cell(cells, Gate2Slice.ALL, "all", None)
+    assert pooled_preferences.verdict == Gate2Verdict.PASS
+
+    other_bias_ids = sorted(f"all/{param}" for param in BIAS_PARAMS if param != "disposition_ratio")
+    metadata = store.read_run_metadata("gate2")
+    assert metadata is not None
+    assert metadata["insufficient"] == other_bias_ids
+    assert metadata["failed"] == other_bias_ids
+
+    signal_rows = store.read(GATE2_SIGNALS)
+    assert len(signal_rows) == len(PLANTED_PMS)
+    for row in signal_rows:
+        assert row.classified is True
+        assert row.kind_ok is True
+        assert row.cited is True
+        assert row.recovered is True
+
+    stated_mode = _cell(cells, Gate2Slice.MODE, "stated", None)
+    assert stated_mode.n == len(PLANTED_PMS)
+    assert stated_mode.n_positive == len(PLANTED_PMS)
+
+
+def test_planted_corpus_wrong_responder_fails_disposition_and_preferences(
+    tmp_path: Path,
+) -> None:
+    config, store = _write_planted(tmp_path)
+    gate2_stage = make_stage(lambda c: FakeClient(wrong_responder(store)))
+
+    with pytest.raises(Gate2Error, match="^gate 2 failed for:"):
+        run_stage(gate2_stage, config, store)
+
+    cells = store.read(GATE2_CELLS)
+    disposition = _cell(cells, Gate2Slice.ALL, "all", "disposition_ratio")
+    assert disposition.verdict == Gate2Verdict.FAIL
+
+    pooled_preferences = _cell(cells, Gate2Slice.ALL, "all", None)
+    assert pooled_preferences.verdict == Gate2Verdict.FAIL
+
+    metadata = store.read_run_metadata("gate2")
+    assert metadata is not None
+    assert "all/disposition_ratio" in metadata["failed"]
+    assert "all/preferences" in metadata["failed"]
+
+    signal_rows = store.read(GATE2_SIGNALS)
+    assert len(signal_rows) == len(PLANTED_PMS)
+    assert all(row.recovered is False for row in signal_rows)
+
+
+def test_budget_error_wins_over_a_failed_recovery_unit(tmp_path: Path) -> None:
+    """A recovery unit that fails after retries must not hide a budget error tripped on a
+    later classification unit: the budget error is what a resumed run needs to see.
+    """
+    config, store = _write_planted(tmp_path)
+    truthful = truthful_responder(store)
+
+    def responder(request: dict) -> dict:
+        if is_recovery_request(request) and "s_pm001_" in request["messages"][0]["content"]:
+            return fake_message([{"type": "text", "text": "not valid json"}])
+        return truthful(request)
+
+    # Ten recovery calls (four failed attempts on pm_001, one each on the other six PMs)
+    # spend exactly 1500 fake tokens; the budget then trips on the very first
+    # classification call, before a plain recovery failure ever gets raised.
+    config = with_section(config, "gate2", token_budget=1500)
+    gate2_stage = make_stage(lambda c: FakeClient(responder))
+
+    with pytest.raises(DialogueBudgetError, match="gate2"):
+        run_stage(gate2_stage, config, store)
+
+    for spec in GATE2_TABLES:
+        assert not store.exists(spec)

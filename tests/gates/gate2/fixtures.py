@@ -13,25 +13,32 @@ from datetime import date
 from typing import Any
 
 from pm_traitbench.catalogues.loader import load_catalogue
-from pm_traitbench.config import BIAS_PARAMS, DEFAULT_MODEL
+from pm_traitbench.config import BIAS_PARAMS, DEFAULT_MODEL, Config
 from pm_traitbench.dialogue.usage import ZERO_USAGE
 from pm_traitbench.enums import (
+    AssetClass,
     Kind,
     Ownership,
     SessionKind,
     SignalMode,
+    Split,
     StanceEntry,
     TurnRole,
+    Typicality,
     Valence,
 )
 from pm_traitbench.gates.gate2.recover import compute_truth
 from pm_traitbench.signals.assemble import session_id
 from pm_traitbench.tables.schema import (
     DialogueLog,
+    Mandate,
+    Persona,
+    Rule,
     Session,
     Signal,
     Skeleton,
     Stance,
+    StatedProfile,
     Trait,
     Turn,
     TurnLog,
@@ -39,14 +46,16 @@ from pm_traitbench.tables.schema import (
 from pm_traitbench.tables.specs import (
     DIALOGUE_LOGS,
     DRIFT_EVENTS,
+    LEDGER,
     PERSONAS,
+    RULES,
     SESSIONS,
     SIGNALS,
     SKELETONS,
     TRAITS,
 )
 from pm_traitbench.tables.store import DataStore
-from tests.dialogue.fixtures import default_responder, fake_message
+from tests.dialogue.fixtures import default_responder, fake_message, rule
 
 PM_A = "pm_001"
 PM_B = "pm_002"
@@ -344,3 +353,131 @@ def wrong_responder(store: DataStore) -> Callable[[dict], dict]:
         return fake_message([{"type": "text", "text": json.dumps(payload)}])
 
     return responder
+
+
+# A hand-seeded corpus with a real signal, planted straight into the store's tables so
+# the recovery and classification wiring is exercised without the engine, plan,
+# dialogue or validate stages.
+PLANTED_PMS: tuple[str, ...] = tuple(f"pm_{i:03d}" for i in range(1, 8))
+_DISPOSITION_PMS = frozenset({"pm_001", "pm_002", "pm_003"})
+_PLANTED_PREFERENCE_PARAM = "response_format"
+_PLANTED_PREFERENCE_TRAIT_ID = "t_09"
+_PLANTED_STANCE_TEXT = "say you want the answer as short bullets"
+
+
+def _planted_persona(pm_id: str) -> Persona:
+    """An equities PM persona, shaped like `tests.engine.fixtures.neutral_pm`."""
+    return Persona(
+        pm_id=pm_id,
+        market_seed="P",
+        split=Split.PILOT,
+        mandate=Mandate(
+            asset_class=AssetClass.EQUITIES,
+            sub_style="equity_long_short",
+            book_size=1e8,
+            risk_unit="pct_nav",
+            benchmark="cash",
+        ),
+        stated_profile=StatedProfile(self_description="I run a disciplined, rules-based book."),
+        typicality=Typicality.TYPICAL,
+    )
+
+
+def _planted_traits(pm_id: str, preference_value: str) -> list[Trait]:
+    """The PM's eight bias traits at their neutral medians, `disposition_ratio` active on the
+    first three PMs, plus the held `response_format` preference.
+    """
+    medians = Config().biases.params
+    traits = []
+    for i, param in enumerate(BIAS_PARAMS, start=1):
+        active = param == "disposition_ratio" and pm_id in _DISPOSITION_PMS
+        value = 1.5 if active else medians[param].neutral.median_value()
+        traits.append(trait(pm_id, f"t_{i:02d}", param, Kind.BIAS, value, active=active))
+    traits.append(
+        trait(
+            pm_id,
+            _PLANTED_PREFERENCE_TRAIT_ID,
+            _PLANTED_PREFERENCE_PARAM,
+            Kind.PREFERENCE,
+            preference_value,
+        )
+    )
+    return traits
+
+
+def _planted_pm_rows(
+    pm_id: str,
+) -> tuple[list[Session], list[DialogueLog], list[Skeleton], list[Signal]]:
+    """The PM's two sessions: the first states the preference, the second carries nothing."""
+    day_a, day_b = date(2026, 1, 5), date(2026, 1, 12)
+    session_a = session_of(pm_id, day_a, ["Say you want the answer as short bullets, every time."])
+    session_b = session_of(pm_id, day_b, ["Nothing new to flag this week."])
+
+    sig = signal(pm_id, session_a.session_id, day_a, _PLANTED_PREFERENCE_TRAIT_ID)
+    stance = Stance(
+        signal_id=sig.signal_id,
+        trait_id=_PLANTED_PREFERENCE_TRAIT_ID,
+        mode=SignalMode.STATED,
+        entry=StanceEntry.STATED,
+        stance=_PLANTED_STANCE_TEXT,
+    )
+
+    skeletons = [
+        skeleton_with_stances(session_a, (stance,)),
+        skeleton_with_stances(session_b, ()),
+    ]
+    logs = [
+        log_with_directives(session_a, [_PLANTED_STANCE_TEXT]),
+        log_with_directives(session_b, [None]),
+    ]
+    return [session_a, session_b], logs, skeletons, [sig]
+
+
+def write_planted_corpus(store: DataStore, config: Config) -> None:
+    """Write a hand-seeded corpus straight into `store`'s tables and run metadata, bypassing
+    the engine, plan, dialogue and validate stages.
+
+    Seven equities PMs (`pm_001`-`pm_007`), each with the eight neutral bias traits and
+    `disposition_ratio` active on the first three, plus the held `response_format`
+    preference. Each PM has two sessions: the first states the preference as a
+    classifiable signal, the second carries none.
+    """
+    catalogue = load_catalogue()
+    entries = catalogue.preferences_for(AssetClass.EQUITIES)
+    preference_value = next(e for e in entries if e.param == _PLANTED_PREFERENCE_PARAM).values[0]
+
+    personas: list[Persona] = []
+    traits: list[Trait] = []
+    rules: list[Rule] = []
+    sessions: list[Session] = []
+    logs: list[DialogueLog] = []
+    skeletons: list[Skeleton] = []
+    signals: list[Signal] = []
+
+    for pm_id in PLANTED_PMS:
+        personas.append(_planted_persona(pm_id))
+        traits.extend(_planted_traits(pm_id, preference_value))
+        rules.append(rule(pm_id=pm_id, rule_id="r_01"))
+
+        pm_sessions, pm_logs, pm_skeletons, pm_signals = _planted_pm_rows(pm_id)
+        sessions.extend(pm_sessions)
+        logs.extend(pm_logs)
+        skeletons.extend(pm_skeletons)
+        signals.extend(pm_signals)
+
+    store.write(PERSONAS, personas)
+    store.write(TRAITS, traits)
+    store.write(RULES, rules)
+    store.write(LEDGER, [])
+    store.write(DRIFT_EVENTS, [])
+    store.write(SESSIONS, sessions)
+    store.write(DIALOGUE_LOGS, logs)
+    store.write(SKELETONS, skeletons)
+    store.write(SIGNALS, signals)
+
+    store.write_run_metadata(
+        "dialogue",
+        config,
+        {"voices": {pm_id: "v_01" for pm_id in PLANTED_PMS}, "pms": list(PLANTED_PMS)},
+    )
+    store.write_run_metadata("validate", config, {"pms": list(PLANTED_PMS)})
