@@ -1,9 +1,8 @@
-"""Gate 2 recovery: the per-PM request, its reply parser, ground truth and the scorer that
-turns a parsed reply into trait and signal rows.
+"""Gate 2 recovery: the per-PM request, its reply parser, ground truth and scorer.
 
-The request never carries a trait id, a bias trait's numeric value, a stance line, a
-signal mode or which sessions carry a signal: only the bias vocabulary, the candidate
-preference params and their catalogue values, the mandate and the PM-scope rule texts.
+The request carries only the bias vocabulary, the candidate preference params with their
+catalogue values, the mandate and the PM-scope rule texts - never a trait id, value,
+stance line, signal mode or which sessions carry a signal.
 """
 
 from collections.abc import Collection, Mapping, Sequence
@@ -15,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pm_traitbench.catalogues.models import BiasDefinitions, PreferenceEntry
 from pm_traitbench.config import BIAS_PARAMS, Gate2Config
-from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_until_accepted
+from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_parsed
 from pm_traitbench.dialogue.prompts import base_request
 from pm_traitbench.enums import DriftEventType, Kind, Ownership, RuleScope, Valence
 from pm_traitbench.errors import Gate2Error
@@ -183,9 +182,8 @@ def parse_recovery(
 ) -> RecoveryReply | None:
     """A validated `RecoveryReply`, or `None` for anything schema-invalid or off-vocabulary.
 
-    Requires exactly one entry per bias param (no duplicates) and per `entries` param,
-    and every non-null preference value to match a catalogue value once normalised; the
-    returned reply carries the catalogue's own spelling of that value.
+    Exactly one entry per bias param and per `entries` param; a non-null preference value
+    must match a catalogue value once normalised, and is returned in the catalogue's spelling.
     """
     try:
         reply = RecoveryReply.model_validate(last_text_json(response))
@@ -222,36 +220,31 @@ async def send_recovery(
     pm_id: str,
     max_retries: int,
 ) -> tuple[RecoveryReply, int]:
-    """Send the recovery request, retrying an unparsable reply; raises `Gate2Error` at the cap."""
-
-    def classify(response: Mapping[str, Any]) -> tuple[RecoveryReply | None, str]:
-        reason = "the recovery reply was unparsable or schema-invalid"
-        return parse_recovery(response, entries), reason
-
-    _, parsed, rejected = await send_until_accepted(
+    """Send the recovery request through `send_parsed`; raises `Gate2Error` at the cap."""
+    return await send_parsed(
         client,
         request,
-        classify,
+        lambda response: parse_recovery(response, entries),
         scope=pm_id,
         max_retries=max_retries,
         error_type=Gate2Error,
         label="pm",
+        reason="the recovery reply was unparsable or schema-invalid",
     )
-    return parsed, rejected
 
 
 def _bias_truth_active(trait: Trait, drift_events: Sequence[DriftEvent], last_date: date) -> bool:
-    active = trait.active
-    own_events = sorted(
-        (e for e in drift_events if e.trait_id == trait.trait_id and e.date <= last_date),
-        key=lambda e: e.date,
-    )
-    for event in own_events:
-        if event.event == DriftEventType.DORMANT:
-            active = False
-        elif event.event == DriftEventType.REVIVE:
-            active = True
-    return active
+    """`trait.active`, or False when a dormant event on or before `last_date` has no later
+    revive on or before it; a revive never activates a trait that started inactive.
+    """
+    own = [e for e in drift_events if e.trait_id == trait.trait_id and e.date <= last_date]
+    for dormant in own:
+        if dormant.event != DriftEventType.DORMANT:
+            continue
+        revived = any(e.event == DriftEventType.REVIVE and e.date > dormant.date for e in own)
+        if not revived:
+            return False
+    return trait.active
 
 
 def _preference_truth_value(
@@ -276,11 +269,9 @@ def compute_truth(
 ) -> dict[str, TraitTruth]:
     """The ground truth per candidate param: the eight biases, then `entries`' preferences.
 
-    Raises `Gate2Error` when `traits` does not hold all eight bias params. A bias's
-    truth stays whatever `active` was set to by the latest dormant-or-revive event on
-    or before `last_date`; an update never changes it. A preference's truth is the
-    trait's value, replaced by the latest update's `to` value on or before `last_date`;
-    `None` when the PM does not hold the param.
+    A bias is active as of `last_date` unless left dormant; a preference's value is the
+    latest update on or before `last_date`, else the trait's own, else `None` when not
+    held. Raises `Gate2Error` when `traits` lacks any of the eight bias params.
     """
     bias_by_param = {trait.param: trait for trait in traits if trait.kind == Kind.BIAS}
     missing = set(BIAS_PARAMS) - set(bias_by_param)
@@ -349,11 +340,10 @@ def trait_rows(
             correct = predicted_value == truth_row.truth_value
 
         cited_known = sorted({session_id for session_id in cited_raw if session_id in session_ids})
-        for session_id in cited_raw:
-            if session_id not in session_ids:
-                warnings.append(
-                    f"pm {pm_id}: recovery cited unknown session '{session_id}' for {param}"
-                )
+        for session_id in sorted(set(cited_raw) - set(session_ids)):
+            warnings.append(
+                f"pm {pm_id}: recovery cited unknown session '{session_id}' for {param}"
+            )
 
         param_trait_id = trait_id_by_param.get(param)
         false_attribution = sorted(

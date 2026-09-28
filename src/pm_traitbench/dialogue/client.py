@@ -286,3 +286,30 @@ async def send_until_accepted[T](
         refresh = refresh or reply.cached
         rejected += 1
     raise error_type(f"{scope_prefix(label, scope)}{reason}")
+
+
+async def send_parsed[T](
+    client: CachedClient,
+    request: Mapping[str, Any],
+    parse: Callable[[Mapping[str, Any]], T | None],
+    *,
+    scope: str,
+    max_retries: int,
+    error_type: type[PmTraitbenchError],
+    label: str = "session",
+    reason: str,
+) -> tuple[T, int]:
+    """Send `request` until `parse` accepts a reply; that reply with the rejected count.
+
+    A thin `send_until_accepted` whose every rejection carries the one `reason`.
+    """
+    _, parsed, rejected = await send_until_accepted(
+        client,
+        request,
+        lambda response: (parse(response), reason),
+        scope=scope,
+        max_retries=max_retries,
+        error_type=error_type,
+        label=label,
+    )
+    return parsed, rejected

@@ -200,6 +200,26 @@ def test_compute_truth_drift_rules() -> None:
         compute_truth(traits[:-2], drift_events, last_date, _ENTRIES)
 
 
+def test_compute_truth_revive_without_dormant_leaves_an_inactive_bias_inactive() -> None:
+    inactive = trait(PM_A, "t_01", BIAS_PARAMS[0], Kind.BIAS, 1.0, active=False)
+    others = [
+        trait(PM_A, f"t_{i:02d}", param, Kind.BIAS, 1.0)
+        for i, param in enumerate(BIAS_PARAMS[1:], start=2)
+    ]
+    revive = DriftEvent(
+        pm_id=PM_A,
+        date=date(2026, 2, 1),
+        event=DriftEventType.REVIVE,
+        trait_id=inactive.trait_id,
+        from_value=None,
+        to_value=None,
+    )
+
+    truth = compute_truth([inactive, *others], [revive], date(2026, 6, 1), ())
+
+    assert truth[BIAS_PARAMS[0]].truth_active is False
+
+
 def test_trait_rows_scores_and_verifies_citations() -> None:
     session_known = build_session_id(PM_A, date(2026, 1, 5), 0)
     session_unknown = build_session_id(PM_A, date(2026, 1, 6), 0)
