@@ -7,6 +7,7 @@ import numpy as np
 from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.config import Config
 from pm_traitbench.enums import (
+    REVEALING_MODES,
     CarrierSource,
     DriftEventType,
     Ownership,
@@ -214,7 +215,7 @@ def test_bias_entry_and_carrier_need() -> None:
     knobs = Config().plan
     signals = plan_quotas(inputs, {}, load_catalogue(), knobs, _rng(1))
     for s in _confirm(signals):
-        if s.mode in (SignalMode.REVEALED, SignalMode.CONTRADICTION):
+        if s.mode in REVEALING_MODES:
             assert s.entry == StanceEntry.REVEALED
             assert s.needs_carrier is True
         else:

@@ -271,6 +271,10 @@ class SignalMode(StrEnum):
     CONTRADICTION = "contradiction"
 
 
+# The modes in which a trait shows through behaviour rather than being stated
+REVEALING_MODES: frozenset[SignalMode] = frozenset({SignalMode.REVEALED, SignalMode.CONTRADICTION})
+
+
 class Valence(StrEnum):
     CONFIRM = "confirm"
     RETRACTED = "retracted"

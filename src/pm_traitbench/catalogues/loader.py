@@ -408,16 +408,24 @@ def _check_sub_styles(catalogue: Catalogue, asset_classes: Sequence[AssetClass])
             )
 
 
-def _check_self_descriptions(catalogue: Catalogue) -> None:
-    actual = set(catalogue.self_descriptions)
-    expected = set(BIAS_PARAMS)
+def _check_key_set(context: str, actual: set[str], expected: set[str], what: str) -> None:
+    """Raise unless `actual` equals `expected`, naming the missing and extra keys.
+
+    `context` is the message lead up to "must equal", e.g. "avoid: biases keys".
+    """
     if actual != expected:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
-        raise CatalogueError(
-            f"self_descriptions: keys must equal the bias parameter set; "
-            f"missing {missing}, extra {extra}"
-        )
+        raise CatalogueError(f"{context} must equal {what}; missing {missing}, extra {extra}")
+
+
+def _check_self_descriptions(catalogue: Catalogue) -> None:
+    _check_key_set(
+        "self_descriptions: keys",
+        set(catalogue.self_descriptions),
+        set(BIAS_PARAMS),
+        "the bias parameter set",
+    )
     for param, phrasings in catalogue.self_descriptions.items():
         if len(phrasings.agree) < 2:
             raise CatalogueError(
@@ -509,24 +517,15 @@ def check_stances(catalogue: Catalogue) -> None:
     hides trait labels from the text a narrator turns into PM dialogue.
     """
     stances = catalogue.stances
-    actual_bias_keys = set(stances.biases)
-    expected_bias_keys = set(BIAS_PARAMS)
-    if actual_bias_keys != expected_bias_keys:
-        missing = sorted(expected_bias_keys - actual_bias_keys)
-        extra = sorted(actual_bias_keys - expected_bias_keys)
-        raise CatalogueError(
-            f"stances: biases keys must equal the bias parameter set; "
-            f"missing {missing}, extra {extra}"
-        )
-    actual_pref_keys = set(stances.preferences)
-    expected_pref_keys = set(PreferenceGroup)
-    if actual_pref_keys != expected_pref_keys:
-        missing = sorted(expected_pref_keys - actual_pref_keys)
-        extra = sorted(actual_pref_keys - expected_pref_keys)
-        raise CatalogueError(
-            f"stances: preferences keys must equal the preference group set; "
-            f"missing {missing}, extra {extra}"
-        )
+    _check_key_set(
+        "stances: biases keys", set(stances.biases), set(BIAS_PARAMS), "the bias parameter set"
+    )
+    _check_key_set(
+        "stances: preferences keys",
+        set(stances.preferences),
+        set(PreferenceGroup),
+        "the preference group set",
+    )
 
     for param, bank in stances.biases.items():
         for field_name in type(bank).model_fields:
@@ -539,14 +538,12 @@ def check_stances(catalogue: Catalogue) -> None:
             )
 
         expected_patterns = set(REVEALED_PATTERNS[param])
-        actual_patterns = set(bank.revealed)
-        if actual_patterns != expected_patterns:
-            missing = sorted(expected_patterns - actual_patterns)
-            extra = sorted(actual_patterns - expected_patterns)
-            raise CatalogueError(
-                f"stances: bias '{param}' entry 'revealed' pattern keys must equal "
-                f"{sorted(expected_patterns)}; missing {missing}, extra {extra}"
-            )
+        _check_key_set(
+            f"stances: bias '{param}' entry 'revealed' pattern keys",
+            set(bank.revealed),
+            expected_patterns,
+            str(sorted(expected_patterns)),
+        )
         revealed_slots = STANCE_SLOTS[(Kind.BIAS, StanceEntry.REVEALED)]
         for pattern, pattern_lines in bank.revealed.items():
             context = f"stances: bias '{param}' entry 'revealed' pattern '{pattern}'"
@@ -576,6 +573,12 @@ def check_stances(catalogue: Catalogue) -> None:
             )
 
 
+def _param_forms(param: str) -> tuple[str, str]:
+    """A param's lower-cased raw spelling and its underscore-replaced phrase."""
+    raw = param.lower()
+    return raw, raw.replace("_", " ")
+
+
 def matched_params(text: str, params: Iterable[str]) -> tuple[str, ...]:
     """Every param named in text, whole-word and case-insensitive, in `params` order.
 
@@ -587,10 +590,7 @@ def matched_params(text: str, params: Iterable[str]) -> tuple[str, ...]:
     return tuple(
         param
         for param in params
-        if any(
-            re.search(rf"\b{re.escape(form)}\b", lowered)
-            for form in (param.lower(), param.lower().replace("_", " "))
-        )
+        if any(re.search(rf"\b{re.escape(form)}\b", lowered) for form in _param_forms(param))
     )
 
 
@@ -632,24 +632,18 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
                 f"voices: voice '{voice.voice_id}' line names param '{matched[0]}'"
             )
 
-    actual_bias_keys = set(catalogue.avoid.biases)
-    expected_bias_keys = set(BIAS_PARAMS)
-    if actual_bias_keys != expected_bias_keys:
-        missing = sorted(expected_bias_keys - actual_bias_keys)
-        extra = sorted(actual_bias_keys - expected_bias_keys)
-        raise CatalogueError(
-            f"avoid: biases keys must equal the bias parameter set; "
-            f"missing {missing}, extra {extra}"
-        )
-    actual_pref_keys = set(catalogue.avoid.preferences)
-    expected_pref_keys = {entry.param for entry in catalogue.preferences}
-    if actual_pref_keys != expected_pref_keys:
-        missing = sorted(expected_pref_keys - actual_pref_keys)
-        extra = sorted(actual_pref_keys - expected_pref_keys)
-        raise CatalogueError(
-            f"avoid: preferences keys must equal the catalogue's preference params; "
-            f"missing {missing}, extra {extra}"
-        )
+    _check_key_set(
+        "avoid: biases keys",
+        set(catalogue.avoid.biases),
+        set(BIAS_PARAMS),
+        "the bias parameter set",
+    )
+    _check_key_set(
+        "avoid: preferences keys",
+        set(catalogue.avoid.preferences),
+        {entry.param for entry in catalogue.preferences},
+        "the catalogue's preference params",
+    )
     for param, line in {**catalogue.avoid.biases, **catalogue.avoid.preferences}.items():
         if not line.strip():
             raise CatalogueError(f"avoid: param '{param}' has an empty line")
@@ -664,17 +658,11 @@ def check_validate_catalogue(catalogue: Catalogue) -> None:
     name is that bias's plain-English name and is expected.
     """
     labels = catalogue.bias_labels.labels
-    actual = set(labels)
-    expected = set(BIAS_PARAMS)
-    if actual != expected:
-        missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
-        raise CatalogueError(
-            f"bias_labels: keys must equal the bias parameter set; missing {missing}, extra {extra}"
-        )
+    _check_key_set("bias_labels: keys", set(labels), set(BIAS_PARAMS), "the bias parameter set")
 
-    raw_forms = {param.lower() for param in expected}
-    spaced_forms = {param: param.lower().replace("_", " ") for param in expected}
+    forms = {param: _param_forms(param) for param in BIAS_PARAMS}
+    raw_forms = {raw for raw, _ in forms.values()}
+    spaced_forms = {param: spaced for param, (_, spaced) in forms.items()}
 
     seen: dict[str, str] = {}
     for param, phrases in labels.items():

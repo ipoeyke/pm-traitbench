@@ -22,10 +22,8 @@ from pm_traitbench.dialogue.validate.judge import (
     transcript_text,
 )
 from pm_traitbench.dialogue.validate.ledger import check_trades, count_level_warnings
-from pm_traitbench.enums import SignalMode, TurnRole, ValidationStatus
+from pm_traitbench.enums import REVEALING_MODES, TurnRole, ValidationStatus
 from pm_traitbench.tables.schema import DialogueLog, LedgerRow, Session, ValidationRow
-
-_REVEALING_MODES = (SignalMode.REVEALED, SignalMode.CONTRADICTION)
 
 
 @dataclass(frozen=True)
@@ -53,7 +51,7 @@ class LayerResult:
 def revealed_params(ctx: SessionContext, trait_param_by_id: Mapping[str, str]) -> frozenset[str]:
     """Params of stances whose mode reveals a trait: `revealed` or `contradiction`."""
     return frozenset(
-        trait_param_by_id[s.trait_id] for s in ctx.skeleton.stances if s.mode in _REVEALING_MODES
+        trait_param_by_id[s.trait_id] for s in ctx.skeleton.stances if s.mode in REVEALING_MODES
     )
 
 
