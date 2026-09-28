@@ -25,7 +25,7 @@ from pm_traitbench.gates.gate2.aggregate import (
     insufficient_blocking,
     poisson_binomial_upper_p,
 )
-from pm_traitbench.tables.schema import Gate2PmRow, Gate2SignalRow, Gate2TraitRow
+from pm_traitbench.tables.schema import Gate2CellRow, Gate2PmRow, Gate2SignalRow, Gate2TraitRow
 
 BIAS_PARAM = BIAS_PARAMS[0]
 
@@ -114,7 +114,7 @@ def _pm_row(pm_id: str, asset_class: AssetClass = AssetClass.EQUITIES):
     )
 
 
-def _row(cells, slice_: Gate2Slice, slice_value: str, param: str | None) -> object:
+def _row(cells, slice_: Gate2Slice, slice_value: str, param: str | None) -> Gate2CellRow:
     matches = [
         c for c in cells if c.slice == slice_ and c.slice_value == slice_value and c.param == param
     ]
@@ -142,6 +142,11 @@ def test_poisson_binomial_matches_brute_force_on_six_pairs():
         assert poisson_binomial_upper_p(chances, hits) == pytest.approx(expected, abs=1e-12)
     assert poisson_binomial_upper_p(chances, 0) == pytest.approx(1.0, abs=1e-12)
     assert poisson_binomial_upper_p(chances, n + 1) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_poisson_binomial_clamps_hits_zero_to_one():
+    """Float accumulation over the recurrence can overshoot 1 at hits=0; must clamp."""
+    assert poisson_binomial_upper_p([1 / 3, 1 / 3], 0) <= 1.0
 
 
 def test_build_cells_bias_row_verdicts():
@@ -205,8 +210,9 @@ def test_build_cells_pooled_preference_row_and_per_param_rows():
     held = _row(cells, Gate2Slice.HELD, "all", "response_format")
     assert held.n == 4
     assert held.n_positive == 3
+    assert held.rate == pytest.approx(0.75)
     assert held.blocking is False
-    assert held.p is not None
+    assert held.p == pytest.approx(fisher_upper_p(2, 2, 2, 3))
 
     kind_pref = _row(cells, Gate2Slice.KIND, "preference", None)
     assert kind_pref.n == 4
@@ -266,6 +272,8 @@ def test_slice_rows_restrict_to_cell_pms_and_never_block():
         _bias_row("pm_003", True, True),
         _bias_row("pm_004", False, False),
         _bias_row("pm_005", False, True),
+        _pref_row("pm_001", "response_format", "short bullets", "short bullets"),
+        _pref_row("pm_004", "response_format", "short bullets", "a table with columns"),
     ]
     pm_rows = [
         _pm_row("pm_001", AssetClass.EQUITIES),
@@ -274,7 +282,7 @@ def test_slice_rows_restrict_to_cell_pms_and_never_block():
         _pm_row("pm_004", AssetClass.RATES_CREDIT),
         _pm_row("pm_005", AssetClass.RATES_CREDIT),
     ]
-    cells = build_cells(trait_rows, [], pm_rows, {}, config)
+    cells = build_cells(trait_rows, [], pm_rows, {"response_format": 2}, config)
 
     equities_row = _row(cells, Gate2Slice.ASSET_CLASS, AssetClass.EQUITIES.value, BIAS_PARAM)
     assert equities_row.n == 3
@@ -285,6 +293,16 @@ def test_slice_rows_restrict_to_cell_pms_and_never_block():
     assert rates_row.n == 2
     assert rates_row.n_positive == 1
     assert rates_row.blocking is False
+
+    equities_pref = _row(cells, Gate2Slice.ASSET_CLASS, AssetClass.EQUITIES.value, None)
+    assert equities_pref.n == 1
+    assert equities_pref.n_positive == 1
+    assert equities_pref.blocking is False
+
+    rates_pref = _row(cells, Gate2Slice.ASSET_CLASS, AssetClass.RATES_CREDIT.value, None)
+    assert rates_pref.n == 1
+    assert rates_pref.n_positive == 0
+    assert rates_pref.blocking is False
 
     for cell in cells:
         if cell.slice != Gate2Slice.ALL:
@@ -308,3 +326,15 @@ def test_blocking_ids():
     assert insufficient == sorted(insufficient)
     assert f"all/{BIAS_PARAM}" in insufficient
     assert f"all/{BIAS_PARAM}" in failures
+
+
+def test_build_cells_pooled_preference_all_wrong_gives_fail_with_p_one():
+    """Zero correct pairs must not crash the row validator via an overshot p."""
+    config = Gate2Config()
+    k_by_param = {"response_format": 3}
+    rows = [_pref_row(f"pm_{i:03d}", "response_format", "a", "b") for i in range(5)]
+    cells = build_cells(rows, [], [], k_by_param, config)
+    pooled = _row(cells, Gate2Slice.ALL, "all", None)
+    assert pooled.n_positive == 0
+    assert pooled.p == 1.0
+    assert pooled.verdict == Gate2Verdict.FAIL

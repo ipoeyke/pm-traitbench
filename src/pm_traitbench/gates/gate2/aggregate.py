@@ -28,11 +28,15 @@ def poisson_binomial_upper_p(chances: Sequence[float], hits: int) -> float:
     for p in chances:
         dist[1:] = dist[1:] * (1 - p) + dist[:-1] * p
         dist[0] *= 1 - p
-    return float(dist[hits:].sum())
+    # Float accumulation can push the hits=0 tail a hair past 1; clamp to a valid probability.
+    return min(1.0, max(0.0, float(dist[hits:].sum())))
 
 
 def blocking_id(row: Gate2CellRow) -> str:
-    """`all/{param}` for a bias row, `all/preferences` for the null-param pooled row."""
+    """`all/{param}` for a bias row, `all/preferences` for the null-param pooled row.
+
+    Only meaningful for `all`-slice rows; the caller is expected to filter to those.
+    """
     if row.param is None:
         return POOLED_PREFERENCES_ID
     return f"{row.slice_value}/{row.param}"
