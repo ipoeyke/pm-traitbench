@@ -13,6 +13,8 @@ _TOKEN_SPLIT = re.compile(r"[^a-z]+")
 
 def ngrams(text: str, n: int) -> frozenset[tuple[str, ...]]:
     """The set of consecutive `n`-token windows in `text`; empty when fewer than `n` tokens."""
+    if n < 1:
+        raise ValueError(f"n must be at least 1, got {n}")
     tokens = [token for token in _TOKEN_SPLIT.split(text.lower()) if token]
     return frozenset(tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1))
 

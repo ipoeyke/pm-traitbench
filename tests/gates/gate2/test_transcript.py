@@ -37,8 +37,8 @@ def test_render_pm_orders_by_date_then_id_and_separates_with_blank_line() -> Non
     assert rendered == expected
 
 
-def test_pm_turn_text_keeps_only_pm_turns() -> None:
-    session1 = session_of(PM_A, date(2026, 1, 5), ["pm one", "pm two"], ["adv one", "adv two"])
-    session2 = session_of(PM_A, date(2026, 1, 6), ["pm three"], letter=1)
+def test_pm_turn_text_keeps_only_pm_turns_and_sorts_by_date_then_id() -> None:
+    earlier = session_of(PM_A, date(2026, 1, 5), ["pm one", "pm two"], ["adv one", "adv two"])
+    later = session_of(PM_A, date(2026, 1, 6), ["pm three"])
 
-    assert pm_turn_text([session1, session2]) == "pm one\npm two\npm three"
+    assert pm_turn_text([later, earlier]) == "pm one\npm two\npm three"

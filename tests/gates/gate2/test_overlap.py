@@ -1,5 +1,7 @@
 """Tests for gate 2's cross-PM word n-gram containment."""
 
+import pytest
+
 from pm_traitbench.gates.gate2.overlap import containment_by_pm, ngrams, summarise
 
 
@@ -9,6 +11,11 @@ def test_ngrams_lowercases_and_splits_on_non_letters() -> None:
 
 def test_ngrams_empty_below_n() -> None:
     assert ngrams("ab cd", 5) == frozenset()
+
+
+def test_ngrams_rejects_n_below_one() -> None:
+    with pytest.raises(ValueError, match="n must be at least 1"):
+        ngrams("aa bb", 0)
 
 
 def test_identical_pms_give_one_and_disjoint_give_zero() -> None:
@@ -31,6 +38,16 @@ def test_containment_is_against_the_nearest_pm_not_the_union() -> None:
 
 def test_single_pm_gives_zero() -> None:
     assert containment_by_pm({"pm_001": "aa bb cc"}, 2) == {"pm_001": 0.0}
+
+
+def test_keys_come_out_sorted_regardless_of_input_order() -> None:
+    texts = {"pm_c": "aa bb cc", "pm_a": "aa bb cc", "pm_b": "aa bb cc"}
+    assert list(containment_by_pm(texts, 2)) == ["pm_a", "pm_b", "pm_c"]
+
+
+def test_empty_own_text_gives_zero_even_with_other_pms() -> None:
+    texts = {"pm_001": "", "pm_002": "aa bb cc"}
+    assert containment_by_pm(texts, 2) == {"pm_001": 0.0, "pm_002": 0.0}
 
 
 def test_summarise_median_p90_max_and_empty() -> None:
