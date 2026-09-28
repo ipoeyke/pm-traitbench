@@ -20,7 +20,7 @@ from typing import Any, Protocol
 
 import anthropic
 
-from pm_traitbench.errors import DialogueBudgetError, DialogueError
+from pm_traitbench.errors import DialogueBudgetError, DialogueError, PmTraitbenchError
 
 _NO_CREDENTIALS_MESSAGE = "no Anthropic credentials: run `ant auth login` or set ANTHROPIC_API_KEY"
 
@@ -80,6 +80,16 @@ class UsageTotals:
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
+
+    def as_metadata(self) -> dict[str, int]:
+        """The five counters keyed by field name, for a stage's run metadata."""
+        return {
+            "calls": self.calls,
+            "cache_hits": self.cache_hits,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+        }
 
 
 class CachedClient:
@@ -233,3 +243,34 @@ class AnthropicClient:
         """Close the SDK client's HTTP connections, if one was ever built."""
         if self._client is not None:
             await self._client.close()
+
+
+async def send_until_accepted[T](
+    client: CachedClient,
+    request: Mapping[str, Any],
+    classify: Callable[[Mapping[str, Any]], tuple[T | None, str]],
+    *,
+    scope: str,
+    max_retries: int,
+    error_type: type[PmTraitbenchError],
+) -> tuple[Reply, T, int]:
+    """Send `request`, retrying a reply `classify` rejects up to `max_retries` times.
+
+    A rejected reply that came from the cache makes every later attempt bypass
+    the cache too, so an entry that no longer validates is never replayed forever
+    and a run does not alternate between it and a fresh call. An accepted reply is
+    committed before it is returned with the rejected count; at the cap, raises
+    `error_type` with the last rejection's reason.
+    """
+    refresh = False
+    rejected = 0
+    reason = ""
+    for _ in range(1 + max_retries):
+        reply = await client.send(request, scope=scope, refresh=refresh)
+        accepted, reason = classify(reply.response)
+        if accepted is not None:
+            client.commit(reply)
+            return reply, accepted, rejected
+        refresh = refresh or reply.cached
+        rejected += 1
+    raise error_type(f"session {scope}: {reason}")

@@ -56,9 +56,6 @@ def test_leak_request_carries_only_transcript_and_allowed_keys():
     request = leak_request(log, _CONFIG)
 
     assert set(request.keys()) == {"model", "max_tokens", "system", "messages", "output_config"}
-    assert "tools" not in request
-    assert "cache_control" not in request
-    assert "thinking" not in request
     assert request["messages"] == [{"role": "user", "content": transcript_text(log)}]
     assert request["model"] == _CONFIG.judge_model
     assert request["max_tokens"] == _CONFIG.max_output_tokens
@@ -150,35 +147,41 @@ def test_map_label_uses_catalogue_phrases_case_insensitively():
     assert map_label("loss aversion and disposition too", labels) == "loss_aversion_lambda"
 
 
+_REQUEST = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
+_UNPARSABLE = fake_message([{"type": "text", "text": "not json"}])
+_VERDICT = LeakVerdict(explicit=True, label="loss aversion", quote="I always average down")
+
+
 def _cached_client(responder, tmp_path):
     fake = FakeClient(responder)
     return fake, CachedClient(lambda: fake, tmp_path, token_budget=None)
 
 
-def test_send_judged_retries_then_commits(tmp_path):
-    request = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
-    calls = {"n": 0}
+def _unparsable_then_valid(tmp_path):
+    """A client whose first reply is unparsable and every later one a valid leak verdict."""
 
-    def responder(req):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return fake_message([{"type": "text", "text": "not json"}])
-        return leak_reply(True, "loss aversion", "I always average down")
+    def responder(_request):
+        if len(fake.requests) == 1:
+            return _UNPARSABLE
+        return leak_reply(_VERDICT.explicit, _VERDICT.label, _VERDICT.quote)
 
     fake, client = _cached_client(responder, tmp_path)
+    return fake, client
+
+
+def test_send_judged_retries_then_commits(tmp_path):
+    fake, client = _unparsable_then_valid(tmp_path)
 
     parsed, rejected = asyncio.run(
-        send_judged(client, request, parse_leak, "s_test", max_retries=2)
+        send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2)
     )
 
     assert rejected == 1
-    assert parsed == LeakVerdict(
-        explicit=True, label="loss aversion", quote="I always average down"
-    )
-    assert calls["n"] == 2
+    assert parsed == _VERDICT
+    assert len(fake.requests) == 2
 
     parsed_again, rejected_again = asyncio.run(
-        send_judged(client, request, parse_leak, "s_test", max_retries=2)
+        send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2)
     )
     assert rejected_again == 0
     assert parsed_again == parsed
@@ -186,17 +189,12 @@ def test_send_judged_retries_then_commits(tmp_path):
 
 
 def test_send_judged_raises_validate_error_at_the_cap(tmp_path):
-    request = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
-
-    def responder(req):
-        return fake_message([{"type": "text", "text": "not json"}])
-
-    fake, client = _cached_client(responder, tmp_path)
+    fake, client = _cached_client(lambda _request: _UNPARSABLE, tmp_path)
 
     with pytest.raises(
         ValidateError, match=r"session s_test: the judge reply was unparsable or schema-invalid"
     ):
-        asyncio.run(send_judged(client, request, parse_leak, "s_test", max_retries=1))
+        asyncio.run(send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=1))
 
     assert len(fake.requests) == 2  # 1 + max_retries
 
@@ -205,28 +203,17 @@ def test_send_judged_bypasses_a_cached_reply_that_fails_the_real_parser(tmp_path
     """A reply already committed to the cache under a permissive parser must not be replayed
     forever once a stricter parser rejects it: the retry must fetch a fresh reply instead.
     """
-    request = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
-    calls = {"n": 0}
-
-    def responder(req):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return fake_message([{"type": "text", "text": "not json"}])
-        return leak_reply(True, "loss aversion", "I always average down")
-
-    fake, client = _cached_client(responder, tmp_path)
+    fake, client = _unparsable_then_valid(tmp_path)
 
     # Prime the cache with an unparsable reply, via a parser that accepts anything.
-    asyncio.run(send_judged(client, request, lambda response: response, "s_test", max_retries=0))
+    asyncio.run(send_judged(client, _REQUEST, lambda response: response, "s_test", max_retries=0))
     assert len(fake.requests) == 1
 
     parsed, rejected = asyncio.run(
-        send_judged(client, request, parse_leak, "s_test", max_retries=1)
+        send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=1)
     )
 
     assert len(fake.requests) == 2  # the stale cache hit is bypassed by exactly one fresh call
     assert rejected == 1
-    assert parsed == LeakVerdict(
-        explicit=True, label="loss aversion", quote="I always average down"
-    )
+    assert parsed == _VERDICT
     assert client.totals.cache_hits == 1

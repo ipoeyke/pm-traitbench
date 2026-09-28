@@ -7,12 +7,13 @@ stance line, signal mode or the PM's persona.
 """
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pm_traitbench.catalogues.models import BiasLabels
 from pm_traitbench.config import BIAS_PARAMS, ValidateConfig
-from pm_traitbench.dialogue.client import CachedClient, last_text_json
+from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_until_accepted
 from pm_traitbench.enums import TurnRole
 from pm_traitbench.errors import ValidateError
 from pm_traitbench.tables.schema import DialogueLog
@@ -72,95 +73,83 @@ def transcript_text(log: DialogueLog) -> str:
     return "\n\n".join(lines)
 
 
-def leak_request(log: DialogueLog, config: ValidateConfig) -> dict[str, Any]:
-    """The leakage judge's Messages API request body: only the allowed keys."""
-    return {
-        "model": config.judge_model,
-        "max_tokens": config.max_output_tokens,
-        "system": LEAK_SYSTEM,
-        "messages": [{"role": "user", "content": transcript_text(log)}],
-        "output_config": {
-            "effort": config.effort.value,
-            "format": {"type": "json_schema", "schema": LEAK_SCHEMA},
-        },
-    }
-
-
-def forbidden_request(
-    log: DialogueLog, avoid_lines: Sequence[str], config: ValidateConfig
+def _judge_request(
+    system: str, content: str, schema: Mapping[str, Any], config: ValidateConfig
 ) -> dict[str, Any]:
-    """The forbidden-trait judge's Messages API request body: only the allowed keys."""
-    numbered = "\n".join(f"{i}. {line}" for i, line in enumerate(avoid_lines, 1))
-    content = f"{transcript_text(log)}\n\nThe PM must not:\n{numbered}"
+    """A judge's Messages API request body: only the allowed keys."""
     return {
         "model": config.judge_model,
         "max_tokens": config.max_output_tokens,
-        "system": FORBIDDEN_SYSTEM,
+        "system": system,
         "messages": [{"role": "user", "content": content}],
         "output_config": {
             "effort": config.effort.value,
-            "format": {"type": "json_schema", "schema": FORBIDDEN_SCHEMA},
+            "format": {"type": "json_schema", "schema": schema},
         },
     }
 
 
-@dataclass(frozen=True)
-class LeakVerdict:
+def leak_request(
+    log: DialogueLog, config: ValidateConfig, transcript: str | None = None
+) -> dict[str, Any]:
+    """The leakage judge's request body; `transcript` reuses an already rendered `log`."""
+    content = transcript if transcript is not None else transcript_text(log)
+    return _judge_request(LEAK_SYSTEM, content, LEAK_SCHEMA, config)
+
+
+def forbidden_request(
+    log: DialogueLog,
+    avoid_lines: Sequence[str],
+    config: ValidateConfig,
+    transcript: str | None = None,
+) -> dict[str, Any]:
+    """The forbidden-trait judge's request body; `transcript` reuses an already rendered `log`."""
+    rendered = transcript if transcript is not None else transcript_text(log)
+    numbered = "\n".join(f"{i}. {line}" for i, line in enumerate(avoid_lines, 1))
+    content = f"{rendered}\n\nThe PM must not:\n{numbered}"
+    return _judge_request(FORBIDDEN_SYSTEM, content, FORBIDDEN_SCHEMA, config)
+
+
+class LeakVerdict(BaseModel):
     """One leakage judge verdict: whether the PM named a tendency, its label and quote."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
     explicit: bool
     label: str | None
     quote: str
 
 
-@dataclass(frozen=True)
-class Violation:
+class Violation(BaseModel):
     """One forbidden-trait violation: the avoid line's number and the quote that shows it."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
     index: int
     quote: str
 
 
+class _ForbiddenVerdict(BaseModel):
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
+
+    # Lax only here so the JSON array arrives as a tuple; each item stays strict.
+    violations: tuple[Violation, ...] = Field(strict=False)
+
+
 def parse_leak(response: Mapping[str, Any]) -> LeakVerdict | None:
     """The leak verdict from a judge reply's last text block, validated against `LEAK_SCHEMA`."""
-    payload = last_text_json(response)
-    if not isinstance(payload, dict):
-        return None
     try:
-        explicit = payload["explicit"]
-        label = payload["label"]
-        quote = payload["quote"]
-    except KeyError:
+        return LeakVerdict.model_validate(last_text_json(response))
+    except ValidationError:
         return None
-    if not isinstance(explicit, bool):
-        return None
-    if label is not None and not isinstance(label, str):
-        return None
-    if not isinstance(quote, str):
-        return None
-    return LeakVerdict(explicit=explicit, label=label, quote=quote)
 
 
 def parse_forbidden(response: Mapping[str, Any]) -> tuple[Violation, ...] | None:
     """The violations from a judge reply's last text block, validated against `FORBIDDEN_SCHEMA`."""
-    payload = last_text_json(response)
-    if not isinstance(payload, dict):
+    try:
+        return _ForbiddenVerdict.model_validate(last_text_json(response)).violations
+    except ValidationError:
         return None
-    raw_violations = payload.get("violations")
-    if not isinstance(raw_violations, list):
-        return None
-    violations: list[Violation] = []
-    for item in raw_violations:
-        if not isinstance(item, dict):
-            return None
-        index = item.get("index")
-        quote = item.get("quote")
-        if isinstance(index, bool) or not isinstance(index, int):
-            return None
-        if not isinstance(quote, str):
-            return None
-        violations.append(Violation(index=index, quote=quote))
-    return tuple(violations)
 
 
 def map_label(label: str | None, labels: BiasLabels) -> str | None:
@@ -183,20 +172,20 @@ async def send_judged[T](
     session_id: str,
     max_retries: int,
 ) -> tuple[T, int]:
-    """Send `request`, retrying an unparsable reply up to `max_retries` times.
+    """Send `request` through `send_until_accepted`, retrying an unparsable reply.
 
-    Mirrors `session._send_accepted`: a rejected reply that came from the
-    cache makes every later attempt bypass the cache, and an accepted reply
-    is committed before it is returned. Raises `ValidateError` at the cap.
+    Raises `ValidateError` once `max_retries` retries are spent.
     """
-    refresh = False
-    rejected = 0
-    for _ in range(1 + max_retries):
-        reply = await client.send(request, scope=session_id, refresh=refresh)
-        parsed = parse(reply.response)
-        if parsed is not None:
-            client.commit(reply)
-            return parsed, rejected
-        refresh = refresh or reply.cached
-        rejected += 1
-    raise ValidateError(f"session {session_id}: the judge reply was unparsable or schema-invalid")
+
+    def classify(response: Mapping[str, Any]) -> tuple[T | None, str]:
+        return parse(response), "the judge reply was unparsable or schema-invalid"
+
+    _, parsed, rejected = await send_until_accepted(
+        client,
+        request,
+        classify,
+        scope=session_id,
+        max_retries=max_retries,
+        error_type=ValidateError,
+    )
+    return parsed, rejected

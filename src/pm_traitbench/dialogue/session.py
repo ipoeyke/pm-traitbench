@@ -12,7 +12,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from pm_traitbench.config import DialogueConfig
-from pm_traitbench.dialogue.client import CachedClient, Reply, last_text_json
+from pm_traitbench.dialogue.client import (
+    CachedClient,
+    Reply,
+    last_text_json,
+    send_until_accepted,
+)
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.prompts import (
     NARRATOR_OPENING_MESSAGE,
@@ -126,24 +131,15 @@ async def _send_accepted(
     *,
     allow_tool_use: bool,
 ) -> tuple[Reply, _Accepted, int]:
-    """Send `request`, retrying a rejected reply up to `max_retries` times.
-
-    A rejected reply that came from the cache makes every later attempt
-    bypass the cache too, so a cache entry that no longer validates is never
-    replayed forever and a run does not alternate between it and a fresh
-    call. Returns the accepted reply alongside how many attempts it took.
-    """
-    refresh = False
-    rejected = 0
-    for _ in range(1 + config.max_retries):
-        reply = await client.send(request, scope=session_id, refresh=refresh)
-        accepted, reason = _classify(reply.response, allow_tool_use)
-        if accepted is not None:
-            client.commit(reply)
-            return reply, accepted, rejected
-        refresh = refresh or reply.cached
-        rejected += 1
-    raise DialogueError(f"session {session_id}: {reason}")
+    """Send `request` through `send_until_accepted`, classifying replies with `_classify`."""
+    return await send_until_accepted(
+        client,
+        request,
+        lambda response: _classify(response, allow_tool_use),
+        scope=session_id,
+        max_retries=config.max_retries,
+        error_type=DialogueError,
+    )
 
 
 def _usage_of(response: Mapping[str, Any]) -> CallUsage:
