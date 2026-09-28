@@ -22,7 +22,7 @@ from pm_traitbench.dialogue.validate.judge import (
     transcript_text,
 )
 from pm_traitbench.errors import ValidateError
-from tests.dialogue.conftest import FakeClient, fake_message
+from tests.dialogue.fixtures import FakeClient, fake_message
 from tests.dialogue.validate.conftest import (
     advisor_turn,
     forbidden_reply,

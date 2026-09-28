@@ -9,7 +9,7 @@ from pm_traitbench.dialogue.session import SessionResult
 from pm_traitbench.dialogue.validate.loop import feedback_text, run_session, validate_once
 from pm_traitbench.enums import Side, SignalMode, StanceEntry, TurnRole, ValidationStatus
 from pm_traitbench.tables.schema import Session, Turn
-from tests.dialogue.conftest import fake_message, turn_text
+from tests.dialogue.fixtures import fake_message, turn_text
 from tests.dialogue.validate.conftest import (
     advisor_turn,
     forbidden_reply,
@@ -22,7 +22,7 @@ from tests.dialogue.validate.conftest import (
     trade_mention,
     validate_context,
 )
-from tests.gates.conftest import DEFAULT_DATE, PM_ID
+from tests.gates.fixtures import DEFAULT_DATE, PM_ID
 
 _ADVISOR_PROMPT = "You are a market advisor for the PM's book."
 

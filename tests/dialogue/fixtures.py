@@ -20,9 +20,8 @@ from pm_traitbench.dialogue.turns import TurnPlan, plan_turns
 from pm_traitbench.enums import Action, Op, RuleScope, RuleSource, SessionKind
 from pm_traitbench.rng import stream
 from pm_traitbench.tables.schema import LedgerRow, Rule, Skeleton, Stance
-from tests.engine.conftest import fixture_market  # noqa: F401
-from tests.gates.conftest import PM_ID, idea_row
-from tests.signals.conftest import persona
+from tests.gates.fixtures import PM_ID, idea_row
+from tests.signals.fixtures import persona
 
 
 def fake_message(
@@ -129,8 +128,8 @@ def session_context(
     """A small, internally consistent `SessionContext` for one PM's session.
 
     Every field but `kind`, `stances`, `advisor_violation`, `day_trades` and
-    `turn_plan` is a fixed default built from `tests.signals.conftest.persona`
-    and `tests.gates.conftest.idea_row`. A silence session drops its stances,
+    `turn_plan` is a fixed default built from `tests.signals.fixtures.persona`
+    and `tests.gates.fixtures.idea_row`. A silence session drops its stances,
     trade and violation overrides, since a silence skeleton forbids them.
     """
     pm = persona()

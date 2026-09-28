@@ -16,7 +16,7 @@ from pm_traitbench.signals.carriers import (
     carrier_pools,
 )
 from pm_traitbench.tables.schema import Leg
-from tests.signals.conftest import (
+from tests.signals.fixtures import (
     bias_trait,
     drift_event,
     idea_row,

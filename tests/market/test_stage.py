@@ -18,7 +18,6 @@ from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.schema import Instrument
 from pm_traitbench.tables.specs import MARKET_INSTRUMENTS, MARKET_PRICES, MARKET_TABLES
 from pm_traitbench.tables.store import DataStore
-from tests.market.real.conftest import fake_cache  # noqa: F401
 
 _DEMO_CONFIG = Path(__file__).resolve().parents[2] / "configs" / "demo.yaml"
 

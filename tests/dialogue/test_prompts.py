@@ -35,9 +35,9 @@ from pm_traitbench.enums import (
 )
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import Idea, Leg, Side, Skeleton, Stance
-from tests.dialogue.conftest import fake_message, rule, session_context, turn_text
-from tests.gates.conftest import DEFAULT_DATE, PM_ID, idea_row, ledger_row
-from tests.signals.conftest import bias_trait, persona, pref_trait
+from tests.dialogue.fixtures import fake_message, rule, session_context, turn_text
+from tests.gates.fixtures import DEFAULT_DATE, PM_ID, idea_row, ledger_row
+from tests.signals.fixtures import bias_trait, persona, pref_trait
 
 _CONFIG = Config()
 

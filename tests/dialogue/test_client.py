@@ -11,7 +11,7 @@ import pytest
 
 from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, request_key
 from pm_traitbench.errors import DialogueBudgetError, DialogueError
-from tests.dialogue.conftest import FakeClient, default_responder, fake_message, turn_text
+from tests.dialogue.fixtures import FakeClient, default_responder, fake_message, turn_text
 
 _API_URL = "https://api.anthropic.com/v1/messages"
 

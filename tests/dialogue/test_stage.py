@@ -17,14 +17,8 @@ from pm_traitbench.signals.stage import PLAN_STAGE
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.specs import DIALOGUE_LOGS, SESSIONS, SKELETONS
 from pm_traitbench.tables.store import DataStore
-from tests.dialogue.conftest import FakeClient, default_responder, fake_message
-from tests.engine.conftest import (  # noqa: F401
-    MULTI_ASSET_PM_ID,
-    fixture_market,
-    neutral_pm,
-    stage_config,
-    write_stage_inputs,
-)
+from tests.dialogue.fixtures import FakeClient, default_responder, fake_message
+from tests.engine.fixtures import MULTI_ASSET_PM_ID, stage_config, write_stage_inputs
 
 _TARGET_PM_ID = "pm_003"
 _MANY_SESSIONS_PM_ID = "pm_001"

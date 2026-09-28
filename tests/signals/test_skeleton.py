@@ -19,7 +19,7 @@ from pm_traitbench.signals.carriers import Carrier, carrier_pools
 from pm_traitbench.signals.quotas import DateWindow, PlannedSignal, plan_quotas
 from pm_traitbench.signals.skeleton import forbidden_sets, format_level, render_skeletons
 from pm_traitbench.tables.schema import Skeleton
-from tests.signals.conftest import (
+from tests.signals.fixtures import (
     TRADING_DAYS,
     bias_trait,
     drift_event,

@@ -21,7 +21,7 @@ from pm_traitbench.signals.assemble import Assembly, assemble, session_id
 from pm_traitbench.signals.carriers import Carrier, carrier_pools
 from pm_traitbench.signals.quotas import DateWindow, PlannedSignal, plan_quotas
 from pm_traitbench.tables.schema import _SESSION_ID_PATTERN, Signal
-from tests.signals.conftest import (
+from tests.signals.fixtures import (
     TRADING_DAYS,
     bias_trait,
     drift_event,

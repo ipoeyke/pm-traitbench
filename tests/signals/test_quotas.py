@@ -22,7 +22,7 @@ from pm_traitbench.signals.quotas import (
     plan_quotas,
     round_half_up,
 )
-from tests.signals.conftest import TRADING_DAYS, bias_trait, drift_event, plan_inputs, pref_trait
+from tests.signals.fixtures import TRADING_DAYS, bias_trait, drift_event, plan_inputs, pref_trait
 
 
 def _rng(seed: int = 0) -> np.random.Generator:

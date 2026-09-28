@@ -35,14 +35,7 @@ from pm_traitbench.tables.schema import (
     ToolCall,
     TurnLog,
 )
-from tests.dialogue.conftest import (  # noqa: F401
-    FakeClient,
-    default_responder,
-    fake_message,
-    fixture_market,
-    market_lookup,
-    session_context,
-)
+from tests.dialogue.fixtures import FakeClient, default_responder, fake_message, session_context
 
 _MODEL = "claude-opus-5-5"
 _REQUEST_HASH = "0" * 64

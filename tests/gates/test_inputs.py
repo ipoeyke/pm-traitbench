@@ -21,7 +21,7 @@ from pm_traitbench.enums import (
 from pm_traitbench.errors import Gate1Error
 from pm_traitbench.gates.gate1.inputs import build_inputs
 from pm_traitbench.tables.schema import DriftEvent, Leg, Mandate, Persona, StatedProfile, Trait
-from tests.gates.conftest import idea_row, ledger_row, position_day, rule_event
+from tests.gates.fixtures import idea_row, ledger_row, position_day, rule_event
 
 
 def _persona(

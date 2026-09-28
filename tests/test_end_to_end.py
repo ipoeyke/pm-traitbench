@@ -27,14 +27,13 @@ from pm_traitbench.tables.specs import (
     VALIDATION,
 )
 from pm_traitbench.tables.store import DataStore
-from tests.dialogue.conftest import FakeClient, default_responder
+from tests.dialogue.fixtures import FakeClient, default_responder
 from tests.dialogue.validate.conftest import (
     forbidden_reply,
     is_forbidden_request,
     is_leak_request,
     leak_reply,
 )
-from tests.market.real.conftest import fake_cache  # noqa: F401
 
 _DEMO_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "demo.yaml"
 _TABLES = (PERSONAS, TRAITS, RULES, DRIFT_EVENTS)

@@ -12,7 +12,7 @@ from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.schema import Rule
 from pm_traitbench.tables.specs import ENGINE_TABLES, IDEAS, RULES
 from pm_traitbench.tables.store import DataStore
-from tests.engine.conftest import MULTI_ASSET_PM_ID, NEUTRAL_PMS, stage_config, write_stage_inputs
+from tests.engine.fixtures import MULTI_ASSET_PM_ID, NEUTRAL_PMS, stage_config, write_stage_inputs
 
 
 def test_engine_stage_writes_four_tables_and_rules_gains_idea_rows(

@@ -12,7 +12,7 @@ from pm_traitbench.gates.gate1.stage import GATE1_STAGE
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.specs import GATE1_CELLS, GATE1_PM
 from pm_traitbench.tables.store import DataStore
-from tests.engine.conftest import MULTI_ASSET_PM_ID, NEUTRAL_PMS, stage_config, write_stage_inputs
+from tests.engine.fixtures import MULTI_ASSET_PM_ID, NEUTRAL_PMS, stage_config, write_stage_inputs
 
 # From NEUTRAL_PMS: one equities PM, two rates_credit PMs, two commodities PMs.
 _DIRECT_ASSET_CLASSES = (AssetClass.EQUITIES, AssetClass.RATES_CREDIT, AssetClass.COMMODITIES)

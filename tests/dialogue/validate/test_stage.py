@@ -33,7 +33,7 @@ from pm_traitbench.tables.specs import (
     VALIDATION,
 )
 from pm_traitbench.tables.store import DataStore
-from tests.dialogue.conftest import FakeClient, default_responder, fake_message, turn_text
+from tests.dialogue.fixtures import FakeClient, default_responder, fake_message, turn_text
 from tests.dialogue.validate.conftest import (
     advisor_turn,
     forbidden_reply,
@@ -44,12 +44,7 @@ from tests.dialogue.validate.conftest import (
     pm_turn,
     trade_mention,
 )
-from tests.engine.conftest import (  # noqa: F401
-    fixture_market,
-    neutral_pm,
-    stage_config,
-    write_stage_inputs,
-)
+from tests.engine.fixtures import stage_config, write_stage_inputs
 
 _CLEAN_TEXT = "all clear on the book"
 # A responder must never see this: it means `CachedClient.send` was called without
