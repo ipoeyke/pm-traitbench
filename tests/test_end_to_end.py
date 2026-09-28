@@ -12,11 +12,14 @@ from pm_traitbench.dialogue.stage import DIALOGUE_STAGE, make_stage
 from pm_traitbench.dialogue.validate.stage import VALIDATE_STAGE
 from pm_traitbench.dialogue.validate.stage import make_stage as make_validate_stage
 from pm_traitbench.enums import AssetClass
+from pm_traitbench.gates.gate2.stage import GATE2_STAGE
+from pm_traitbench.gates.gate2.stage import make_stage as make_gate2_stage
 from pm_traitbench.signals.stage import PLAN_STAGE
 from pm_traitbench.tables.specs import (
     DRIFT_EVENTS,
     ENGINE_TABLES,
     GATE1_TABLES,
+    GATE2_TABLES,
     IDEAS,
     MARKET_TABLES,
     PERSONAS,
@@ -34,6 +37,7 @@ from tests.dialogue.validate.fixtures import (
     is_leak_request,
     leak_reply,
 )
+from tests.gates.gate2.fixtures import truthful_responder
 
 _DEMO_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "demo.yaml"
 _TABLES = (PERSONAS, TRAITS, RULES, DRIFT_EVENTS)
@@ -294,7 +298,7 @@ def test_sample_market_engine_plan_then_dialogue_on_synthetic_seeds(tmp_path: Pa
     )
     dialogue_args = ["--config", str(dialogue_config_path), "--data-dir", str(data_dir)]
     fake_dialogue_stage = make_stage(lambda c: FakeClient(default_responder))
-    stages = (*pipeline.STAGES[:-2], fake_dialogue_stage)
+    stages = (*pipeline.STAGES[:-3], fake_dialogue_stage)
 
     assert main(["dialogue", *dialogue_args], stages=stages) == 0
 
@@ -343,7 +347,7 @@ def test_dialogue_then_validate_on_synthetic_seeds(tmp_path: Path) -> None:
     fake_validate_stage = make_validate_stage(lambda c: FakeClient(_judge_clean_responder))
     # `default_responder` gives every narrated turn no mentions, so every decision
     # session fails the ledger layer on every attempt and drops at the cap.
-    stages = (*pipeline.STAGES[:-2], fake_dialogue_stage, fake_validate_stage)
+    stages = (*pipeline.STAGES[:-3], fake_dialogue_stage, fake_validate_stage)
 
     assert main(["dialogue", *dialogue_args], stages=stages) == 0
     assert main(["validate", *dialogue_args], stages=stages) == 0
@@ -356,3 +360,46 @@ def test_parser_accepts_the_validate_subcommand() -> None:
     parser = build_parser(pipeline.STAGES)
     args = parser.parse_args(["validate", "--config", str(_DEMO_CONFIG)])
     assert args.command == VALIDATE_STAGE.name
+
+
+def test_validate_then_gate2_on_synthetic_seeds(tmp_path: Path) -> None:
+    config_path = tmp_path / "synthetic.yaml"
+    config_path.write_text(_SYNTHETIC_CONFIG, encoding="utf-8")
+    data_dir = tmp_path / "data"
+    args = ["--config", str(config_path), "--data-dir", str(data_dir)]
+
+    for stage in ("sample", "market", "engine", "plan"):
+        assert main([stage, *args]) == 0
+
+    store = DataStore(data_dir, load_config(config_path).output)
+    personas = store.read(PERSONAS)
+    asset_class_by_pm = {p.pm_id: p.mandate.asset_class for p in personas}
+    direct_asset_pm = sorted(
+        pm_id for pm_id, ac in asset_class_by_pm.items() if ac != AssetClass.MULTI_ASSET
+    )[0]
+
+    dialogue_config_path = tmp_path / "synthetic_dialogue.yaml"
+    dialogue_config_path.write_text(
+        _SYNTHETIC_CONFIG + f"dialogue:\n  pm_filter:\n    pm_ids: [{direct_asset_pm}]\n",
+        encoding="utf-8",
+    )
+    dialogue_args = ["--config", str(dialogue_config_path), "--data-dir", str(data_dir)]
+    fake_dialogue_stage = make_stage(lambda c: FakeClient(default_responder))
+    fake_validate_stage = make_validate_stage(lambda c: FakeClient(_judge_clean_responder))
+    fake_gate2_stage = make_gate2_stage(lambda c: FakeClient(truthful_responder(store)))
+    # `default_responder` gives every narrated turn no mentions, so every decision
+    # session fails the ledger layer on every attempt and drops at the cap.
+    stages = (*pipeline.STAGES[:-3], fake_dialogue_stage, fake_validate_stage, fake_gate2_stage)
+
+    assert main(["dialogue", *dialogue_args], stages=stages) == 0
+    assert main(["validate", *dialogue_args], stages=stages) == 0
+    assert main(["gate2", *dialogue_args], stages=stages) in (0, 1)
+
+    for spec in GATE2_TABLES:
+        assert (data_dir / f"{spec.name}.jsonl").exists()
+
+
+def test_parser_accepts_the_gate2_subcommand() -> None:
+    parser = build_parser(pipeline.STAGES)
+    args = parser.parse_args(["gate2", "--config", str(_DEMO_CONFIG)])
+    assert args.command == GATE2_STAGE.name

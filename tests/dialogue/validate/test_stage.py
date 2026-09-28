@@ -682,5 +682,5 @@ def test_regeneration_rate_counts_a_twice_regenerated_session_once() -> None:
 
 
 def test_pipeline_lists_validate_seventh() -> None:
-    assert pipeline.STAGES[-1].number == 7
-    assert pipeline.STAGES[-1].name == "validate"
+    assert pipeline.STAGES[-2].number == 7
+    assert pipeline.STAGES[-2].name == "validate"
