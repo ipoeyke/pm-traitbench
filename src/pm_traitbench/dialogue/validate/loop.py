@@ -143,15 +143,10 @@ async def validate_once(
     )
 
 
-def normalise(text: str) -> str:
-    """Case-fold `text` and collapse runs of whitespace, for verbatim-quote matching."""
-    return " ".join(text.split()).casefold()
-
-
 def is_direct_quote(quote: str, pm_text: str) -> bool:
-    """Whether a judge's quote appears verbatim (up to case and spacing) in the PM turns."""
-    needle = normalise(quote)
-    return bool(needle) and needle in normalise(pm_text)
+    """Whether a judge's quote appears verbatim in the PM turns, ignoring case and spacing."""
+    needle = " ".join(quote.split()).casefold()
+    return bool(needle) and needle in " ".join(pm_text.split()).casefold()
 
 
 def feedback_text(attempt: int, reasons: Sequence[str]) -> str:
