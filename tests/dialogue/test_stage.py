@@ -10,13 +10,14 @@ import pytest
 
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config, DialogueConfig, PmFilter
-from pm_traitbench.dialogue.client import Reply, request_key
-from pm_traitbench.dialogue.stage import make_stage
+from pm_traitbench.dialogue.client import CachedClient, Reply, request_key
+from pm_traitbench.dialogue.stage import make_stage, raise_on_failure
 from pm_traitbench.errors import DialogueBudgetError, DialogueError
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.specs import DIALOGUE_LOGS, SESSIONS, SKELETONS
 from pm_traitbench.tables.store import DataStore
 from tests.dialogue.fixtures import (
+    SESSION_ID,
     FakeClient,
     default_responder,
     fake_message,
@@ -389,3 +390,20 @@ def test_run_metadata_records_models_prompt_hash_voices_and_usage(
     assert metadata["output_tokens"] > 0
     assert sum(metadata["sessions"].values()) == len(store.read(SESSIONS))
     assert isinstance(metadata["warnings"], list)
+
+
+def test_raise_on_failure_groups_by_label_and_strips_the_prefix(tmp_path: Path) -> None:
+    client = CachedClient(lambda: FakeClient(default_responder), tmp_path, token_budget=None)
+    results = [DialogueError("pm pm_001: bad"), DialogueError("bad")]
+
+    with pytest.raises(DialogueError) as excinfo:
+        raise_on_failure(("pm_001", "pm_002"), results, client, label="pm")
+
+    assert str(excinfo.value) == "pms pm_001, pm_002: bad"
+
+
+def test_raise_on_failure_keeps_session_wording_by_default(tmp_path: Path) -> None:
+    client = CachedClient(lambda: FakeClient(default_responder), tmp_path, token_budget=None)
+
+    with pytest.raises(DialogueError, match=f"^session {SESSION_ID}: "):
+        raise_on_failure((SESSION_ID,), [DialogueError("boom")], client)

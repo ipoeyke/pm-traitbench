@@ -264,7 +264,7 @@ def _run(
         run_bounded(frozen_units, validate, client, config.validation.max_concurrency)
     )
     raise_on_failure(
-        tuple(unit.ctx for unit in frozen_units),
+        tuple(unit.ctx.skeleton.session_id for unit in frozen_units),
         outcomes,
         client,
         error_type=ValidateError,

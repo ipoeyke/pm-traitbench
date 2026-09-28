@@ -15,7 +15,7 @@ from typing import Any
 from pm_traitbench.catalogues.loader import check_dialogue_catalogue, load_catalogue
 from pm_traitbench.catalogues.models import Catalogue, Voice
 from pm_traitbench.config import Config
-from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, LlmClient, session_prefix
+from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, LlmClient, scope_prefix
 from pm_traitbench.dialogue.context import PmTables, SessionContext, build_contexts, select_pms
 from pm_traitbench.dialogue.prompts import prompt_sha256, read_advisor_prompt
 from pm_traitbench.dialogue.session import SessionResult, narrate_session
@@ -192,25 +192,27 @@ async def run_bounded[I, T](
         await client.aclose()
 
 
-def _reason_of(ctx: SessionContext, error: PmTraitbenchError) -> str:
-    """The failure reason for one session, stripped of a `session {id}: ` prefix if present.
+def _reason_of(unit_id: str, error: PmTraitbenchError, label: str) -> str:
+    """The failure reason for one unit, stripped of a `{label} {id}: ` prefix if present.
 
-    An error raised inside `narrate_session` already carries that prefix; one
-    raised by the inner client (a credential or 400 error) does not, so this
-    normalises both to a plain reason before regrouping by session.
+    An error raised inside the unit's own worker (e.g. `narrate_session`)
+    already carries that prefix; one raised by the inner client (a credential
+    or 400 error) does not, so this normalises both to a plain reason before
+    regrouping by unit.
     """
     message = str(error)
-    prefix = session_prefix(ctx.skeleton.session_id)
+    prefix = scope_prefix(label, unit_id)
     return message[len(prefix) :] if message.startswith(prefix) else message
 
 
 def raise_on_failure(
-    contexts: tuple[SessionContext, ...],
+    unit_ids: tuple[str, ...],
     results: list[Any],
     client: CachedClient,
     *,
     error_type: type[PmTraitbenchError] = DialogueError,
     budget_label: str = "dialogue",
+    label: str = "session",
 ) -> None:
     """Raise a budget error, else a combined error of `error_type`, else re-raise any other
     exception.
@@ -218,12 +220,13 @@ def raise_on_failure(
     A budget error takes priority since it means the whole run should stop
     spending; its message names `budget_label` so a validate run's budget
     error points at `validation.token_budget`, not the dialogue config.
-    Otherwise every failed session is named, in session order, with sessions
-    that failed for the identical reason collapsed onto one line, so a
-    rerun's cache can skip the sessions that already succeeded. Any
-    `PmTraitbenchError` result is grouped this way and raised as
-    `error_type`, so the validate stage's `ValidateError` results are
-    reported under validate's own error, not dialogue's.
+    Otherwise every failed unit is named, in `unit_ids` order, with units
+    that failed for the identical reason collapsed onto one line under
+    `label` (singular) or `label + "s"` (plural), so a rerun's cache can
+    skip the units that already succeeded. Any `PmTraitbenchError` result is
+    grouped this way and raised as `error_type`, so the validate stage's
+    `ValidateError` results are reported under validate's own error, not
+    dialogue's.
     """
     if any(isinstance(r, DialogueBudgetError) for r in results):
         totals = client.totals
@@ -233,13 +236,13 @@ def raise_on_failure(
         )
 
     ids_by_reason: dict[str, list[str]] = {}
-    for ctx, result in zip(contexts, results, strict=True):
+    for unit_id, result in zip(unit_ids, results, strict=True):
         if isinstance(result, PmTraitbenchError):
-            ids_by_reason.setdefault(_reason_of(ctx, result), []).append(ctx.skeleton.session_id)
+            ids_by_reason.setdefault(_reason_of(unit_id, result, label), []).append(unit_id)
     if ids_by_reason:
         lines = []
         for reason, ids in ids_by_reason.items():
-            who = f"session {ids[0]}" if len(ids) == 1 else f"sessions {', '.join(ids)}"
+            who = f"{label} {ids[0]}" if len(ids) == 1 else f"{label}s {', '.join(ids)}"
             lines.append(f"{who}: {reason}")
         raise error_type("\n".join(lines))
 
@@ -282,7 +285,7 @@ def _run(
     results = asyncio.run(
         run_bounded(frozen_contexts, narrate, client, config.dialogue.max_concurrency)
     )
-    raise_on_failure(frozen_contexts, results, client)
+    raise_on_failure(tuple(ctx.skeleton.session_id for ctx in frozen_contexts), results, client)
 
     session_results = collect_results(results, SessionResult, len(frozen_contexts), DialogueError)
 

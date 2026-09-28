@@ -9,7 +9,12 @@ import anthropic
 import httpx2
 import pytest
 
-from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, request_key
+from pm_traitbench.dialogue.client import (
+    AnthropicClient,
+    CachedClient,
+    request_key,
+    send_until_accepted,
+)
 from pm_traitbench.errors import DialogueBudgetError, DialogueError
 from tests.dialogue.fixtures import (
     SESSION_ID,
@@ -508,3 +513,23 @@ def test_cached_client_aclose_is_a_noop_when_the_inner_client_has_no_aclose(
     asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
 
     asyncio.run(cached.aclose())  # must not raise despite no aclose method
+
+
+def test_send_until_accepted_uses_the_label_in_its_error(tmp_path: Path) -> None:
+    def never_parses(_response):
+        return None, "the reply was refused"
+
+    cached = CachedClient(lambda: FakeClient(default_responder), tmp_path, token_budget=None)
+
+    with pytest.raises(DialogueError, match=r"^pm pm_001: the reply was refused$"):
+        asyncio.run(
+            send_until_accepted(
+                cached,
+                _REQUEST,
+                never_parses,
+                scope="pm_001",
+                max_retries=0,
+                error_type=DialogueError,
+                label="pm",
+            )
+        )
