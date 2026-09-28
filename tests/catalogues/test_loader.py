@@ -8,8 +8,11 @@ import pytest
 import yaml
 
 from pm_traitbench.catalogues.loader import (
+    banned_words_in,
     check_catalogue,
+    check_validate_catalogue,
     load_catalogue,
+    matched_params,
     render_signpost,
     render_template,
     render_thesis,
@@ -33,6 +36,7 @@ _CATALOGUE_FILES = (
     "stances.yaml",
     "voices.yaml",
     "avoid.yaml",
+    "bias_labels.yaml",
 )
 _ASSET_CLASSES = list(AssetClass)
 _N_PREFERENCES_MAX = 8
@@ -726,3 +730,96 @@ def test_missing_voices_file_raises(tmp_path: Path) -> None:
     (tmp_path / "voices.yaml").unlink()
     with pytest.raises(CatalogueError):
         load_catalogue(tmp_path)
+
+
+# --- check_validate_catalogue: bias label catalogue for the leakage judge ---
+
+
+def test_bias_labels_missing_a_param_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_labels.yaml"
+    data = _load_yaml(path)
+    del data["labels"]["exit_deficiency"]
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="missing.*exit_deficiency"):
+        check_validate_catalogue(catalogue)
+
+
+def test_bias_labels_empty_list_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_labels.yaml"
+    data = _load_yaml(path)
+    data["labels"]["exit_deficiency"] = []
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="exit_deficiency.*no phrases"):
+        check_validate_catalogue(catalogue)
+
+
+def test_bias_labels_duplicate_phrase_across_params_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_labels.yaml"
+    data = _load_yaml(path)
+    data["labels"]["anchoring_rho"].append("herding")
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="herding"):
+        check_validate_catalogue(catalogue)
+
+
+def test_bias_labels_param_string_as_phrase_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_labels.yaml"
+    data = _load_yaml(path)
+    data["labels"]["disposition_ratio"].append("disposition_ratio")
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="disposition_ratio"):
+        check_validate_catalogue(catalogue)
+
+    _copy_shipped(tmp_path)
+    data = _load_yaml(path)
+    data["labels"]["anchoring_rho"].append("disposition ratio")
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="disposition ratio"):
+        check_validate_catalogue(catalogue)
+
+
+def test_bias_labels_own_param_spaced_form_is_allowed(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_labels.yaml"
+    data = _load_yaml(path)
+    data["labels"]["anchoring_rho"].append("anchoring rho")
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    check_validate_catalogue(catalogue)
+
+
+def test_bias_labels_upper_case_phrase_raises(tmp_path: Path) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "bias_labels.yaml"
+    data = _load_yaml(path)
+    data["labels"]["anchoring_rho"][0] = "Anchoring"
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match="Anchoring"):
+        check_validate_catalogue(catalogue)
+
+
+def test_matched_params_is_whole_word_and_returns_every_match() -> None:
+    assert matched_params("my register is fine", ("register",)) == ("register",)
+    assert matched_params("registered", ("register",)) == ()
+    assert matched_params("loss aversion lambda", ("loss_aversion_lambda",)) == (
+        "loss_aversion_lambda",
+    )
+    assert matched_params("Pushback_Style and REGISTER", ("register", "pushback_style")) == (
+        "register",
+        "pushback_style",
+    )
+
+
+def test_banned_words_in_is_a_case_insensitive_substring_scan() -> None:
+    assert banned_words_in("Loss Aversion and herding") == ("loss aversion", "herd")
+    assert banned_words_in("a plain line") == ()

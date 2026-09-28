@@ -16,7 +16,7 @@ from pm_traitbench.dialogue.session import narrate_session
 from pm_traitbench.dialogue.turns import Opening, PmDirective, TurnPlan
 from pm_traitbench.enums import SessionKind, SignalMode, StanceEntry, TurnRole
 from pm_traitbench.tables.schema import Stance
-from tests.dialogue.conftest import session_context
+from tests.dialogue.fixtures import session_context
 
 
 @pytest.mark.network

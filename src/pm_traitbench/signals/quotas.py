@@ -16,7 +16,15 @@ import numpy as np
 
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import PlanConfig
-from pm_traitbench.enums import DriftEventType, Kind, Ownership, SignalMode, StanceEntry, Valence
+from pm_traitbench.enums import (
+    REVEALING_MODES,
+    DriftEventType,
+    Kind,
+    Ownership,
+    SignalMode,
+    StanceEntry,
+    Valence,
+)
 from pm_traitbench.signals.carriers import Carrier
 from pm_traitbench.signals.inputs import PlanInputs
 from pm_traitbench.tables.schema import Trait
@@ -198,7 +206,7 @@ def _mode_sequence(
 
 
 def _bias_entry(mode: SignalMode) -> tuple[StanceEntry, bool]:
-    if mode in (SignalMode.REVEALED, SignalMode.CONTRADICTION):
+    if mode in REVEALING_MODES:
         return StanceEntry.REVEALED, True
     return StanceEntry.STATED, False
 

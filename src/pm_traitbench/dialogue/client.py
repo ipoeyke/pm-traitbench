@@ -20,15 +20,42 @@ from typing import Any, Protocol
 
 import anthropic
 
-from pm_traitbench.errors import DialogueBudgetError, DialogueError
+from pm_traitbench.dialogue.usage import usage_of
+from pm_traitbench.errors import DialogueBudgetError, DialogueError, PmTraitbenchError
 
 _NO_CREDENTIALS_MESSAGE = "no Anthropic credentials: run `ant auth login` or set ANTHROPIC_API_KEY"
+
+
+def session_prefix(session_id: str) -> str:
+    """The `session {id}: ` lead of every per-session error and warning."""
+    return f"session {session_id}: "
 
 
 class LlmClient(Protocol):
     """A backend that sends one Messages API request and returns its response."""
 
     async def send(self, request: Mapping[str, Any]) -> dict[str, Any]: ...
+
+
+def last_text_json(response: Mapping[str, Any]) -> Any | None:
+    """The last text block's content parsed as JSON, or `None`.
+
+    `None` when `stop_reason` is not `end_turn`, there is no text block, or
+    the text is not valid JSON. Shared by every reply parser in the dialogue
+    and validate stages so the content-block walk lives in one place.
+    """
+    if response.get("stop_reason") != "end_turn":
+        return None
+    text_block: Mapping[str, Any] | None = None
+    for block in response.get("content") or ():
+        if block.get("type") == "text":
+            text_block = block
+    if text_block is None:
+        return None
+    try:
+        return json.loads(text_block["text"])
+    except (json.JSONDecodeError, TypeError, KeyError):
+        return None
 
 
 def request_key(request: Mapping[str, Any], scope: str) -> str:
@@ -59,6 +86,16 @@ class UsageTotals:
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
+
+    def as_metadata(self) -> dict[str, int]:
+        """The five counters keyed by field name, for a stage's run metadata."""
+        return {
+            "calls": self.calls,
+            "cache_hits": self.cache_hits,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+        }
 
 
 class CachedClient:
@@ -124,11 +161,10 @@ class CachedClient:
             self._inner = self._inner_factory()
         response = await self._inner.send(request)
 
-        usage = response.get("usage", {})
-        # `to_dict()` keeps explicit nulls for optional usage fields.
-        self._totals.input_tokens += usage.get("input_tokens") or 0
-        self._totals.output_tokens += usage.get("output_tokens") or 0
-        self._totals.cache_read_tokens += usage.get("cache_read_input_tokens") or 0
+        usage = usage_of(response)
+        self._totals.input_tokens += usage.input_tokens
+        self._totals.output_tokens += usage.output_tokens
+        self._totals.cache_read_tokens += usage.cache_read_input_tokens
 
         return Reply(key=key, response=response, cached=False)
 
@@ -212,3 +248,34 @@ class AnthropicClient:
         """Close the SDK client's HTTP connections, if one was ever built."""
         if self._client is not None:
             await self._client.close()
+
+
+async def send_until_accepted[T](
+    client: CachedClient,
+    request: Mapping[str, Any],
+    classify: Callable[[Mapping[str, Any]], tuple[T | None, str]],
+    *,
+    scope: str,
+    max_retries: int,
+    error_type: type[PmTraitbenchError],
+) -> tuple[Reply, T, int]:
+    """Send `request`, retrying a reply `classify` rejects up to `max_retries` times.
+
+    A rejected reply that came from the cache makes every later attempt bypass
+    the cache too, so an entry that no longer validates is never replayed forever
+    and a run does not alternate between it and a fresh call. An accepted reply is
+    committed before it is returned with the rejected count; at the cap, raises
+    `error_type` with the last rejection's reason.
+    """
+    refresh = False
+    rejected = 0
+    reason = ""
+    for _ in range(1 + max_retries):
+        reply = await client.send(request, scope=scope, refresh=refresh)
+        accepted, reason = classify(reply.response)
+        if accepted is not None:
+            client.commit(reply)
+            return reply, accepted, rejected
+        refresh = refresh or reply.cached
+        rejected += 1
+    raise error_type(f"{session_prefix(scope)}{reason}")

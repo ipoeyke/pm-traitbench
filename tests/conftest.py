@@ -1,9 +1,21 @@
-"""Shared test fixtures."""
+"""Shared test fixtures.
+
+Per-package fixture modules are registered here as plugins, so a
+fixture is visible by name everywhere without re-importing it.
+"""
 
 import pytest
 
 from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.catalogues.models import Catalogue
+
+pytest_plugins = [
+    "tests.engine.fixtures",
+    "tests.gates.fixtures",
+    "tests.signals.fixtures",
+    "tests.dialogue.fixtures",
+    "tests.market.real.fixtures",
+]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

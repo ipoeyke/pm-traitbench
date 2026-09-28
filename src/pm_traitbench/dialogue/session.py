@@ -7,13 +7,18 @@ it is validated here, so a refusal or a schema-invalid reply is never
 replayed on a rerun.
 """
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from pm_traitbench.config import DialogueConfig
-from pm_traitbench.dialogue.client import CachedClient, Reply
+from pm_traitbench.dialogue.client import (
+    CachedClient,
+    Reply,
+    last_text_json,
+    send_until_accepted,
+    session_prefix,
+)
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.prompts import (
     NARRATOR_OPENING_MESSAGE,
@@ -24,6 +29,7 @@ from pm_traitbench.dialogue.prompts import (
     opening_line,
 )
 from pm_traitbench.dialogue.tools import run_tool
+from pm_traitbench.dialogue.usage import ZERO_USAGE, usage_of
 from pm_traitbench.enums import AdvisorTool, TurnRole
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import (
@@ -38,9 +44,6 @@ from pm_traitbench.tables.schema import (
 )
 
 _ADVISOR_TOOL_NAMES = frozenset(tool.value for tool in AdvisorTool)
-_ZERO_USAGE = CallUsage(
-    input_tokens=0, output_tokens=0, cache_read_input_tokens=0, cache_creation_input_tokens=0
-)
 
 
 @dataclass(frozen=True)
@@ -72,18 +75,7 @@ def parse_turn(response: Mapping[str, Any]) -> TurnOutput | None:
     fail `Turn`'s own `min_length=1` after the reply is already cached, so it
     is rejected here instead.
     """
-    if response.get("stop_reason") != "end_turn":
-        return None
-    text_block: Mapping[str, Any] | None = None
-    for block in response.get("content") or ():
-        if block.get("type") == "text":
-            text_block = block
-    if text_block is None:
-        return None
-    try:
-        payload = json.loads(text_block["text"])
-    except (json.JSONDecodeError, TypeError, KeyError):
-        return None
+    payload = last_text_json(response)
     if not isinstance(payload, dict):
         return None
     try:
@@ -138,38 +130,19 @@ async def _send_accepted(
     *,
     allow_tool_use: bool,
 ) -> tuple[Reply, _Accepted, int]:
-    """Send `request`, retrying a rejected reply up to `max_retries` times.
-
-    A rejected reply that came from the cache makes every later attempt
-    bypass the cache too, so a cache entry that no longer validates is never
-    replayed forever and a run does not alternate between it and a fresh
-    call. Returns the accepted reply alongside how many attempts it took.
-    """
-    refresh = False
-    rejected = 0
-    for _ in range(1 + config.max_retries):
-        reply = await client.send(request, scope=session_id, refresh=refresh)
-        accepted, reason = _classify(reply.response, allow_tool_use)
-        if accepted is not None:
-            client.commit(reply)
-            return reply, accepted, rejected
-        refresh = refresh or reply.cached
-        rejected += 1
-    raise DialogueError(f"session {session_id}: {reason}")
-
-
-def _usage_of(response: Mapping[str, Any]) -> CallUsage:
-    usage = response.get("usage") or {}
-    return CallUsage(
-        input_tokens=usage.get("input_tokens") or 0,
-        output_tokens=usage.get("output_tokens") or 0,
-        cache_read_input_tokens=usage.get("cache_read_input_tokens") or 0,
-        cache_creation_input_tokens=usage.get("cache_creation_input_tokens") or 0,
+    """Send `request` through `send_until_accepted`, classifying replies with `_classify`."""
+    return await send_until_accepted(
+        client,
+        request,
+        lambda response: _classify(response, allow_tool_use),
+        scope=session_id,
+        max_retries=config.max_retries,
+        error_type=DialogueError,
     )
 
 
 def _sum_usage(totals: CallUsage, response: Mapping[str, Any]) -> CallUsage:
-    added = _usage_of(response)
+    added = usage_of(response)
     return CallUsage(
         input_tokens=totals.input_tokens + added.input_tokens,
         output_tokens=totals.output_tokens + added.output_tokens,
@@ -221,7 +194,9 @@ async def narrate_session(
         narrator_messages.append({"role": "assistant", "content": pm_reply.response["content"]})
         pm_output = pm_accepted.output
         if pm_output is None:
-            raise DialogueError(f"session {session_id}: accepted narrator reply carried no output")
+            raise DialogueError(
+                f"{session_prefix(session_id)}accepted narrator reply carried no output"
+            )
         turn_logs.append(
             TurnLog(
                 role=TurnRole.PM,
@@ -232,7 +207,7 @@ async def narrate_session(
                 tool_calls=(),
                 model=pm_request["model"],
                 request_hashes=(pm_reply.key,),
-                usage=_usage_of(pm_reply.response),
+                usage=usage_of(pm_reply.response),
             )
         )
 
@@ -245,7 +220,7 @@ async def narrate_session(
 
         tool_calls: list[ToolCall] = []
         request_hashes: list[str] = []
-        usage = _ZERO_USAGE
+        usage = ZERO_USAGE
         rounds = 0
         tools_disabled = False
         while True:
@@ -286,14 +261,16 @@ async def narrate_session(
                 advisor_messages.append({"role": "user", "content": tool_result_blocks})
                 if rounds >= config.max_tool_rounds and not tools_disabled:
                     tools_disabled = True
-                    warnings.append(f"{session_id}: advisor reply {i} hit the tool-round cap")
+                    warnings.append(
+                        f"{session_prefix(session_id)}advisor reply {i} hit the tool-round cap"
+                    )
                 continue
 
             advisor_messages.append({"role": "assistant", "content": reply.response["content"]})
             advisor_output = accepted.output
             if advisor_output is None:
                 raise DialogueError(
-                    f"session {session_id}: accepted advisor reply carried no output"
+                    f"{session_prefix(session_id)}accepted advisor reply carried no output"
                 )
             turn_logs.append(
                 TurnLog(

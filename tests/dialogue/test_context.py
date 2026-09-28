@@ -25,9 +25,9 @@ from pm_traitbench.enums import (
 )
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import Leg, Skeleton
-from tests.dialogue.conftest import rule
-from tests.gates.conftest import DEFAULT_DATE, PM_ID, idea_row, ledger_row, position_day
-from tests.signals.conftest import bias_trait, drift_event, persona
+from tests.dialogue.fixtures import rule
+from tests.gates.fixtures import DEFAULT_DATE, PM_ID, idea_row, ledger_row, position_day
+from tests.signals.fixtures import bias_trait, drift_event, persona
 
 _VOICE = Voice(voice_id="v_01", line="terse trader shorthand, drops articles")
 

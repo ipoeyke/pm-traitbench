@@ -1,0 +1,55 @@
+labels:
+  loss_aversion_lambda:
+    - loss aversion
+    - loss averse
+    - averaging down
+    - average down
+    - get back to even
+    - hold to avoid the loss
+    - can't take the loss
+  disposition_ratio:
+    - disposition
+    - sell winners
+    - selling winners
+    - hold losers
+    - holding losers
+    - take profits early
+    - cut winners
+  anchoring_rho:
+    - anchoring
+    - anchored
+    - round number
+    - round level
+    - fixated on a level
+  extrapolation_theta:
+    - extrapolation
+    - extrapolating
+    - chasing the trend
+    - trend chasing
+    - momentum chasing
+  herding_weight:
+    - herding
+    - herd
+    - following the street
+    - following consensus
+    - crowd following
+  overconfidence_coverage:
+    - overconfidence
+    - overconfident
+    - too sure
+    - narrow range
+    - tight range
+    - trust my read
+  conviction_size_miscalibration:
+    - miscalibration
+    - miscalibrated
+    - sizing out of step
+    - size doesn't match conviction
+    - sizing mismatch
+  exit_deficiency:
+    - exit deficiency
+    - ignoring stops
+    - ignoring the trigger
+    - not acting on the stop
+    - late to exit
+    - rolling late

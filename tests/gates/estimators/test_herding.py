@@ -3,7 +3,7 @@
 from pm_traitbench.config import Config
 from pm_traitbench.enums import Side, StreetView
 from pm_traitbench.gates.gate1.estimators import herding
-from tests.gates.conftest import idea_row
+from tests.gates.fixtures import idea_row
 
 KNOBS = Config().gate1
 

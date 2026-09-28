@@ -4,7 +4,7 @@ from pm_traitbench.config import Config
 from pm_traitbench.engine.adapters import adapter_for
 from pm_traitbench.enums import AssetClass, PositionAction, Side
 from pm_traitbench.gates.gate1.estimators import anchoring
-from tests.gates.conftest import DEFAULT_DATE, idea_row, position_day
+from tests.gates.fixtures import DEFAULT_DATE, idea_row, position_day
 
 KNOBS = Config().gate1
 HORIZON = 20

@@ -302,6 +302,18 @@ class AvoidLines(BaseModel):
     preferences: dict[str, str]
 
 
+class BiasLabels(BaseModel):
+    """Free-text phrases a leakage judge might use for each bias param.
+
+    Keyed by bias param so a judge's raw label can be matched back to the bias it
+    names; every phrase is lower-case.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    labels: dict[str, tuple[str, ...]]
+
+
 class Catalogue(BaseModel):
     """The full reference catalogue that samplers draw from."""
 
@@ -316,6 +328,7 @@ class Catalogue(BaseModel):
     stances: Stances
     voices: tuple[Voice, ...]
     avoid: AvoidLines
+    bias_labels: BiasLabels
 
     def preferences_for(self, asset_class: AssetClass) -> tuple[PreferenceEntry, ...]:
         """Return preference entries applicable to an asset class, in catalogue order."""

@@ -9,19 +9,19 @@ tables or neither.
 """
 
 import asyncio
-import hashlib
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from pm_traitbench.catalogues.loader import check_dialogue_catalogue, load_catalogue
+from pm_traitbench.catalogues.models import Catalogue, Voice
 from pm_traitbench.config import Config
-from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, LlmClient
+from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, LlmClient, session_prefix
 from pm_traitbench.dialogue.context import PmTables, SessionContext, build_contexts, select_pms
-from pm_traitbench.dialogue.prompts import read_advisor_prompt
+from pm_traitbench.dialogue.prompts import prompt_sha256, read_advisor_prompt
 from pm_traitbench.dialogue.session import SessionResult, narrate_session
 from pm_traitbench.dialogue.tools import MarketLookup
 from pm_traitbench.dialogue.voices import draw_voice
-from pm_traitbench.errors import DialogueBudgetError, DialogueError
+from pm_traitbench.errors import DialogueBudgetError, DialogueError, PmTraitbenchError
 from pm_traitbench.stages import Stage
 from pm_traitbench.tables.schema import (
     DriftEvent,
@@ -49,11 +49,29 @@ from pm_traitbench.tables.specs import (
     SESSIONS,
     SKELETONS,
     TRAITS,
+    TableSpec,
 )
 from pm_traitbench.tables.store import DataStore
 
+# Every table stage 6 reads to rebuild each session's context; stage 7 rebuilds the same.
+DIALOGUE_READS: tuple[TableSpec, ...] = (
+    PERSONAS,
+    RULES,
+    TRAITS,
+    DRIFT_EVENTS,
+    IDEAS,
+    LEDGER,
+    POSITION_DAYS,
+    SKELETONS,
+    MARKET_INSTRUMENTS,
+    MARKET_PRICES,
+    MARKET_CURVES,
+    MARKET_CONSENSUS,
+    MARKET_CALENDAR,
+)
 
-def _partition_pm_tables(store: DataStore) -> tuple[PmTables, ...]:
+
+def partition_pm_tables(store: DataStore) -> tuple[PmTables, ...]:
     """Group every dialogue input table by PM, keeping only PMs with at least one skeleton."""
     personas = {p.pm_id: p for p in store.read(PERSONAS)}
 
@@ -100,28 +118,73 @@ def _partition_pm_tables(store: DataStore) -> tuple[PmTables, ...]:
     )
 
 
-async def _narrate_one(
-    ctx: SessionContext,
-    client: CachedClient,
+def build_lookups(store: DataStore, seeds: Iterable[str]) -> dict[str, MarketLookup]:
+    """One `MarketLookup` per market seed, all built from a single read of the market tables."""
+    instruments = store.read(MARKET_INSTRUMENTS)
+    prices = store.read(MARKET_PRICES)
+    curves = store.read(MARKET_CURVES)
+    consensus = store.read(MARKET_CONSENSUS)
+    calendar = store.read(MARKET_CALENDAR)
+    return {
+        seed: MarketLookup.build(seed, instruments, prices, curves, consensus, calendar)
+        for seed in sorted(set(seeds))
+    }
+
+
+def pm_contexts(
+    pm: PmTables, lookups: Mapping[str, MarketLookup], catalogue: Catalogue, config: Config
+) -> tuple[Voice, tuple[SessionContext, ...]]:
+    """One PM's drawn voice and a context per skeleton, on its market seed's lookup."""
+    voice = draw_voice(config.seed.root, pm.persona.pm_id, catalogue.voices)
+    lookup = lookups[pm.persona.market_seed]
+    return voice, build_contexts(pm, voice, lookup, catalogue, config)
+
+
+def stage_client(
+    store: DataStore,
+    client_factory: Callable[[Config], LlmClient],
     config: Config,
-    advisor_prompt: str,
-    semaphore: asyncio.Semaphore,
-) -> SessionResult:
-    async with semaphore:
-        return await narrate_session(ctx, client, config.dialogue, advisor_prompt)
+    token_budget: int | None,
+) -> CachedClient:
+    """A `CachedClient` over the store's shared LLM cache, building its backend on first use."""
+    return CachedClient(
+        lambda: client_factory(config), store.data_dir / "cache" / "llm", token_budget
+    )
 
 
-async def _narrate_all(
-    contexts: tuple[SessionContext, ...], client: CachedClient, config: Config, advisor_prompt: str
-) -> list[SessionResult | BaseException]:
+def collect_results[T](
+    results: Iterable[T | BaseException],
+    result_type: type[T],
+    expected: int,
+    error_type: type[PmTraitbenchError],
+) -> list[T]:
+    """The results of `result_type`, raising `error_type` unless there are `expected` of them."""
+    collected = [r for r in results if isinstance(r, result_type)]
+    if len(collected) != expected:
+        raise error_type(f"expected {expected} results but got {len(collected)}")
+    return collected
+
+
+async def run_bounded[I, T](
+    items: Iterable[I],
+    worker: Callable[[I], Awaitable[T]],
+    client: CachedClient,
+    max_concurrency: int,
+) -> list[T | BaseException]:
+    """Run `worker` over `items` with at most `max_concurrency` in flight, then close `client`.
+
+    Results come back in `items` order, with a failure returned in place, not raised.
+    """
     # Bounding sessions in flight, not just letting `gather` start them all,
     # caps the budget's overshoot and memory use at the concurrency limit.
-    semaphore = asyncio.Semaphore(config.dialogue.max_concurrency)
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def bounded(item: I) -> T:
+        async with semaphore:
+            return await worker(item)
+
     try:
-        return await asyncio.gather(
-            *(_narrate_one(ctx, client, config, advisor_prompt, semaphore) for ctx in contexts),
-            return_exceptions=True,
-        )
+        return await asyncio.gather(*(bounded(item) for item in items), return_exceptions=True)
     finally:
         # Closed here, inside the loop `asyncio.run` owns, whether the run
         # succeeded or failed: the SDK client's HTTP pool cannot be closed
@@ -129,7 +192,7 @@ async def _narrate_all(
         await client.aclose()
 
 
-def _reason_of(ctx: SessionContext, error: DialogueError) -> str:
+def _reason_of(ctx: SessionContext, error: PmTraitbenchError) -> str:
     """The failure reason for one session, stripped of a `session {id}: ` prefix if present.
 
     An error raised inside `narrate_session` already carries that prefix; one
@@ -137,39 +200,48 @@ def _reason_of(ctx: SessionContext, error: DialogueError) -> str:
     normalises both to a plain reason before regrouping by session.
     """
     message = str(error)
-    prefix = f"session {ctx.skeleton.session_id}: "
+    prefix = session_prefix(ctx.skeleton.session_id)
     return message[len(prefix) :] if message.startswith(prefix) else message
 
 
-def _raise_on_failure(
+def raise_on_failure(
     contexts: tuple[SessionContext, ...],
-    results: list[SessionResult | BaseException],
+    results: list[Any],
     client: CachedClient,
+    *,
+    error_type: type[PmTraitbenchError] = DialogueError,
+    budget_label: str = "dialogue",
 ) -> None:
-    """Raise a budget error, else a combined dialogue error, else re-raise any other exception.
+    """Raise a budget error, else a combined error of `error_type`, else re-raise any other
+    exception.
 
     A budget error takes priority since it means the whole run should stop
-    spending. Otherwise every failed session is named, in session order,
-    with sessions that failed for the identical reason collapsed onto one
-    line, so a rerun's cache can skip the sessions that already succeeded.
+    spending; its message names `budget_label` so a validate run's budget
+    error points at `validation.token_budget`, not the dialogue config.
+    Otherwise every failed session is named, in session order, with sessions
+    that failed for the identical reason collapsed onto one line, so a
+    rerun's cache can skip the sessions that already succeeded. Any
+    `PmTraitbenchError` result is grouped this way and raised as
+    `error_type`, so the validate stage's `ValidateError` results are
+    reported under validate's own error, not dialogue's.
     """
     if any(isinstance(r, DialogueBudgetError) for r in results):
         totals = client.totals
         raise DialogueBudgetError(
-            f"dialogue token budget spent: {totals.input_tokens} input, "
+            f"{budget_label} token budget spent: {totals.input_tokens} input, "
             f"{totals.output_tokens} output tokens across {totals.calls} calls"
         )
 
     ids_by_reason: dict[str, list[str]] = {}
     for ctx, result in zip(contexts, results, strict=True):
-        if isinstance(result, DialogueError):
+        if isinstance(result, PmTraitbenchError):
             ids_by_reason.setdefault(_reason_of(ctx, result), []).append(ctx.skeleton.session_id)
     if ids_by_reason:
         lines = []
         for reason, ids in ids_by_reason.items():
             who = f"session {ids[0]}" if len(ids) == 1 else f"sessions {', '.join(ids)}"
             lines.append(f"{who}: {reason}")
-        raise DialogueError("\n".join(lines))
+        raise error_type("\n".join(lines))
 
     for result in results:
         if isinstance(result, BaseException):
@@ -187,40 +259,32 @@ def _run(
     check_dialogue_catalogue(catalogue)
     advisor_prompt = read_advisor_prompt(config.dialogue.advisor_prompt_path)
 
-    all_pm_tables = _partition_pm_tables(store)
+    all_pm_tables = partition_pm_tables(store)
     selected = select_pms(all_pm_tables, config.dialogue.pm_filter)
     if not selected:
         raise DialogueError("dialogue.pm_filter selects no PMs")
 
-    instruments = store.read(MARKET_INSTRUMENTS)
-    prices = store.read(MARKET_PRICES)
-    curves = store.read(MARKET_CURVES)
-    consensus = store.read(MARKET_CONSENSUS)
-    calendar = store.read(MARKET_CALENDAR)
-    lookups = {
-        seed: MarketLookup.build(seed, instruments, prices, curves, consensus, calendar)
-        for seed in sorted({pm.persona.market_seed for pm in selected})
-    }
+    lookups = build_lookups(store, (pm.persona.market_seed for pm in selected))
 
     contexts: list[SessionContext] = []
     voices: dict[str, str] = {}
     for pm in selected:
-        voice = draw_voice(config.seed.root, pm.persona.pm_id, catalogue.voices)
+        voice, pm_session_contexts = pm_contexts(pm, lookups, catalogue, config)
         voices[pm.persona.pm_id] = voice.voice_id
-        lookup = lookups[pm.persona.market_seed]
-        contexts.extend(build_contexts(pm, voice, lookup, catalogue, config))
+        contexts.extend(pm_session_contexts)
 
-    cache_dir = store.data_dir / "cache" / "llm"
-    client = CachedClient(lambda: client_factory(config), cache_dir, config.dialogue.token_budget)
+    client = stage_client(store, client_factory, config, config.dialogue.token_budget)
     frozen_contexts = tuple(contexts)
-    results = asyncio.run(_narrate_all(frozen_contexts, client, config, advisor_prompt))
-    _raise_on_failure(frozen_contexts, results, client)
 
-    session_results = [r for r in results if isinstance(r, SessionResult)]
-    if len(session_results) != len(frozen_contexts):
-        raise DialogueError(
-            f"expected {len(frozen_contexts)} session results but got {len(session_results)}"
-        )
+    async def narrate(ctx: SessionContext) -> SessionResult:
+        return await narrate_session(ctx, client, config.dialogue, advisor_prompt)
+
+    results = asyncio.run(
+        run_bounded(frozen_contexts, narrate, client, config.dialogue.max_concurrency)
+    )
+    raise_on_failure(frozen_contexts, results, client)
+
+    session_results = collect_results(results, SessionResult, len(frozen_contexts), DialogueError)
 
     sessions = [r.session for r in session_results]
     logs = [r.log for r in session_results]
@@ -234,20 +298,15 @@ def _run(
     store.write(SESSIONS, sessions)
     store.write(DIALOGUE_LOGS, logs)
 
-    totals = client.totals
     return {
         "narrator_model": config.dialogue.narrator_model,
         "advisor_model": config.dialogue.advisor_model,
-        "advisor_prompt_sha256": hashlib.sha256(advisor_prompt.encode("utf-8")).hexdigest(),
+        "advisor_prompt_sha256": prompt_sha256(advisor_prompt),
         "skipped": meta["skipped"],
         "pms": [pm.persona.pm_id for pm in selected],
         "voices": voices,
         "sessions": session_counts,
-        "calls": totals.calls,
-        "cache_hits": totals.cache_hits,
-        "input_tokens": totals.input_tokens,
-        "output_tokens": totals.output_tokens,
-        "cache_read_tokens": totals.cache_read_tokens,
+        **client.totals.as_metadata(),
         "warnings": warnings,
         "rejected_replies": rejected_replies,
     }
@@ -264,21 +323,7 @@ def make_stage(client_factory: Callable[[Config], LlmClient]) -> Stage:
         name="dialogue",
         help="narrate every planned session with a PM narrator and a simulated advisor",
         run=run,
-        reads=(
-            PERSONAS,
-            RULES,
-            TRAITS,
-            DRIFT_EVENTS,
-            IDEAS,
-            LEDGER,
-            POSITION_DAYS,
-            SKELETONS,
-            MARKET_INSTRUMENTS,
-            MARKET_PRICES,
-            MARKET_CURVES,
-            MARKET_CONSENSUS,
-            MARKET_CALENDAR,
-        ),
+        reads=DIALOGUE_READS,
         writes=DIALOGUE_TABLES,
     )
 

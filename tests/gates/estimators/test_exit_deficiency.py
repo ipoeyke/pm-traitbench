@@ -5,7 +5,7 @@ from datetime import date
 from pm_traitbench.config import Config
 from pm_traitbench.enums import RuleResponse
 from pm_traitbench.gates.gate1.estimators import exit_deficiency
-from tests.gates.conftest import DEFAULT_DATE, rule_event
+from tests.gates.fixtures import DEFAULT_DATE, rule_event
 
 KNOBS = Config().gate1
 OTHER_DATE = date(2026, 1, 6)

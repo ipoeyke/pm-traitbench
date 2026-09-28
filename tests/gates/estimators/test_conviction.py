@@ -4,7 +4,7 @@ from datetime import date
 
 from pm_traitbench.config import Config
 from pm_traitbench.gates.gate1.estimators import conviction
-from tests.gates.conftest import DEFAULT_DATE, idea_row
+from tests.gates.fixtures import DEFAULT_DATE, idea_row
 
 KNOBS = Config().gate1
 OTHER_DATE = date(2026, 1, 6)

@@ -9,7 +9,7 @@ from pm_traitbench.enums import DriftEventType
 from pm_traitbench.errors import PlanError
 from pm_traitbench.market.axis import build_axis
 from pm_traitbench.signals.inputs import build_inputs, trading_days
-from tests.signals.conftest import (
+from tests.signals.fixtures import (
     bias_trait,
     drift_event,
     idea_row,

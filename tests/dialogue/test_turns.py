@@ -10,7 +10,7 @@ from pm_traitbench.dialogue.turns import OPENING_BY_KIND, Opening, plan_turns
 from pm_traitbench.enums import SessionKind, SignalMode, StanceEntry
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import Skeleton, Stance
-from tests.gates.conftest import ledger_row
+from tests.gates.fixtures import ledger_row
 
 PM_ID = "pm_001"
 SESSION_DATE = datetime.date(2026, 3, 2)

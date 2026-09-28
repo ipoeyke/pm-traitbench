@@ -1,34 +1,44 @@
 """Shared dialogue-test fixtures: fake message builders, an in-memory `LlmClient`, a
-`MarketLookup` built on the shared fixture market, and a small `SessionContext` builder.
+`MarketLookup` built on the shared fixture market, a small `SessionContext` builder and
+an engine-plus-plan corpus builder for stage tests.
 
 Consumed by client, tools, prompt and session tests, so a canned response's
 shape only has to match `Message.to_dict()` in one place.
 """
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from pm_traitbench.catalogues.models import Voice
-from pm_traitbench.config import Config, TurnRanges
+from pm_traitbench.config import DEFAULT_MODEL, Config, TurnRanges
+from pm_traitbench.dialogue.client import CachedClient, LlmClient, Reply
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import MarketLookup
 from pm_traitbench.dialogue.turns import TurnPlan, plan_turns
+from pm_traitbench.engine.stage import ENGINE_STAGE
 from pm_traitbench.enums import Action, Op, RuleScope, RuleSource, SessionKind
 from pm_traitbench.rng import stream
+from pm_traitbench.signals.assemble import session_id
+from pm_traitbench.signals.stage import PLAN_STAGE
+from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.schema import LedgerRow, Rule, Skeleton, Stance
-from tests.engine.conftest import fixture_market  # noqa: F401
-from tests.gates.conftest import PM_ID, idea_row
-from tests.signals.conftest import persona
+from pm_traitbench.tables.store import DataStore
+from tests.engine.fixtures import stage_config, write_stage_inputs
+from tests.gates.fixtures import PM_ID, idea_row
+from tests.signals.fixtures import persona
+
+SESSION_ID = session_id(PM_ID, date(2026, 1, 5), 0)
 
 
 def fake_message(
     content: list[dict],
     stop_reason: str = "end_turn",
-    model: str = "claude-opus-5-5",
+    model: str = DEFAULT_MODEL,
     input_tokens: int = 100,
     output_tokens: int = 50,
 ) -> dict:
@@ -83,6 +93,49 @@ def default_responder(request: Mapping[str, Any]) -> dict:
     return fake_message([turn_text("Feeling good about the book today.")])
 
 
+def with_section(config: Config, section: str, **fields: Any) -> Config:
+    """`config` with the named section's `fields` replaced."""
+    return config.model_copy(update={section: getattr(config, section).model_copy(update=fields)})
+
+
+type SendHook = Callable[[Mapping[str, Any], str, Callable[[], Awaitable[Reply]]], Awaitable[Reply]]
+
+
+def patch_send(monkeypatch: pytest.MonkeyPatch, hook: SendHook) -> None:
+    """Route every `CachedClient.send` through `hook(request, scope, send)`.
+
+    `send()` returns the real send's coroutine for this call, so the hook decides
+    whether to delegate, replace the reply or raise.
+    """
+    real_send = CachedClient.send
+
+    async def patched_send(
+        self: CachedClient, request: dict, *, scope: str, refresh: bool = False
+    ) -> Reply:
+        return await hook(
+            request, scope, lambda: real_send(self, request, scope=scope, refresh=refresh)
+        )
+
+    monkeypatch.setattr(CachedClient, "send", patched_send)
+
+
+def raising_factory(_config: Config) -> LlmClient:
+    """A client factory for a run that must never reach the inner client."""
+    raise AssertionError("the inner client must not be constructed here")
+
+
+def run_engine_and_plan(
+    tmp_path: Path, fixture_market: dict, neutral_pm
+) -> tuple[Config, DataStore]:
+    """Write the stage inputs into a fresh store under `tmp_path`, then run engine and plan."""
+    config = stage_config()
+    store = DataStore(tmp_path, config.output)
+    write_stage_inputs(store, fixture_market, neutral_pm)
+    run_stage(ENGINE_STAGE, config, store)
+    run_stage(PLAN_STAGE, config, store)
+    return config, store
+
+
 @pytest.fixture(scope="module")
 def market_lookup(fixture_market: dict) -> MarketLookup:
     """A `MarketLookup` built from the shared fixture market, seed 'T'."""
@@ -129,8 +182,8 @@ def session_context(
     """A small, internally consistent `SessionContext` for one PM's session.
 
     Every field but `kind`, `stances`, `advisor_violation`, `day_trades` and
-    `turn_plan` is a fixed default built from `tests.signals.conftest.persona`
-    and `tests.gates.conftest.idea_row`. A silence session drops its stances,
+    `turn_plan` is a fixed default built from `tests.signals.fixtures.persona`
+    and `tests.gates.fixtures.idea_row`. A silence session drops its stances,
     trade and violation overrides, since a silence skeleton forbids them.
     """
     pm = persona()
@@ -140,7 +193,7 @@ def session_context(
     resolved_day_trades = () if is_silence else day_trades
 
     skeleton = Skeleton(
-        session_id=f"s_{pm.pm_id.replace('_', '')}_2026-01-05_a",
+        session_id=SESSION_ID,
         pm_id=pm.pm_id,
         date=date(2026, 1, 5),
         kind=kind,

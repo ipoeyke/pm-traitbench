@@ -7,6 +7,7 @@ built from a `SessionContext` and a plain messages sequence with no
 non-deterministic step, so identical inputs give identical cache keys.
 """
 
+import hashlib
 from collections.abc import Mapping, Sequence
 from datetime import date
 from importlib import resources
@@ -17,7 +18,7 @@ from pm_traitbench.config import DialogueConfig
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS
 from pm_traitbench.dialogue.turns import Opening
-from pm_traitbench.enums import Side, Tenor
+from pm_traitbench.enums import Effort, Side, Tenor
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import LedgerRow
 
@@ -117,6 +118,11 @@ def read_advisor_prompt(path: Path | None) -> str:
     if not text.strip():
         raise DialogueError("advisor prompt is blank")
     return text
+
+
+def prompt_sha256(text: str) -> str:
+    """sha256 hex of a prompt's UTF-8 text, recorded so a later stage can detect an edit."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
@@ -224,6 +230,27 @@ def advisor_system(advisor_prompt: str, day: date) -> str:
     return f"{advisor_prompt}\n\n{_ADVISOR_MENTIONS_INSTRUCTION}\n\nToday is {day.isoformat()}."
 
 
+def base_request(
+    model: str,
+    max_tokens: int,
+    effort: Effort,
+    system: str,
+    messages: Sequence[Mapping[str, Any]],
+    schema: Mapping[str, Any],
+) -> dict[str, Any]:
+    """A Messages API request body with structured output: the keys every request shares."""
+    return {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": list(messages),
+        "output_config": {
+            "effort": effort.value,
+            "format": {"type": "json_schema", "schema": schema},
+        },
+    }
+
+
 def narrator_request(
     ctx: SessionContext,
     messages: Sequence[Mapping[str, Any]],
@@ -236,14 +263,14 @@ def narrator_request(
     `cache_control`; never `thinking` or a sampling param.
     """
     return {
-        "model": config.narrator_model,
-        "max_tokens": config.max_output_tokens,
-        "system": narrator_system(ctx, feedback),
-        "messages": list(messages),
-        "output_config": {
-            "effort": config.effort.value,
-            "format": {"type": "json_schema", "schema": TURN_SCHEMA},
-        },
+        **base_request(
+            config.narrator_model,
+            config.max_output_tokens,
+            config.effort,
+            narrator_system(ctx, feedback),
+            messages,
+            TURN_SCHEMA,
+        ),
         "cache_control": {"type": "ephemeral"},
     }
 
@@ -262,15 +289,15 @@ def advisor_request(
     `ADVISOR_TURN_SCHEMA`, not `TURN_SCHEMA`, since the advisor never sees a
     trade idea id and so can never fill a trade mention.
     """
-    request: dict[str, Any] = {
-        "model": config.advisor_model,
-        "max_tokens": config.max_output_tokens,
-        "system": system,
-        "messages": list(messages),
-        "output_config": {
-            "effort": config.effort.value,
-            "format": {"type": "json_schema", "schema": ADVISOR_TURN_SCHEMA},
-        },
+    request = {
+        **base_request(
+            config.advisor_model,
+            config.max_output_tokens,
+            config.effort,
+            system,
+            messages,
+            ADVISOR_TURN_SCHEMA,
+        ),
         "cache_control": {"type": "ephemeral"},
         "tools": list(TOOL_DEFINITIONS),
     }

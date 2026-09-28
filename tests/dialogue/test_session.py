@@ -25,7 +25,7 @@ from pm_traitbench.enums import (
 )
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import Skeleton, Stance
-from tests.dialogue.conftest import (
+from tests.dialogue.fixtures import (
     FakeClient,
     default_responder,
     fake_message,
@@ -34,8 +34,8 @@ from tests.dialogue.conftest import (
     tool_use,
     turn_text,
 )
-from tests.gates.conftest import DEFAULT_DATE, idea_row
-from tests.signals.conftest import bias_trait, persona, pref_trait
+from tests.gates.fixtures import DEFAULT_DATE, idea_row
+from tests.signals.fixtures import bias_trait, persona, pref_trait
 
 _CONFIG = Config().dialogue
 _ADVISOR_PROMPT = "You are a market advisor for the PM's book."
@@ -195,7 +195,7 @@ def test_tool_round_cap_forces_a_final_reply_and_warns(market_lookup, tmp_path):
     result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
 
     assert result.warnings == (
-        f"{ctx.skeleton.session_id}: advisor reply 0 hit the tool-round cap",
+        f"session {ctx.skeleton.session_id}: advisor reply 0 hit the tool-round cap",
     )
     advisor_log = result.log.turns[1]
     assert len(advisor_log.tool_calls) == _CONFIG.max_tool_rounds

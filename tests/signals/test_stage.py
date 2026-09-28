@@ -17,13 +17,7 @@ from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.schema import Persona, Rule, Trait
 from pm_traitbench.tables.specs import PERSONAS, PLAN_TABLES, SIGNALS, SKELETONS, TRAITS
 from pm_traitbench.tables.store import DataStore
-from tests.engine.conftest import (  # noqa: F401
-    MULTI_ASSET_PM_ID,
-    fixture_market,
-    neutral_pm,
-    stage_config,
-    write_stage_inputs,
-)
+from tests.engine.fixtures import MULTI_ASSET_PM_ID, stage_config, write_stage_inputs
 
 NeutralPmFactory = Callable[[AssetClass, str], tuple[Persona, list[Trait], list[Rule]]]
 

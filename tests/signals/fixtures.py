@@ -10,7 +10,7 @@ from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.enums import AssetClass, DriftEventType, Kind, Split, Typicality
 from pm_traitbench.signals.inputs import PlanInputs
 from pm_traitbench.tables.schema import DriftEvent, Mandate, Persona, StatedProfile, Trait
-from tests.gates.conftest import PM_ID, idea_row, ledger_row, position_day, rule_event  # noqa: F401
+from tests.gates.fixtures import PM_ID, idea_row, ledger_row, position_day, rule_event  # noqa: F401
 
 _BIAS_TRAIT_IDS: dict[str, str] = {
     param: f"t_{i:02d}" for i, param in enumerate(BIAS_PARAMS, start=1)

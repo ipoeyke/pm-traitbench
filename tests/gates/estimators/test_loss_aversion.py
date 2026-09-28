@@ -5,7 +5,7 @@ from datetime import date
 from pm_traitbench.config import Config
 from pm_traitbench.enums import PnlState, PositionAction
 from pm_traitbench.gates.gate1.estimators import loss_aversion
-from tests.gates.conftest import DEFAULT_DATE, position_day
+from tests.gates.fixtures import DEFAULT_DATE, position_day
 
 KNOBS = Config().gate1
 OTHER_DATE = date(2026, 1, 6)
