@@ -6,7 +6,6 @@ stance line, signal mode or which sessions carry a signal.
 """
 
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -28,6 +27,7 @@ from pm_traitbench.tables.schema import (
     Signal,
     Trait,
 )
+from pm_traitbench.traits_truth import TraitTruth
 
 ROLE_LINE = (
     "You are reviewing a year of conversations between a portfolio manager and their "
@@ -102,16 +102,6 @@ class RecoveryReply(BaseModel):
 
     biases: tuple[BiasAnswer, ...] = Field(strict=False)
     preferences: tuple[PreferenceAnswer, ...] = Field(strict=False)
-
-
-@dataclass(frozen=True)
-class TraitTruth:
-    """One param's ground truth: a bias's true activity, or a preference's true held value."""
-
-    kind: Kind
-    trait_id: str | None
-    truth_active: bool | None
-    truth_value: str | None
 
 
 def _normalized(value: str) -> str:
@@ -215,77 +205,6 @@ async def send_recovery(
         label="pm",
         reason="the recovery reply was unparsable or schema-invalid",
     )
-
-
-def _bias_truth_active(trait: Trait, drift_events: Sequence[DriftEvent], last_date: date) -> bool:
-    """`trait.active`, or False when a dormant event on or before `last_date` has no later
-    revive on or before it; a revive never activates a trait that started inactive.
-    """
-    own = [e for e in drift_events if e.trait_id == trait.trait_id and e.date <= last_date]
-    for dormant in own:
-        if dormant.event != DriftEventType.DORMANT:
-            continue
-        revived = any(e.event == DriftEventType.REVIVE and e.date > dormant.date for e in own)
-        if not revived:
-            return False
-    return trait.active
-
-
-def _preference_truth_value(
-    trait: Trait, drift_events: Sequence[DriftEvent], last_date: date
-) -> str:
-    updates = [
-        e
-        for e in drift_events
-        if e.trait_id == trait.trait_id and e.event == DriftEventType.UPDATE and e.date <= last_date
-    ]
-    if not updates:
-        return trait.value
-    latest = max(updates, key=lambda e: e.date)
-    return latest.to_value
-
-
-def compute_truth(
-    traits: Sequence[Trait],
-    drift_events: Sequence[DriftEvent],
-    last_date: date,
-    entries: Sequence[PreferenceEntry],
-) -> dict[str, TraitTruth]:
-    """The ground truth per candidate param: the eight biases, then `entries`' preferences.
-
-    A bias is active as of `last_date` unless left dormant; a preference's value is the
-    latest update on or before `last_date`, else the trait's own, else `None` when not
-    held. Raises `Gate2Error` when `traits` lacks any of the eight bias params.
-    """
-    bias_by_param = {trait.param: trait for trait in traits if trait.kind == Kind.BIAS}
-    missing = set(BIAS_PARAMS) - set(bias_by_param)
-    if missing:
-        pm_id = traits[0].pm_id if traits else "?"
-        raise Gate2Error(f"pm {pm_id}: missing bias trait(s) {sorted(missing)}")
-
-    truth: dict[str, TraitTruth] = {}
-    for param in BIAS_PARAMS:
-        trait = bias_by_param[param]
-        truth[param] = TraitTruth(
-            kind=Kind.BIAS,
-            trait_id=trait.trait_id,
-            truth_active=_bias_truth_active(trait, drift_events, last_date),
-            truth_value=None,
-        )
-
-    pref_by_param = {trait.param: trait for trait in traits if trait.kind == Kind.PREFERENCE}
-    for entry in entries:
-        held = pref_by_param.get(entry.param)
-        truth_value = (
-            _preference_truth_value(held, drift_events, last_date) if held is not None else None
-        )
-        truth[entry.param] = TraitTruth(
-            kind=Kind.PREFERENCE,
-            trait_id=held.trait_id if held is not None else None,
-            truth_active=None,
-            truth_value=truth_value,
-        )
-    return truth
 
 
 def trait_rows(

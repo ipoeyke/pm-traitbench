@@ -7,14 +7,15 @@ PM id for recovery and by session id for classification; the run writes all four
 
 import asyncio
 import hashlib
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 
 from pm_traitbench.catalogues.loader import check_gate2_catalogue, load_catalogue
 from pm_traitbench.catalogues.models import PreferenceEntry
 from pm_traitbench.config import Config
+from pm_traitbench.corpus_checks import check_validated_corpus
 from pm_traitbench.dialogue.client import AnthropicClient, LlmClient
 from pm_traitbench.dialogue.stage import (
     collect_results,
@@ -23,7 +24,7 @@ from pm_traitbench.dialogue.stage import (
     stage_client,
 )
 from pm_traitbench.enums import DriftStatus, Kind, RuleScope, SignalMode
-from pm_traitbench.errors import DialogueBudgetError, Gate2Error
+from pm_traitbench.errors import CorpusError, DialogueBudgetError, Gate2Error
 from pm_traitbench.gates.gate2.aggregate import (
     blocking_failures,
     build_cells,
@@ -39,8 +40,6 @@ from pm_traitbench.gates.gate2.classify import (
 from pm_traitbench.gates.gate2.overlap import containment_by_pm, summarise
 from pm_traitbench.gates.gate2.recover import (
     RecoveryReply,
-    TraitTruth,
-    compute_truth,
     pre_update_signal_ids,
     recovery_request,
     send_recovery,
@@ -78,6 +77,7 @@ from pm_traitbench.tables.specs import (
     TableSpec,
 )
 from pm_traitbench.tables.store import DataStore
+from pm_traitbench.traits_truth import TraitTruth, compute_truth
 
 # Every table gate 2 reads to rebuild each PM's context and score its recovery.
 GATE2_READS: tuple[TableSpec, ...] = (
@@ -112,33 +112,6 @@ class ClassifyRequestUnit:
     unit: ClassifyUnit
 
 
-def check_inputs(store: DataStore, session_pm_ids: Collection[str]) -> dict:
-    """The validate run's metadata, after checking gate 2 may run at all.
-
-    Raises `Gate2Error` when the validate or dialogue run metadata is missing, when
-    sessions were re-narrated after the last validate run, or when a PM with sessions
-    is absent from the validate run's own PM list.
-    """
-    validate_meta = store.read_run_metadata("validate")
-    if validate_meta is None:
-        raise Gate2Error("validate run metadata is missing; run the validate stage first")
-    dialogue_meta = store.read_run_metadata("dialogue")
-    if dialogue_meta is None:
-        raise Gate2Error("dialogue run metadata is missing; run the dialogue stage first")
-
-    validate_created_at = datetime.fromisoformat(validate_meta["created_at"])
-    dialogue_created_at = datetime.fromisoformat(dialogue_meta["created_at"])
-    if validate_created_at < dialogue_created_at:
-        raise Gate2Error("sessions were re-narrated after the last validate run; rerun validate")
-
-    missing = sorted(set(session_pm_ids) - set(validate_meta["pms"]))
-    if missing:
-        raise Gate2Error(
-            f"pm(s) {', '.join(missing)} have sessions but are not in validate run metadata's pms"
-        )
-    return validate_meta
-
-
 def raise_on_failures(extra: dict[str, Any]) -> None:
     """Raise `Gate2Error` naming every failed blocking cell, if any. Insufficient blocking
     cells are reported in `extra["insufficient"]` but never raise.
@@ -162,7 +135,10 @@ def _run(
     sessions_sha256 = hashlib.sha256(store.path(SESSIONS).read_bytes()).hexdigest()
     session_pm_ids = sorted({s.pm_id for s in sessions})
 
-    validate_meta = check_inputs(store, session_pm_ids)
+    try:
+        validate_meta = check_validated_corpus(store, session_pm_ids)
+    except CorpusError as e:
+        raise Gate2Error(str(e)) from e
 
     catalogue = load_catalogue()
     check_gate2_catalogue(catalogue)
@@ -196,7 +172,10 @@ def _run(
         last_date: date = max(s.date for s in pm_sessions)
 
         entries = catalogue.preferences_for(persona.mandate.asset_class)
-        truth_by_pm[pm_id] = compute_truth(pm_traits, pm_drift, last_date, entries)
+        try:
+            truth_by_pm[pm_id] = compute_truth(pm_traits, pm_drift, last_date, entries)
+        except CorpusError as e:
+            raise Gate2Error(str(e)) from e
 
         transcript = render_pm(pm_sessions)
         request = recovery_request(

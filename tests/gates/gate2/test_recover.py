@@ -16,8 +16,6 @@ from pm_traitbench.gates.gate2.recover import (
     BiasAnswer,
     PreferenceAnswer,
     RecoveryReply,
-    TraitTruth,
-    compute_truth,
     parse_recovery,
     pre_update_signal_ids,
     recovery_request,
@@ -27,6 +25,7 @@ from pm_traitbench.gates.gate2.recover import (
 )
 from pm_traitbench.signals.assemble import session_id as build_session_id
 from pm_traitbench.tables.schema import DriftEvent, Gate2TraitRow
+from pm_traitbench.traits_truth import TraitTruth
 from tests.dialogue.fixtures import FakeClient, fake_message, rule
 from tests.gates.gate2.fixtures import PM_A, recovery_reply, signal, trait
 from tests.signals.fixtures import persona as build_persona
@@ -131,95 +130,6 @@ def test_parse_recovery_rejects_missing_duplicate_unknown_params_and_off_catalog
         _good_biases(), {"response_format": ("loud and blunt", []), "register": (None, [])}
     )
     assert parse_recovery(off_catalogue, _ENTRIES) is None
-
-
-def test_compute_truth_drift_rules() -> None:
-    last_date = date(2026, 6, 1)
-    updated = trait(PM_A, "t_01", BIAS_PARAMS[0], Kind.BIAS, 1.0)
-    dormant_no_revive = trait(PM_A, "t_02", BIAS_PARAMS[1], Kind.BIAS, 1.0)
-    dormant_revived = trait(PM_A, "t_03", BIAS_PARAMS[2], Kind.BIAS, 1.0)
-    other_biases = [
-        trait(PM_A, f"t_{i:02d}", param, Kind.BIAS, 1.0)
-        for i, param in enumerate(BIAS_PARAMS[3:], start=4)
-    ]
-    held_pref = trait(PM_A, "t_09", "response_format", Kind.PREFERENCE, "short bullets")
-    traits = [updated, dormant_no_revive, dormant_revived, *other_biases, held_pref]
-
-    drift_events = [
-        DriftEvent(
-            pm_id=PM_A,
-            date=date(2026, 2, 1),
-            event=DriftEventType.UPDATE,
-            trait_id=updated.trait_id,
-            from_value=1.0,
-            to_value=1.5,
-        ),
-        DriftEvent(
-            pm_id=PM_A,
-            date=date(2026, 2, 1),
-            event=DriftEventType.DORMANT,
-            trait_id=dormant_no_revive.trait_id,
-            from_value=None,
-            to_value=None,
-        ),
-        DriftEvent(
-            pm_id=PM_A,
-            date=date(2026, 2, 1),
-            event=DriftEventType.DORMANT,
-            trait_id=dormant_revived.trait_id,
-            from_value=None,
-            to_value=None,
-        ),
-        DriftEvent(
-            pm_id=PM_A,
-            date=date(2026, 3, 1),
-            event=DriftEventType.REVIVE,
-            trait_id=dormant_revived.trait_id,
-            from_value=None,
-            to_value=None,
-        ),
-        DriftEvent(
-            pm_id=PM_A,
-            date=date(2026, 2, 1),
-            event=DriftEventType.UPDATE,
-            trait_id=held_pref.trait_id,
-            from_value="short bullets",
-            to_value="a table with columns",
-        ),
-    ]
-
-    truth = compute_truth(traits, drift_events, last_date, _ENTRIES)
-
-    assert truth[BIAS_PARAMS[0]].truth_active is True
-    assert truth[BIAS_PARAMS[1]].truth_active is False
-    assert truth[BIAS_PARAMS[2]].truth_active is True
-    assert truth["response_format"].truth_value == "a table with columns"
-    assert truth["response_format"].trait_id == held_pref.trait_id
-    assert truth["register"].truth_value is None
-    assert truth["register"].trait_id is None
-
-    with pytest.raises(Gate2Error):
-        compute_truth(traits[:-2], drift_events, last_date, _ENTRIES)
-
-
-def test_compute_truth_revive_without_dormant_leaves_an_inactive_bias_inactive() -> None:
-    inactive = trait(PM_A, "t_01", BIAS_PARAMS[0], Kind.BIAS, 1.0, active=False)
-    others = [
-        trait(PM_A, f"t_{i:02d}", param, Kind.BIAS, 1.0)
-        for i, param in enumerate(BIAS_PARAMS[1:], start=2)
-    ]
-    revive = DriftEvent(
-        pm_id=PM_A,
-        date=date(2026, 2, 1),
-        event=DriftEventType.REVIVE,
-        trait_id=inactive.trait_id,
-        from_value=None,
-        to_value=None,
-    )
-
-    truth = compute_truth([inactive, *others], [revive], date(2026, 6, 1), ())
-
-    assert truth[BIAS_PARAMS[0]].truth_active is False
 
 
 def test_trait_rows_scores_and_verifies_citations() -> None:
