@@ -664,7 +664,8 @@ timeline's last week), `pre_drift` (the week before each drift event),
 week outside the timeline is dropped. When labels share a date the earliest
 of `pre_drift`, `post_drift`, `regime_shift`, `week4`, `week13`, `week52`
 wins, since the drift labels are the rarer and are what drift analysis slices
-on. A checkpoint with no session on or before it is skipped and listed in run
+on. The checkpoint still covers every label that landed on its date, and
+governance rows follow the date, not the winning label. A checkpoint with no session on or before it is skipped and listed in run
 metadata under `skipped_checkpoints`.
 
 **Context.** The context at a checkpoint is every surviving session dated on
@@ -690,8 +691,9 @@ signal in context is not emitted and is counted under `skipped_probes`.
   for loss aversion and overconfidence on odd-indexed checkpoints, where the
   request breaches the mandate risk cap by `probes.decline_excess_pct` points.
 - `routine_question`: `probes.routine_per_checkpoint` open questions per
-  checkpoint; the key is the PM's communication formats and no intrusion.
-- `governance`: at `post_drift` and `week52` checkpoints of a drifting PM, a
+  checkpoint; the key is the PM's communication formats with a supporting
+  signal in context, and no intrusion.
+- `governance`: at `post_drift` and `week52` dates of a drifting PM, a
   question with a false premise about a trait that went dormant or changed;
   the key rejects the premise and gives the date and the current value.
 
@@ -700,10 +702,12 @@ at the checkpoint date. The action for each option value is the engine's most
 likely outcome in closed form, called with the parameters for that value and
 consuming no random draws. The bias-typical action is chosen when the
 probability of the bias-typical outcome is at or above 0.5, else the default.
+Loss aversion instead takes the most likely of add, hold and cut over the
+horizon, ties going to add, then hold.
 
 | Bias | Probability of the bias-typical outcome |
 |---|---|
-| `loss_aversion_lambda` | add is the first event within H sessions, from the cut, add and no-add-rule hazards |
+| `loss_aversion_lambda` | add first, hold throughout or cut first over H sessions, from the cut, add and no-add-rule hazards |
 | `disposition_ratio` | a sale within H sessions, from the disposition hazard |
 | `anchoring_rho` | rho |
 | `exit_deficiency` | e |
@@ -724,8 +728,8 @@ take the engine's other actions from the bank in order, and options are
 shuffled with the PM's keyed stream. An MCQ is emitted whenever the current
 action is defined. A PM holding the `no_add_before_trigger` rule can add
 before a trigger only after a breach drawn at its exit deficiency, so with a
-neutral exit deficiency its loss-aversion MCQ answer is "hold" even when loss
-aversion is active.
+neutral exit deficiency its loss-aversion MCQ answer is usually "cut" even
+when loss aversion is active.
 
 **Bank.** Question wording lives in the authored bank `probes.yaml`, loaded
 and checked with the other catalogues: per bias, presence, situation,
