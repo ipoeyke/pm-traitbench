@@ -1,6 +1,6 @@
 # Plan: PM-TraitBench, a synthetic PM behavioural trait dataset
 
-**Status:** Draft build plan, 2026-09-15. Scope is data generation only: a frozen synthetic corpus of portfolio managers (PMs), their trade ledgers, their advisory conversations with a copilot, and probes with ground truth, for evaluating the copilot's behavioural memory. Ground truth covers two kinds of trait: biases, which are P&L-material breaches of the PM's own rules or of a rational baseline and which the copilot should counteract and call out, and preferences, which are not P&L-material and which the copilot should comply with and amplify. Both are planted as behavioural signals of one shape, so the dataset never tells the memory system which is which.
+**Status:** Draft build plan, 2026-09-15. Scope is a frozen synthetic corpus of portfolio managers (PMs), their trade ledgers, their advisory conversations with a copilot, and probes with ground truth, plus an evaluation harness that replays the corpus into a copilot memory system and scores its answers to the probes. Ground truth covers two kinds of trait: biases, which are P&L-material breaches of the PM's own rules or of a rational baseline and which the copilot should counteract and call out, and preferences, which are not P&L-material and which the copilot should comply with and amplify. Both are planted as behavioural signals of one shape, so the dataset never tells the memory system which is which.
 
 ---
 
@@ -315,7 +315,7 @@ Every table is JSONL by default: one format holds both the flat tables and the n
 
 ```
 pm-traitbench/
-  personas.jsonl      # one row per PM: pm_id, market_seed, split (pilot | full), mandate, stated_profile, typicality
+  personas.jsonl      # one row per PM: pm_id, market_seed, split (pilot | full), mandate, stated_profile, typicality (typicality hidden)
   rules.jsonl         # pm_id, rule_id, source (self | mandate), scope (pm | idea), trade_idea_id, param, field, op, level, unit, window, action, text
   traits.jsonl        # pm_id, trait_id, kind, param, value, active, mult_range, mult_risk_off, mult_risk_on
   drift_events.jsonl  # pm_id, date, event, trait_id, from, to
@@ -540,7 +540,7 @@ supporting_signal_ids: [s_0587, s_0601]
 context_chars: 153600
 ```
 
-`probes.jsonl` (second row: routine question after the format preference was updated, open-ended, post-drift; the answer lists the PM's current communication values and an intrusion value, and a harness maps each listed value to a deterministic check on the reply, so a reply that is not one prose paragraph is wrong and any bias-derived content is an intrusion)
+`probes.jsonl` (second row: routine question after the format preference was updated, open-ended, post-drift; the answer lists the PM's current communication values and an intrusion value, and a harness maps each checkable listed value to a deterministic check on the reply (the rest wait for a judge), so a reply that is not one prose paragraph is wrong and any bias-derived content is an intrusion)
 ```yaml
 probe_id: p_pm017_0044
 pm_id: pm_017
@@ -619,7 +619,7 @@ erDiagram
         string split "pilot, full"
         json mandate "asset_class, sub_style, book_size, risk_unit, benchmark"
         json stated_profile "self_description"
-        string typicality "typical, anti_typical"
+        string typicality "hidden: typical, anti_typical"
     }
     RULES {
         string rule_id PK
@@ -774,7 +774,9 @@ Verification is in two steps. First, opportunity counts: the engine writes its c
 
 **Stage 9, probes.** Deterministic throughout: checkpoints, context cutoff, hypothetical situations on the PM's universe, the engine's decision functions in closed form per option source, answer key and distractor sources. No model runs; question wording comes from an authored bank.
 
-**Stage 10, freeze.** Hash every file, write the README from the config object, model ids, validator pass rates, regeneration counts and dropped-session counts. Nothing downstream may write to `data/` after this.
+**Stage 10, freeze.** Hash every file, write the README from the config object, model ids, validator pass rates, regeneration counts and dropped-session counts. Nothing downstream may write to the corpus tables after this. Evaluation runs write only under `data/eval/`, which the freeze hashes exclude.
+
+**Evaluation harness (not a stage).** An in-process protocol (`observe`, `answer`, one instance per PM from a factory). The system sees the profile and the sessions only, replayed in date order, with every session at or before a checkpoint observed before that checkpoint's probes; `answer` must not write memory. Two baselines run on the Gate 2 model: profile-only and full-context. Scores are deterministic: a strict option letter for presence and multiple choice, and a published check map for the checkable routine-format values. LLM judges for the open twin, in-situ, governance, intrusion and the judge-only format values, and a full report, are later work. Runs live under `data/eval/<run_name>/` and never touch the corpus tables.
 
 Order of work follows the stage numbers, with the pilot run through stages 1-8 before any scale-up. The pilot includes drift PMs (section 6), so the drift layer is built and checked in the pilot, not after it. Within the pilot the cheap checks still come first: stages 1-5 and Gate 1 call no model and run on all 32 PMs; stage 6 then narrates the 16 static PMs and Gate 2 runs on them; only when Gate 2 passes are the 16 drift PMs narrated, so a narration defect is found before the drift sessions are paid for. Gates 1 and 2 are the whole point of the pilot. A dataset where the planted parameters cannot be recovered from its own ledger and its own dialogue measures nothing.
 

@@ -600,33 +600,36 @@ NEUTRAL_PMS: list[tuple[AssetClass, str]] = [
 MULTI_ASSET_PM_ID = "pm_006"
 
 
+def stage_config_overrides() -> dict:
+    """The overrides behind `stage_config`, for tests that write them to a YAML config file."""
+    return {
+        "calendar": {"start": "2026-01-05", "n_weeks": 12},
+        "population": {
+            "asset_classes": ["equities", "rates_credit", "commodities"],
+            "market_seeds": ["T"],
+            "pilot_market_seeds": ["T"],
+            "pilot_per_cell": 1,
+            "full_per_cell": 1,
+        },
+        "market": {
+            "seeds": {"T": ["range", "risk_off", "risk_on"]},
+            "real": {"seeds": {}},
+            "boundary_weeks": [4, 8],
+            "burn_in_days": 1,
+        },
+        "drift": {
+            "bias_update_weeks": [2, 4],
+            "preference_update_weeks": [2, 10],
+            "dormant_weeks": [5, 7],
+            "revive_weeks": [8, 9],
+        },
+        "engine": {"horizon_days": 10},
+    }
+
+
 def stage_config() -> Config:
     """A config whose published horizon exactly covers the 60-day 'T' fixture market."""
-    return Config.model_validate(
-        {
-            "calendar": {"start": "2026-01-05", "n_weeks": 12},
-            "population": {
-                "asset_classes": ["equities", "rates_credit", "commodities"],
-                "market_seeds": ["T"],
-                "pilot_market_seeds": ["T"],
-                "pilot_per_cell": 1,
-                "full_per_cell": 1,
-            },
-            "market": {
-                "seeds": {"T": ["range", "risk_off", "risk_on"]},
-                "real": {"seeds": {}},
-                "boundary_weeks": [4, 8],
-                "burn_in_days": 1,
-            },
-            "drift": {
-                "bias_update_weeks": [2, 4],
-                "preference_update_weeks": [2, 10],
-                "dormant_weeks": [5, 7],
-                "revive_weeks": [8, 9],
-            },
-            "engine": {"horizon_days": 10},
-        }
-    )
+    return Config.model_validate(stage_config_overrides())
 
 
 def _bad_field_rule(pm_id: str) -> Rule:

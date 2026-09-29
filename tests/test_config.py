@@ -17,6 +17,7 @@ from pm_traitbench.config import (
     EngineConfig,
     EventSpec,
     Gate2Config,
+    HarnessConfig,
     MarketConfig,
     PlanConfig,
     PmFilter,
@@ -1179,3 +1180,13 @@ def test_probes_config_rejects_out_of_range() -> None:
         ProbesConfig(overconfidence_size_edges=(2.0, 1.5))
     with pytest.raises(ValidationError):
         ProbesConfig(overconfidence_size_edges=(0.9, 2.0))
+
+
+def test_harness_defaults() -> None:
+    harness = Config().harness
+    assert isinstance(harness, HarnessConfig)
+    assert harness.model == DEFAULT_MODEL
+    assert harness.effort == Effort.HIGH
+    assert harness.max_answer_tokens == 8000
+    assert harness.short_page_words == 400
+    assert harness.pm_token_budget is None

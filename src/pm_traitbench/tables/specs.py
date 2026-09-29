@@ -24,8 +24,10 @@ from pm_traitbench.tables.schema import (
     Price,
     ProbeRow,
     RegimeSpan,
+    ResponseRow,
     Rule,
     RuleEvent,
+    ScoreRow,
     Session,
     Signal,
     Skeleton,
@@ -103,7 +105,17 @@ VALIDATE_TABLES: tuple[TableSpec, ...] = (VALIDATION,)
 PROBES = TableSpec("probes", ProbeRow, ("pm_id", "probe_id"))
 PROBES_TABLES: tuple[TableSpec, ...] = (PROBES,)
 
+RESPONSES = TableSpec("responses", ResponseRow, ("pm_id", "probe_id"))
+SCORES = TableSpec("scores", ScoreRow, ("pm_id", "probe_id"))
+
+
+def parts_spec(pm_id: str) -> TableSpec:
+    """Spec for one PM's partial responses, written as that PM finishes."""
+    return TableSpec(f"parts/{pm_id}", ResponseRow, ("pm_id", "probe_id"))
+
+
 HIDDEN_COLUMNS: dict[str, tuple[str, ...]] = {
+    "personas": ("typicality",),
     "ledger": ("bias_flag", "rule_id"),
     "ideas": (
         "own_signal",
@@ -136,6 +148,7 @@ def _check_hidden_columns() -> None:
     models_by_table = {
         spec.name: spec.model
         for spec in (
+            PERSONAS,
             *ENGINE_TABLES,
             *PLAN_TABLES,
             *DIALOGUE_TABLES,

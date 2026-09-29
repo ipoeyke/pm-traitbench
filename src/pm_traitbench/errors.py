@@ -101,3 +101,9 @@ class ProbesError(PmTraitbenchError):
     """Raised when the probes stage cannot run or cannot build a probe its inputs promise."""
 
     exit_code = 1
+
+
+class HarnessError(PmTraitbenchError):
+    """Raised when the evaluation harness cannot run a system under test or score its responses."""
+
+    exit_code = 1

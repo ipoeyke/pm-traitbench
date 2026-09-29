@@ -2085,6 +2085,57 @@ class ValidateConfig(BaseModel):
     )
 
 
+class HarnessConfig(BaseModel):
+    """Settings for the evaluation harness: the baseline model and answer limits."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: str = Field(
+        DEFAULT_MODEL,
+        json_schema_extra={
+            "basis": "design",
+            "note": "the Gate 2 model, so the full-context baseline is the Gate 2 ceiling",
+        },
+    )
+    effort: Effort = Field(
+        Effort.HIGH,
+        json_schema_extra={
+            "basis": "design",
+            "note": "Gate 2's recovery effort, so the baseline matches the Gate 2 ceiling",
+        },
+    )
+    max_answer_tokens: int = Field(
+        8000,
+        ge=256,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "high-effort thinking plus a reply up to a short page; a reply still "
+                "unparsable after retries is recorded empty and scores wrong"
+            ),
+        },
+    )
+    short_page_words: int = Field(
+        400,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": 'about half a printed page, the ceiling for "up to a short page"',
+        },
+    )
+    pm_token_budget: int | None = Field(
+        None,
+        ge=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "cap on fresh tokens per PM for a baseline, since each PM's adapter owns "
+                "its client; spending it fails that PM"
+            ),
+        },
+    )
+
+
 class Gate2Config(BaseModel):
     """Settings for Gate 2: the recovery model, exact-test level, overlap measure and limits."""
 
@@ -2342,6 +2393,7 @@ class Config(BaseModel):
     dialogue: DialogueConfig = Field(default_factory=DialogueConfig)
     validation: ValidateConfig = Field(default_factory=ValidateConfig)
     gate2: Gate2Config = Field(default_factory=Gate2Config)
+    harness: HarnessConfig = Field(default_factory=HarnessConfig)
     probes: ProbesConfig = Field(default_factory=ProbesConfig)
 
     @model_validator(mode="after")

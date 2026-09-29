@@ -441,3 +441,42 @@ class ProbeSkip(StrEnum):
     NO_SUPPORT = "no_supporting_signal"
     NO_SITUATION = "no_situation"
     NO_HORIZON = "no_horizon"
+
+
+class Scorer(StrEnum):
+    OPTION_LETTER = "option_letter"
+    FORMAT = "format"
+
+
+class FormatOutcome(StrEnum):
+    PASS = "pass"
+    FAIL = "fail"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class CheckKind(StrEnum):
+    BULLETS = "bullets"
+    PROSE_PARAGRAPH = "prose_paragraph"
+    TABLE = "table"
+    HEADERS = "headers"
+    UNITS_BP = "units_bp"
+    UNITS_PERCENT = "units_percent"
+    UNITS_BOTH = "units_both"
+    ONE_SENTENCE = "one_sentence"
+    TWO_TO_THREE_SENTENCES = "two_to_three_sentences"
+    SHORT_PAGE = "short_page"
+    NO_HEDGES = "no_hedges"
+    CONFIDENCE_LEVEL = "confidence_level"
+    JUDGE = "judge"
+
+
+class RunStatus(StrEnum):
+    RUNNING = "running"
+    FINISHED = "finished"
+
+
+class EvidenceType(StrEnum):
+    EXPLICIT = "explicit"
+    IMPLICIT = "implicit"
+    MIXED = "mixed"
+    NONE = "none"
