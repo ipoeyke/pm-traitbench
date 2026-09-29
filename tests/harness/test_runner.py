@@ -227,6 +227,34 @@ def test_changed_probes_without_force_raises(tmp_path) -> None:
         _run(config, store, recording_factory()[0])
 
 
+def test_resume_with_a_different_sut_raises_without_force(tmp_path) -> None:
+    config, store = _synthetic_corpus(tmp_path)
+    _run(config, store, recording_factory()[0])
+
+    with pytest.raises(HarnessError, match="--force"):
+        run_sut(config, store, recording_factory()[0], sut_name="other", run_name="r1")
+
+    factory, built = recording_factory()
+    run_sut(config, store, factory, sut_name="other", run_name="r1", force=True)
+    assert sorted(built) == list(SYNTHETIC_PMS)
+
+
+def test_resume_with_changed_harness_config_raises_without_force(tmp_path) -> None:
+    config, store = _synthetic_corpus(tmp_path)
+    _run(config, store, recording_factory()[0])
+    harness = config.harness.model_copy(
+        update={"max_answer_tokens": config.harness.max_answer_tokens + 1}
+    )
+    changed = config.model_copy(update={"harness": harness})
+
+    with pytest.raises(HarnessError, match="--force"):
+        _run(changed, store, recording_factory()[0])
+
+    factory, built = recording_factory()
+    _run(changed, store, factory, force=True)
+    assert sorted(built) == list(SYNTHETIC_PMS)
+
+
 def test_workers_give_same_responses(tmp_path) -> None:
     config, store = _synthetic_corpus(tmp_path)
 

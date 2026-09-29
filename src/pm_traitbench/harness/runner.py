@@ -156,10 +156,20 @@ def run_sut(
     run_store = DataStore(rd, config.output)
 
     previous = run_store.read_run_metadata(RUN_METADATA)
-    if previous is not None and previous.get("probes_sha256") != digest:
-        raise HarnessError(
-            f"run '{run_name}' was made from different probes; rerun with --force to replace it"
-        )
+    if previous is not None:
+        current_harness = config.harness.model_dump(mode="json")
+        if previous.get("probes_sha256") != digest:
+            reason = "different probes"
+        elif previous.get("sut") != sut_name:
+            reason = f"system '{previous.get('sut')}'"
+        elif previous.get("config", {}).get("harness") != current_harness:
+            reason = "a different harness config"
+        else:
+            reason = None
+        if reason is not None:
+            raise HarnessError(
+                f"run '{run_name}' was made from {reason}; rerun with --force to replace it"
+            )
 
     # Recorded before any part is written, so an interrupted run still pins its probes.
     def write_metadata(status: str, completed, skipped, failed, seconds) -> None:
