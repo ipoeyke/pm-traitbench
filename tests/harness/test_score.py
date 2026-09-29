@@ -6,10 +6,10 @@ from datetime import date
 import pytest
 
 from pm_traitbench.catalogues.loader import load_catalogue
-from pm_traitbench.enums import Kind, ProbeForm, ProbeType, Scorer, SignalMode
+from pm_traitbench.enums import Kind, OptionSource, ProbeForm, ProbeType, Scorer, SignalMode
 from pm_traitbench.errors import HarnessError
 from pm_traitbench.harness.checks import load_check_map
-from pm_traitbench.harness.runner import RUN_METADATA, run_dir, run_sut
+from pm_traitbench.harness.runner import RUN_METADATA, probes_sha256, run_dir, run_sut
 from pm_traitbench.harness.score import (
     SCORE_METADATA,
     evidence_type,
@@ -19,7 +19,7 @@ from pm_traitbench.harness.score import (
     score_run,
     summarise,
 )
-from pm_traitbench.tables.schema import ScoreRow, probe_id
+from pm_traitbench.tables.schema import ProbeRow, ScoreRow, probe_id
 from pm_traitbench.tables.specs import PROBES, RESPONSES, SCORES
 from pm_traitbench.tables.store import DataStore
 from tests.engine.fixtures import stage_config
@@ -51,10 +51,10 @@ def test_parse_letter_first_token_decides() -> None:
 
 
 def test_option_letter_score_and_parse_error() -> None:
-    row = probe_row("pm_001", 1, DAY, options=("x", "y", "z")).model_copy(update={"answer": "B"})
+    row = probe_row("pm_001", 1, DAY, options=("x", "y", "z"))
 
-    right = score_option_letter(row, "B) because")
-    wrong = score_option_letter(row, "A")
+    right = score_option_letter(row, "A) because")
+    wrong = score_option_letter(row, "B")
     bad = score_option_letter(row, "no idea")
 
     assert (right.correct, right.detail, right.scorer) == (True, None, Scorer.OPTION_LETTER)
@@ -119,15 +119,23 @@ def _score(row, correct: bool, scorer=Scorer.OPTION_LETTER) -> ScoreRow:
     )
 
 
-def _presence(n: int, answer: str):
+def _variant(row: ProbeRow, **update) -> ProbeRow:
+    """A validated copy of `row` with fields replaced."""
+    return ProbeRow.model_validate({**row.model_dump(), **update})
+
+
+def _presence(n: int, answer: str, trait_id: str | None = "t_01") -> ProbeRow:
+    """A presence probe; source_a is current exactly when the answer is A."""
     base = probe_row("pm_001", n, DAY, options=("yes", "no", "z"))
-    return base.model_copy(
-        update={
-            "probe_type": ProbeType.TRAIT_PRESENCE,
-            "option_c": None,
-            "source_c": None,
-            "answer": answer,
-        }
+    return _variant(
+        base,
+        probe_type=ProbeType.TRAIT_PRESENCE,
+        trait_id=trait_id,
+        option_c=None,
+        source_b=None,
+        source_c=None,
+        answer=answer,
+        source_a=OptionSource.CURRENT if answer == "A" else OptionSource.PRE_UPDATE,
     )
 
 
@@ -157,8 +165,8 @@ def test_summary_chance_and_presence_balance() -> None:
 
 def test_summary_slices_and_parse_errors() -> None:
     a = probe_row("pm_001", 1, DAY, trait_id="t_01")
-    b = probe_row("pm_001", 2, DAY).model_copy(update={"trait_id": None})
-    sig = a.model_copy(update={"supporting_signal_ids": ("s1",)})
+    b = _presence(2, "B", trait_id=None)
+    sig = _variant(a, supporting_signal_ids=("sg_001",))
     scores = [
         _score(sig, True),
         ScoreRow(
@@ -171,7 +179,7 @@ def test_summary_slices_and_parse_errors() -> None:
     ]
 
     summary = summarise(
-        [sig, b], scores, {("pm_001", "t_01"): Kind.PREFERENCE}, {"s1": SignalMode.STATED}
+        [sig, b], scores, {("pm_001", "t_01"): Kind.PREFERENCE}, {"sg_001": SignalMode.STATED}
     )
 
     sl = summary["slices"]["option_letter"]
@@ -184,7 +192,18 @@ def test_summary_slices_and_parse_errors() -> None:
         "none": {"n": 1, "accuracy": 0.0},
     }
     assert sl["checkpoint_label"] == {"week4": {"n": 2, "accuracy": 0.5}}
-    assert summary["by_type"][0]["parse_errors"] == 1
+    assert sum(e["parse_errors"] for e in summary["by_type"]) == 1
+
+
+def test_evidence_type_unknown_signal_raises() -> None:
+    with pytest.raises(HarnessError, match="sg_009"):
+        evidence_type(["sg_009"], {})
+
+
+def test_format_score_unmapped_value_raises(check_map) -> None:
+    row = _routine("format: response_format=telepathy; intrusion: none")
+    with pytest.raises(HarnessError, match="telepathy"):
+        score_format(row, BULLETS, check_map, 400)
 
 
 def test_summary_unknown_trait_raises() -> None:
@@ -241,12 +260,6 @@ def _corpus(tmp_path):
     return config, store
 
 
-def _digest(store):
-    from pm_traitbench.harness.runner import probes_sha256
-
-    return probes_sha256(store)
-
-
 def test_score_run_refuses_missing_run(tmp_path) -> None:
     config, store = _corpus(tmp_path)
     with pytest.raises(HarnessError, match="r1"):
@@ -255,14 +268,14 @@ def test_score_run_refuses_missing_run(tmp_path) -> None:
 
 def test_score_run_refuses_failed_run(tmp_path) -> None:
     config, store = _corpus(tmp_path)
-    _run_store(tmp_path, config, probes_sha256=_digest(store), pms_failed={"pm_001": "boom"})
+    _run_store(tmp_path, config, probes_sha256=probes_sha256(store), pms_failed={"pm_001": "boom"})
     with pytest.raises(HarnessError, match="pm_001"):
         score_run(config, store, "r1")
 
 
 def test_score_run_refuses_unfinished_run(tmp_path) -> None:
     config, store = _corpus(tmp_path)
-    _run_store(tmp_path, config, probes_sha256=_digest(store), status="running")
+    _run_store(tmp_path, config, probes_sha256=probes_sha256(store), status="running")
     with pytest.raises(HarnessError, match="finished"):
         score_run(config, store, "r1")
 
@@ -276,7 +289,7 @@ def test_score_run_refuses_changed_probes(tmp_path) -> None:
 
 def test_score_run_refuses_missing_response(tmp_path) -> None:
     config, store = _corpus(tmp_path)
-    run_store = _run_store(tmp_path, config, probes_sha256=_digest(store))
+    run_store = _run_store(tmp_path, config, probes_sha256=probes_sha256(store))
     run_store.write(RESPONSES, [])
     with pytest.raises(HarnessError, match=probe_id("pm_001", 1)):
         score_run(config, store, "r1")

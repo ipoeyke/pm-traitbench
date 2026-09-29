@@ -72,11 +72,14 @@ def score_format(
 
     Returns None when every held preference needs a judge, so no score row exists.
     """
-    held = [
-        (param, value)
-        for param, value in parse_routine_answer(row.answer)
-        if param in CHECKED_PARAMS and check_map[(param, value)] != CheckKind.JUDGE
-    ]
+    held = []
+    for param, value in parse_routine_answer(row.answer):
+        if param not in CHECKED_PARAMS:
+            continue
+        if (param, value) not in check_map:
+            raise HarnessError(f"probe {row.probe_id}: no check for {param}={value}")
+        if check_map[(param, value)] != CheckKind.JUDGE:
+            held.append((param, value))
     if not held:
         return None
     failed = [
@@ -156,6 +159,7 @@ def summarise(
 
     by_type = []
     for (probe_type, form, scorer), rows in sorted(typed.items()):
+        correct = sum(s.correct for s in rows)
         chance = None
         if scorer == Scorer.OPTION_LETTER:
             option_counts = [len(_options(by_id[s.probe_id])) for s in rows]
@@ -166,8 +170,8 @@ def summarise(
                 "form": form,
                 "scorer": scorer,
                 "n": len(rows),
-                "correct": sum(s.correct for s in rows),
-                "accuracy": sum(s.correct for s in rows) / len(rows),
+                "correct": correct,
+                "accuracy": correct / len(rows),
                 "chance": chance,
                 "parse_errors": sum(s.detail == "parse_error" for s in rows),
             }
@@ -203,7 +207,7 @@ def _count(probes: Sequence[ProbeRow], probe_type: ProbeType, form: ProbeForm) -
     return sum(p.probe_type == probe_type and p.form == form for p in probes)
 
 
-def _check_run(config: Config, store: DataStore, run_store: DataStore, run_name: str) -> None:
+def _check_run(store: DataStore, run_store: DataStore, run_name: str) -> None:
     meta = run_store.read_run_metadata(RUN_METADATA)
     if meta is None:
         raise HarnessError(f"run '{run_name}' has no run metadata; run the evaluation first")
@@ -223,7 +227,7 @@ def score_run(config: Config, store: DataStore, run_name: str) -> dict[str, Any]
     """Score a finished run's responses, write scores and summary.json, and return the summary."""
     rd = run_dir(store.data_dir, run_name)
     run_store = DataStore(rd, config.output)
-    _check_run(config, store, run_store, run_name)
+    _check_run(store, run_store, run_name)
 
     responses = {r.probe_id: r.response for r in run_store.read(RESPONSES)}
     probes = store.read(PROBES)
