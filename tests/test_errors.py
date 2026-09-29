@@ -7,6 +7,7 @@ from pm_traitbench.errors import (
     DialogueError,
     EngineError,
     Gate1Error,
+    HarnessError,
     MarketCheckError,
     PlanError,
     PmTraitbenchError,
@@ -30,6 +31,7 @@ from pm_traitbench.errors import (
         (PlanError, 1),
         (DialogueError, 1),
         (DialogueBudgetError, 1),
+        (HarnessError, 1),
     ],
 )
 def test_subclass_is_pm_traitbench_error_with_exit_code(

@@ -46,6 +46,7 @@ from pm_traitbench.enums import (
     RuleResponse,
     RuleScope,
     RuleSource,
+    Scorer,
     SeedGroupKind,
     SessionKind,
     Side,
@@ -99,6 +100,7 @@ __all__ = [
     "MentionKind",
     "AdvisorTool",
     "ProbeType",
+    "Scorer",
     "ProbeForm",
     "CheckpointLabel",
     "OptionSource",
@@ -137,6 +139,8 @@ __all__ = [
     "Gate2PmRow",
     "Gate2CellRow",
     "ProbeRow",
+    "ResponseRow",
+    "ScoreRow",
     "probe_id",
     "to_record",
     "multiplier_field",
@@ -1614,3 +1618,46 @@ def to_record(row: BaseModel) -> dict[str, Any]:
 def multiplier_field(regime: Regime) -> str:
     """Return the Trait multiplier field name for a regime."""
     return "mult_" + regime.value
+
+
+def _check_probe_prefix(probe_id: str, pm_id: str) -> None:
+    prefix = f"p_{pm_id.replace('_', '')}_"
+    if not probe_id.startswith(prefix):
+        raise ValueError(f"probe_id must start with '{prefix}'")
+
+
+class ResponseRow(BaseModel):
+    """One system's reply to one probe."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    probe_id: str = Field(pattern=_PROBE_ID_PATTERN, description="Probe the reply answers.")
+    pm_id: str = Field(pattern=_PM_ID_PATTERN, description="PM the probe is asked about.")
+    response: str = Field(
+        description="The system's reply; empty when it returned nothing, which scores as wrong."
+    )
+    latency_ms: int = Field(ge=0, description="Wall-clock time the system took to answer.")
+
+    @model_validator(mode="after")
+    def _check_probe_id_prefix(self) -> "ResponseRow":
+        _check_probe_prefix(self.probe_id, self.pm_id)
+        return self
+
+
+class ScoreRow(BaseModel):
+    """The verdict on one reply."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    probe_id: str = Field(pattern=_PROBE_ID_PATTERN, description="Probe that was scored.")
+    pm_id: str = Field(pattern=_PM_ID_PATTERN, description="PM the probe is asked about.")
+    scorer: Scorer = Field(description="Which scorer produced the verdict.")
+    correct: bool = Field(description="Whether the reply matched the ground truth.")
+    detail: str | None = Field(
+        min_length=1, description="Why the reply was marked as it was; null when nothing to add."
+    )
+
+    @model_validator(mode="after")
+    def _check_probe_id_prefix(self) -> "ScoreRow":
+        _check_probe_prefix(self.probe_id, self.pm_id)
+        return self

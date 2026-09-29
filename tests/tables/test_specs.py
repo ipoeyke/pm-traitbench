@@ -3,6 +3,7 @@ from pm_traitbench.tables.specs import (
     DIALOGUE_TABLES,
     ENGINE_TABLES,
     HIDDEN_COLUMNS,
+    PERSONAS,
     PLAN_TABLES,
     POSITION_DAYS,
     PROBES_TABLES,
@@ -26,6 +27,7 @@ def test_hidden_columns_names_real_columns() -> None:
     models_by_table = {
         spec.name: spec.model
         for spec in (
+            PERSONAS,
             *ENGINE_TABLES,
             *PLAN_TABLES,
             *DIALOGUE_TABLES,
@@ -37,6 +39,10 @@ def test_hidden_columns_names_real_columns() -> None:
         model = models_by_table[table_name]
         for column in hidden:
             assert column in model.model_fields, f"{column} is not a field of {model.__name__}"
+
+
+def test_personas_typicality_is_hidden() -> None:
+    assert "typicality" in HIDDEN_COLUMNS["personas"]
 
 
 def test_position_days_hidden_columns_equal_non_key_columns() -> None:

@@ -441,3 +441,14 @@ class ProbeSkip(StrEnum):
     NO_SUPPORT = "no_supporting_signal"
     NO_SITUATION = "no_situation"
     NO_HORIZON = "no_horizon"
+
+
+class Scorer(StrEnum):
+    OPTION_LETTER = "option_letter"
+    FORMAT = "format"
+
+
+class FormatOutcome(StrEnum):
+    PASS = "pass"
+    FAIL = "fail"
+    NOT_APPLICABLE = "not_applicable"

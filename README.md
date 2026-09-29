@@ -64,7 +64,9 @@ the previous run's idea-scope rules rather than adding to them.
 `ledger` also carry hidden columns: the PM's own signal, forecast and
 interval, its street-view context, conviction and size rank on `ideas`,
 whether the entry chased a trend that had already run, and each order's bias
-flag and driving rule on `ledger`. Hidden data is generator provenance for
+flag and driving rule on `ledger`. `personas.typicality` is hidden too: it
+says whether the self-description contradicts the PM's strongest biases.
+Hidden data is generator provenance for
 checking the engine itself and is never shown to a system under test. The
 `gate1` stage recovers each direct-asset PM's eight planted biases from the
 engine's ledger and pools them per asset class, writing `gate1_pm` and

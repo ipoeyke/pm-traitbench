@@ -315,7 +315,7 @@ Every table is JSONL by default: one format holds both the flat tables and the n
 
 ```
 pm-traitbench/
-  personas.jsonl      # one row per PM: pm_id, market_seed, split (pilot | full), mandate, stated_profile, typicality
+  personas.jsonl      # one row per PM: pm_id, market_seed, split (pilot | full), mandate, stated_profile, typicality (typicality hidden)
   rules.jsonl         # pm_id, rule_id, source (self | mandate), scope (pm | idea), trade_idea_id, param, field, op, level, unit, window, action, text
   traits.jsonl        # pm_id, trait_id, kind, param, value, active, mult_range, mult_risk_off, mult_risk_on
   drift_events.jsonl  # pm_id, date, event, trait_id, from, to
@@ -619,7 +619,7 @@ erDiagram
         string split "pilot, full"
         json mandate "asset_class, sub_style, book_size, risk_unit, benchmark"
         json stated_profile "self_description"
-        string typicality "typical, anti_typical"
+        string typicality "hidden: typical, anti_typical"
     }
     RULES {
         string rule_id PK
