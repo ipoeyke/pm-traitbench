@@ -102,6 +102,19 @@ def test_format_score_none_when_only_judge_values(check_map) -> None:
     assert score_format(row, BULLETS, check_map, 400) is None
 
 
+def test_format_score_empty_reply_is_incorrect(check_map) -> None:
+    row = _routine("format: response_format=short bullets; intrusion: none")
+    for reply in ("", "  \n\t"):
+        score = score_format(row, reply, check_map, 400)
+        assert score is not None and (score.correct, score.detail) == (False, "empty_reply")
+
+
+def test_format_score_none_when_every_check_is_not_applicable(check_map) -> None:
+    row = _routine("format: number_language=quote moves in basis points; intrusion: none")
+    assert score_format(row, "Nothing has changed.", check_map, 400) is None
+    assert score_format(row, "Up 12 bp.", check_map, 400).correct
+
+
 def test_evidence_type() -> None:
     modes = {
         "a": SignalMode.STATED,
@@ -149,7 +162,7 @@ def test_summary_chance_and_presence_balance() -> None:
     scores += [_score(mcq4, True), _score(mcq3, False)]
     kinds = {("pm_001", "t_01"): Kind.BIAS}
 
-    summary = summarise(probes, scores, kinds, {})
+    summary = summarise(probes, scores, kinds, {}, {})
 
     assert summary["presence"] == {
         "yes": {"n": 1, "accuracy": 0.0},
@@ -180,7 +193,11 @@ def test_summary_slices_and_parse_errors() -> None:
     ]
 
     summary = summarise(
-        [sig, b], scores, {("pm_001", "t_01"): Kind.PREFERENCE}, {"sg_001": SignalMode.STATED}
+        [sig, b],
+        scores,
+        {("pm_001", "t_01"): Kind.PREFERENCE},
+        {"sg_001": SignalMode.STATED},
+        {},
     )
 
     sl = summary["slices"]["option_letter"]
@@ -210,11 +227,11 @@ def test_format_score_unmapped_value_raises(check_map) -> None:
 def test_summary_unknown_trait_raises() -> None:
     a = probe_row("pm_001", 1, DAY, trait_id="t_09")
     with pytest.raises(HarnessError, match="t_09"):
-        summarise([a], [_score(a, True)], {}, {})
+        summarise([a], [_score(a, True)], {}, {}, {})
 
 
-def test_awaiting_judge_counts() -> None:
-    def open_probe(n, kind):
+def test_awaiting_judge_counts(check_map) -> None:
+    def open_probe(n, kind, answer="x"):
         return probe_row(
             "pm_001",
             n,
@@ -222,26 +239,31 @@ def test_awaiting_judge_counts() -> None:
             form=ProbeForm.OPEN,
             probe_type=kind,
             options=(),
-            answer="x",
+            answer=answer,
             trait_id=None if kind == ProbeType.ROUTINE_QUESTION else "t_01",
         )
+
+    def routine(n, body):
+        return open_probe(n, ProbeType.ROUTINE_QUESTION, f"format: {body}; intrusion: none")
 
     probes = [
         open_probe(1, ProbeType.TRAIT_MCQ),
         open_probe(2, ProbeType.IN_SITU),
         open_probe(3, ProbeType.GOVERNANCE),
-        open_probe(4, ProbeType.ROUTINE_QUESTION),
-        open_probe(5, ProbeType.ROUTINE_QUESTION),
+        routine(4, "response_format=short bullets"),
+        routine(5, "number_language=quote moves in percent"),
+        routine(6, "register=terse"),
     ]
     scores = [_score(probes[3], True, Scorer.FORMAT)]
 
-    summary = summarise(probes, scores, {}, {})
+    summary = summarise(probes, scores, {}, {}, check_map)
 
     assert summary["awaiting_judge"] == {
         "trait_mcq/open": 1,
         "in_situ/open": 1,
         "governance/open": 1,
-        "routine_question/intrusion": 2,
+        "routine_question/intrusion": 3,
+        "routine_question/format_not_applicable": 1,
         "routine_question/format_judge_only": 1,
     }
 
@@ -298,6 +320,11 @@ def test_score_run_refuses_missing_response(tmp_path) -> None:
 
 def test_score_run_end_to_end(tmp_path, fixture_market, neutral_pm, monkeypatch) -> None:
     config, store = validated_corpus_with_probes(tmp_path, fixture_market, neutral_pm, monkeypatch)
+    # The neutral fixture PM holds no preferences, so give one routine probe a checkable one.
+    probes = store.read(PROBES)
+    first = next(p for p in probes if p.probe_type == ProbeType.ROUTINE_QUESTION)
+    keyed = _variant(first, answer="format: response_format=short bullets; intrusion: none")
+    store.write(PROBES, [keyed if p.probe_id == first.probe_id else p for p in probes])
     root = config.seed.root
     answers = {opaque_probe_id(root, p.probe_id): p.answer for p in store.read(PROBES)}
 
@@ -317,5 +344,6 @@ def test_score_run_end_to_end(tmp_path, fixture_market, neutral_pm, monkeypatch)
     assert json.loads((rd / "summary.json").read_text("utf-8")) == summary
     letter = [e for e in summary["by_type"] if e["scorer"] == "option_letter"]
     assert letter and all(e["accuracy"] == 1.0 for e in letter)
+    assert [e["n"] for e in summary["by_type"] if e["scorer"] == "format"] == [1]
     metadata = run_store.read_run_metadata(SCORE_METADATA)
     assert metadata["n_scored"] == len(run_store.read(SCORES))

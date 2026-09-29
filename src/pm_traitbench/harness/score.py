@@ -62,16 +62,10 @@ def score_option_letter(row: ProbeRow, response: str) -> ScoreRow:
     )
 
 
-def score_format(
-    row: ProbeRow,
-    response: str,
-    check_map: dict[tuple[str, str], CheckKind],
-    short_page_words: int,
-) -> ScoreRow | None:
-    """Score a routine reply on the held preferences that have a deterministic check.
-
-    Returns None when every held preference needs a judge, so no score row exists.
-    """
+def checkable_values(
+    row: ProbeRow, check_map: Mapping[tuple[str, str], CheckKind]
+) -> list[tuple[str, str]]:
+    """The routine probe's held (param, value) pairs that have a deterministic check."""
     held = []
     for param, value in parse_routine_answer(row.answer):
         if param not in CHECKED_PARAMS:
@@ -80,19 +74,42 @@ def score_format(
             raise HarnessError(f"probe {row.probe_id}: no check for {param}={value}")
         if check_map[(param, value)] != CheckKind.JUDGE:
             held.append((param, value))
+    return held
+
+
+def score_format(
+    row: ProbeRow,
+    response: str,
+    check_map: Mapping[tuple[str, str], CheckKind],
+    short_page_words: int,
+) -> ScoreRow | None:
+    """Score a routine reply on the held preferences that have a deterministic check.
+
+    Returns None, so no score row exists, when no held value has a check or every
+    check is not applicable to the reply. An empty reply is incorrect.
+    """
+    held = checkable_values(row, check_map)
     if not held:
         return None
-    failed = [
-        f"{param}={value}"
+    if not response.strip():
+        return _format_row(row, False, "empty_reply")
+    outcomes = [
+        (f"{param}={value}", run_check(check_map[(param, value)], response, short_page_words))
         for param, value in held
-        if run_check(check_map[(param, value)], response, short_page_words) == FormatOutcome.FAIL
     ]
+    if all(outcome == FormatOutcome.NOT_APPLICABLE for _, outcome in outcomes):
+        return None
+    failed = [name for name, outcome in outcomes if outcome == FormatOutcome.FAIL]
+    return _format_row(row, not failed, "; ".join(failed) or None)
+
+
+def _format_row(row: ProbeRow, correct: bool, detail: str | None) -> ScoreRow:
     return ScoreRow(
         probe_id=row.probe_id,
         pm_id=row.pm_id,
         scorer=Scorer.FORMAT,
-        correct=not failed,
-        detail="; ".join(failed) or None,
+        correct=correct,
+        detail=detail,
     )
 
 
@@ -124,6 +141,7 @@ def summarise(
     scores: Sequence[ScoreRow],
     kinds: Mapping[tuple[str, str], Kind],
     modes: Mapping[str, SignalMode],
+    check_map: Mapping[tuple[str, str], CheckKind],
 ) -> dict[str, Any]:
     """Aggregate scores by probe type, slice dimension and presence answer.
 
@@ -179,12 +197,15 @@ def summarise(
 
     scored = {s.probe_id for s in scores if s.scorer == Scorer.FORMAT}
     routine = [p for p in probes if p.probe_type == ProbeType.ROUTINE_QUESTION]
+    unscored = [p for p in routine if p.probe_id not in scored]
+    not_applicable = sum(bool(checkable_values(p, check_map)) for p in unscored)
     awaiting = {
         "trait_mcq/open": _count(probes, ProbeType.TRAIT_MCQ, ProbeForm.OPEN),
         "in_situ/open": _count(probes, ProbeType.IN_SITU, ProbeForm.OPEN),
         "governance/open": _count(probes, ProbeType.GOVERNANCE, ProbeForm.OPEN),
         "routine_question/intrusion": len(routine),
-        "routine_question/format_judge_only": sum(p.probe_id not in scored for p in routine),
+        "routine_question/format_not_applicable": not_applicable,
+        "routine_question/format_judge_only": len(unscored) - not_applicable,
     }
     accuracies = {k: (_rate(v)["accuracy"] if v else None) for k, v in presence.items()}
     both = all(presence.values())
@@ -249,7 +270,7 @@ def score_run(config: Config, store: DataStore, run_name: str) -> dict[str, Any]
 
     kinds = {(t.pm_id, t.trait_id): t.kind for t in store.read(TRAITS)}
     modes = {s.signal_id: s.mode for s in store.read(SIGNALS)}
-    summary = summarise(probes, scores, kinds, modes)
+    summary = summarise(probes, scores, kinds, modes, check_map)
     run_store.write(SCORES, scores)
     (rd / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
