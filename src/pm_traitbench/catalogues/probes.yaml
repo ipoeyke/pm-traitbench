@@ -80,8 +80,8 @@ biases:
     behaviour: "buy a name because it has just run hard"
     situation:
       all:
-      - "{instrument} is at {level}. The PM's thesis expects a move of {thesis_sd} standard deviations, while the last few sessions moved {trailing_sd}. What does the PM do?"
-      - "The PM's thesis on {instrument} at {level} implies {thesis_sd} standard deviations, but the recent run was {trailing_sd}. What does the PM do next?"
+      - "{instrument} is at {level}. The PM's thesis says it is worth about {thesis_sd} normal moves LOWER over the next {horizon} sessions, while it has just run about {trailing_sd} normal moves HIGHER over the last {horizon} sessions. What does the PM do?"
+      - "On {instrument} at {level}, the PM's thesis is that it falls about {thesis_sd} normal moves over the next {horizon} sessions, yet it has just risen about {trailing_sd} normal moves over the last {horizon} sessions. What does the PM do next?"
     actions:
     - "buy into the run"
     - "stand aside"
@@ -106,7 +106,7 @@ biases:
       - "On {instrument} at {level}, the street is {street} and the PM's read is {own_side}. What does the PM do?"
     actions:
     - "put the trade on the street's side"
-    - "put it on the own read's side"
+    - "trade in the direction of its own read"
     - "stand aside"
     - "put it on hedged"
     in_situ:
@@ -125,8 +125,8 @@ biases:
     behaviour: "size up on a tight range of outcomes"
     situation:
       all:
-      - "The PM has a fresh idea in {instrument} at {level} and expects a tight range of outcomes. How does the PM size it?"
-      - "For {instrument} at {level}, the PM is sure of the read and sees little room to be wrong. How does the PM size the trade?"
+      - "The PM has a fresh idea in {instrument} at {level} and has stated the range it expects the price to finish in four times out of five. How does the PM size it?"
+      - "For {instrument} at {level}, the PM has a fresh idea and has stated the range it expects the price to finish in four times out of five. How does the PM size the trade?"
     actions:
     - "size it at two times standard or more"
     - "about one and a half times standard"

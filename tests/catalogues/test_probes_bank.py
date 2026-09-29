@@ -111,3 +111,13 @@ def test_single_line_key_raises(tmp_path: Path) -> None:
 
     with pytest.raises(CatalogueError, match="routine.*fewer than 2"):
         _check_modified(tmp_path, mutate)
+
+
+def test_bias_param_name_in_situation_raises(tmp_path: Path) -> None:
+    def mutate(d: dict[str, Any]) -> None:
+        d["biases"]["herding_weight"]["situation"]["all"][0] = (
+            "The PM has a high loss_aversion_lambda on {instrument} at {level}."
+        )
+
+    with pytest.raises(CatalogueError, match="herding_weight.*loss_aversion_lambda"):
+        _check_modified(tmp_path, mutate)
