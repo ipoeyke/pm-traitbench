@@ -60,8 +60,10 @@ which traits the validated dialogue shows and writes `gate2_traits`,
 row fails - one one-sided Fisher exact test per bias parameter and one
 pooled Poisson-binomial test over every held preference, at `gate2.alpha`.
 A blocking row below `gate2.min_class` PMs either side is `insufficient`
-and reported but never blocks. The `probes` stage writes `probes`, one row per question with ground truth at each checkpoint of a PM's schedule, calling no model; `answer`, the option sources and the supporting signal ids are hidden columns. Pass `--force` to overwrite a table that already
-exists. Run `uv run pm-traitbench --help` for the full command list.
+and reported but never blocks. The `probes` stage writes `probes`, one row per question with ground truth at
+each checkpoint of a PM's schedule, calling no model; `answer`, the option
+sources and the supporting signal ids are hidden columns. Pass `--force` to
+overwrite a table that already exists. Run `uv run pm-traitbench --help` for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
 market seed, as the default and demo configs both do for their pilot seed;
@@ -658,7 +660,7 @@ decision functions, and every question comes from an authored bank.
 label, each the last trading day of a week: `week4`, `week13`, `week52` (the
 timeline's last week), `pre_drift` (the week before each drift event),
 `post_drift` (`probes.post_drift_weeks` weeks after it) and `regime_shift`
-(the week after each regime span of the PM's market seed except the first). A
+(the week after each regime boundary of the PM's market seed). A
 week outside the timeline is dropped. When labels share a date the earliest
 of `pre_drift`, `post_drift`, `regime_shift`, `week4`, `week13`, `week52`
 wins, since the drift labels are the rarer and are what drift analysis slices

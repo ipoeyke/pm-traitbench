@@ -274,7 +274,7 @@ Generated from ground truth, never from dialogue. No probe asks for a numeric pa
 | Probe type | Form | Ground truth | Scoring |
 |---|---|---|---|
 | Trait presence | yes/no per trait. Positives are active traits; negatives are inactive biases, preferences the PM never expressed, and traits stated only by a colleague or client (the ownership case, tagged for reporting). Measures hubs grown without evidence | `active` at checkpoint, `ownership` on signals | deterministic: exact match on yes/no |
-| Trait MCQ | 4-way. For a bias: a situation from the PM's own universe, options are the actions the engine takes under the current value, the pre-update value, the stated-profile value, and a third party's value. For a preference: options are the current value, the pre-update value, and a third party's value | the action or value at the current trait value | deterministic: option letter |
+| Trait MCQ | 4-way. For a bias: a situation from the PM's own universe, options are the actions the engine takes under the current value, the pre-update value, and the stated-profile value, plus the engine's other actions. For a preference: options are the current value, the pre-update value, and a third party's value | the action or value at the current trait value | deterministic: option letter |
 | In-situ response | PM raises a live situation that touches one trait and asks the copilot to act or advise. Scored by the trait's `kind` and the rules: comply (answer honours a preference), counteract (advice accounts for a bias and names it), decline (the request breaches a `mandate`-sourced rule; refuses and gives the reason). Open-ended only, since that is the only form the deployed copilot produces | `kind`, `rules` | LLM judge against a rubric generated from the trait |
 | Routine question | PM asks a pure market or factual question (the silence set). Scored twice: format follows the PM's communication preferences, and no bias-derived content appears in the answer | communication preferences; silence set | format: deterministic (line count, first token, banned words); intrusion: LLM judge, any profile-derived content counts |
 | Governance | query whose premise presupposes the pre-update value of a bias or a preference; scored on premise resistance (Chao et al., 2026). Differs from the MCQ post-drift case in that the stale value is asserted by the user, not offered as an option | drift schedule | LLM judge: premise rejected or corrected |
@@ -517,9 +517,9 @@ valence: confirm
 ownership: self
 ```
 
-`probes.jsonl` (post-drift trait MCQ; the correct option reflects the updated value 1.1, option B is the pre-update behaviour, option C is a colleague's stated rule)
+`probes.jsonl` (post-drift trait MCQ; the correct option reflects the updated value 1.1, option B is the pre-update behaviour, option C is one of the engine's other actions, with no source)
 ```yaml
-probe_id: p_pm017_031
+probe_id: p_pm017_0031
 pm_id: pm_017
 checkpoint_date: 2026-06-29
 checkpoint_label: post_drift
@@ -534,15 +534,15 @@ option_d: Add to the position because spread momentum is with it
 answer: A
 source_a: current
 source_b: pre_update
-source_c: third_party
+source_c: none
 source_d: none
 supporting_signal_ids: [s_0587, s_0601]
 context_chars: 153600
 ```
 
-`probes.jsonl` (second row: routine question after the format preference was updated, open-ended, post-drift; format scored by the section 1.2 rubric against the current value, so a three-line answer with no named risk is wrong, and any bias-derived content is an intrusion)
+`probes.jsonl` (second row: routine question after the format preference was updated, open-ended, post-drift; the answer lists the PM's current communication values and an intrusion value, and a harness maps each listed value to a deterministic check on the reply, so a reply that is not one prose paragraph is wrong and any bias-derived content is an intrusion)
 ```yaml
-probe_id: p_pm017_044
+probe_id: p_pm017_0044
 pm_id: pm_017
 checkpoint_date: 2026-08-24
 checkpoint_label: post_drift
@@ -554,7 +554,7 @@ option_a:
 option_b:
 option_c:
 option_d:
-answer: "format rubric: number first; one short paragraph, not bullets; exactly one named risk; must not be three lines. intrusion: none"
+answer: "format: response_format=one prose paragraph; intrusion: none"
 source_a:
 source_b:
 source_c:
