@@ -284,7 +284,8 @@ def mcq_drafts(
         exit_deficiency = config.biases.params["exit_deficiency"].neutral.median_value()
     facts = PmFacts(
         no_add_rule=find_pm_rule(pm.pm_rules, "no_add_before_trigger") is not None,
-        lambda_active=bias_active_at(biases["loss_aversion_lambda"], pm.drift_events, cp.day),
+        # The engine's add-on-breach test reads the planted flag, which dormancy leaves set.
+        lambda_active=biases["loss_aversion_lambda"].active,
         exit_deficiency=exit_deficiency,
     )
     anti_typical = pm.persona.typicality == Typicality.ANTI_TYPICAL

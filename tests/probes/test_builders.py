@@ -372,6 +372,16 @@ def test_dormant_exit_deficiency_uses_neutral_value_for_no_add_answer(corpus):
     assert d.options[LETTERS.index(d.answer)] == actions[1]
 
 
+def test_exit_deficiency_add_reads_the_planted_loss_aversion_flag(corpus):
+    exit_id = corpus.bias("exit_deficiency", value=0.9)
+    corpus.sig(exit_id)
+    loss = corpus.bias(LOSS)
+    corpus.event(DriftEventType.DORMANT, loss, t=UPDATE_T)
+    (d,) = [m for m in bias_mcqs(mcq(corpus)[0]) if m.trait_id == exit_id]
+    actions = BANK.biases["exit_deficiency"].actions
+    assert d.options[LETTERS.index(d.answer)] == actions[1]
+
+
 def test_each_mcq_is_followed_by_its_open_twin(corpus):
     tid = corpus.bias(LOSS)
     corpus.sig(tid)
