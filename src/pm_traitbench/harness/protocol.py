@@ -2,7 +2,7 @@
 
 import datetime
 from collections.abc import Callable
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
@@ -43,7 +43,6 @@ class PublicProbe(BaseModel):
     options: tuple[str, ...]
 
 
-@runtime_checkable
 class SystemUnderTest(Protocol):
     """A copilot memory system that is fed sessions and asked questions.
 

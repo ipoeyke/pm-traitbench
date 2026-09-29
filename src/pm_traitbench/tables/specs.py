@@ -107,7 +107,6 @@ PROBES_TABLES: tuple[TableSpec, ...] = (PROBES,)
 
 RESPONSES = TableSpec("responses", ResponseRow, ("pm_id", "probe_id"))
 SCORES = TableSpec("scores", ScoreRow, ("pm_id", "probe_id"))
-HARNESS_TABLES: tuple[TableSpec, ...] = (RESPONSES, SCORES)
 
 
 def parts_spec(pm_id: str) -> TableSpec:

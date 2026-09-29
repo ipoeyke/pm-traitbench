@@ -10,10 +10,12 @@ from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.config import Config
 from pm_traitbench.enums import (
     CheckKind,
+    EvidenceType,
     FormatOutcome,
     Kind,
     ProbeForm,
     ProbeType,
+    RunStatus,
     Scorer,
     SignalMode,
 )
@@ -113,19 +115,19 @@ def _format_row(row: ProbeRow, correct: bool, detail: str | None) -> ScoreRow:
     )
 
 
-def evidence_type(signal_ids: Sequence[str], modes: Mapping[str, SignalMode]) -> str:
+def evidence_type(signal_ids: Sequence[str], modes: Mapping[str, SignalMode]) -> EvidenceType:
     """Whether a probe's supporting signals state the trait, reveal it, or both."""
     if not signal_ids:
-        return "none"
+        return EvidenceType.NONE
     try:
         found = {modes[s] for s in signal_ids}
     except KeyError as exc:
         raise HarnessError(f"probe cites unknown signal {exc.args[0]}") from exc
     if found == {SignalMode.STATED}:
-        return "explicit"
+        return EvidenceType.EXPLICIT
     if SignalMode.STATED not in found:
-        return "implicit"
-    return "mixed"
+        return EvidenceType.IMPLICIT
+    return EvidenceType.MIXED
 
 
 def _rate(scores: Sequence[ScoreRow]) -> dict[str, Any]:
@@ -238,7 +240,7 @@ def _check_run(store: DataStore, run_store: DataStore, run_name: str) -> None:
             f"run '{run_name}' has failed PMs ({names}); a partial run's accuracy covers a "
             "biased subset, so rerun it"
         )
-    if meta.get("status") != "finished":
+    if meta.get("status") != RunStatus.FINISHED:
         raise HarnessError(f"run '{run_name}' is not finished; rerun the evaluation to completion")
     if meta.get("probes_sha256") != probes_sha256(store):
         raise HarnessError(f"probes changed since run '{run_name}' was made; rerun it with --force")

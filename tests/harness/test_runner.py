@@ -360,6 +360,14 @@ def test_load_factory_errors() -> None:
         load_factory("tests.harness.fixtures:_LETTERS")
 
 
+def test_load_factory_wraps_any_import_time_error(tmp_path, monkeypatch) -> None:
+    (tmp_path / "broken_sut_module.py").write_text("raise RuntimeError('adapter setup failed')\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(HarnessError, match="broken_sut_module.*adapter setup failed"):
+        load_factory("broken_sut_module:factory")
+
+
 def test_load_factory_loads_callable() -> None:
     assert load_factory("tests.harness.fixtures:ECHO_FACTORY") is ECHO_FACTORY
 

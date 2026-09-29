@@ -16,6 +16,7 @@ from pathlib import Path
 
 from pm_traitbench import rng
 from pm_traitbench.config import Config
+from pm_traitbench.enums import RunStatus
 from pm_traitbench.errors import HarnessError
 from pm_traitbench.harness.protocol import SutFactory
 from pm_traitbench.harness.views import PmReplay, pm_replays, public_probe
@@ -51,8 +52,8 @@ def load_factory(path: str) -> SutFactory:
         raise HarnessError(f"factory '{path}' must have the form 'package.module:attr'")
     try:
         module = importlib.import_module(module_name)
-    except ImportError as e:
-        raise HarnessError(f"cannot import module '{module_name}': {e}") from e
+    except Exception as e:  # import-time errors of any type mean the factory is unusable
+        raise HarnessError(f"cannot import module '{module_name}' from '{path}': {e!r}") from e
     try:
         factory = getattr(module, attr)
     except AttributeError as e:
@@ -172,7 +173,7 @@ def run_sut(
             )
 
     # Recorded before any part is written, so an interrupted run still pins its probes.
-    def write_metadata(status: str, completed, skipped, failed, seconds) -> None:
+    def write_metadata(status: RunStatus, completed, skipped, failed, seconds) -> None:
         run_store.write_run_metadata(
             RUN_METADATA,
             config,
@@ -188,7 +189,7 @@ def run_sut(
             },
         )
 
-    write_metadata("running", [], [], {}, {})
+    write_metadata(RunStatus.RUNNING, [], [], {}, {})
     replays = pm_replays(
         store.read(PERSONAS), store.read(RULES), store.read(SESSIONS), store.read(PROBES)
     )
@@ -214,7 +215,7 @@ def run_sut(
     for pm_id in completed:
         merged.extend(run_store.read(parts_spec(pm_id)))
     run_store.write(RESPONSES, merged)
-    write_metadata("finished", completed, sorted(skipped), failed, seconds)
+    write_metadata(RunStatus.FINISHED, completed, sorted(skipped), failed, seconds)
     return RunResult(
         run_store=run_store,
         completed=tuple(sorted(completed)),

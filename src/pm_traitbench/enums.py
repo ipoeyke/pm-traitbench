@@ -468,3 +468,15 @@ class CheckKind(StrEnum):
     NO_HEDGES = "no_hedges"
     CONFIDENCE_LEVEL = "confidence_level"
     JUDGE = "judge"
+
+
+class RunStatus(StrEnum):
+    RUNNING = "running"
+    FINISHED = "finished"
+
+
+class EvidenceType(StrEnum):
+    EXPLICIT = "explicit"
+    IMPLICIT = "implicit"
+    MIXED = "mixed"
+    NONE = "none"
