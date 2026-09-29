@@ -13,7 +13,8 @@ from pm_traitbench.engine.constants import ANCHOR_FRACTION
 from pm_traitbench.engine.ideas import PRICE_QUOTED_OUTRIGHT_CLASSES
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.templates import level_text
-from pm_traitbench.enums import AssetClass, RuleScope, StreetView
+from pm_traitbench.engine.triggers import find_pm_rule
+from pm_traitbench.enums import AssetClass, StreetView
 from pm_traitbench.errors import ProbesError
 from pm_traitbench.tables.schema import Rule
 
@@ -57,13 +58,6 @@ def instrument_slots(env: MarketEnv, instrument_id: str, t: int) -> dict[str, st
     }
 
 
-def _stop_rule(rules: Sequence[Rule]) -> Rule:
-    for rule in rules:
-        if rule.scope == RuleScope.PM and rule.param == "stop_loss":
-            return rule
-    raise ProbesError("PM has no stop-loss rule to size a probe situation")
-
-
 def _levels(
     param: str, current: float, adverse: float, sd: float, rr: float, config: Config
 ) -> dict[str, float]:
@@ -98,7 +92,10 @@ def situation_for(
     rng: np.random.Generator,
 ) -> Situation | None:
     """The first qualifying situation over a random instrument order, or None."""
-    stop_rule = _stop_rule(pm_rules)
+    stop_rule = find_pm_rule(pm_rules, "stop_loss")
+    if stop_rule is None:
+        raise ProbesError("PM has no stop-loss rule to size a probe situation")
+    price_quoted = env.asset_class in PRICE_QUOTED_OUTRIGHT_CLASSES
     rr = float(np.mean(config.engine.rr_range))
     order = rng.permutation(np.array(env.universe))[: config.probes.situation_attempts]
     for instrument_id in (str(i) for i in order):
@@ -117,7 +114,6 @@ def situation_for(
             street = env.view.street_view(instrument_id, t)
             if street not in (StreetView.OVERWEIGHT, StreetView.UNDERWEIGHT):
                 continue
-        price_quoted = env.asset_class in PRICE_QUOTED_OUTRIGHT_CLASSES
         slots = instrument_slots(env, instrument_id, t)
         for name, level in levels.items():
             if name != "current":

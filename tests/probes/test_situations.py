@@ -107,6 +107,18 @@ def test_anchoring_returns_none_without_a_qualifying_round_level(make_env, monke
     assert situation_for("anchoring_rho", one, 25, rules, HORIZONS, config, rng0()) is None
 
 
+def test_anchoring_returns_none_when_the_round_level_is_already_reached(make_env, monkeypatch):
+    env, rules = make_env(AssetClass.EQUITIES)
+    one = MarketEnv(env.view, env.adapter, env.universe[:1], env.asset_class)
+    config = CONFIG.model_copy(
+        update={"probes": CONFIG.probes.model_copy(update={"situation_attempts": 1})}
+    )
+    lv = situation_for("anchoring_rho", one, 25, rules, HORIZONS, config, rng0()).levels
+    passed = (lv["entry"] + lv["current"]) / 2
+    monkeypatch.setattr(type(env.adapter), "round_step", lambda self, series, level: passed)
+    assert situation_for("anchoring_rho", one, 25, rules, HORIZONS, config, rng0()) is None
+
+
 @pytest.mark.parametrize("asset_class", ASSET_CLASSES)
 def test_exit_deficiency_stop_is_current(make_env, asset_class):
     env, rules = make_env(asset_class)
