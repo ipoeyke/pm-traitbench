@@ -13,6 +13,18 @@ uv sync
 
 ## Usage
 
+To run every stage in order, copy `.env.example` to `.env`, fill in
+`ANTHROPIC_API_KEY`, then run:
+
+```sh
+scripts/generate.sh --config configs/demo.yaml
+scripts/generate.sh --from dialogue --force   # resume at a stage, overwriting its tables
+```
+
+`--data-dir` sets the output directory; run `scripts/generate.sh --help` for
+every flag. The script stops at the first failing stage, including a failed gate. Each
+stage can also run on its own:
+
 ```sh
 uv run pm-traitbench fetch-market --config configs/demo.yaml --data-dir data
 uv run pm-traitbench sample --config configs/demo.yaml --data-dir data
