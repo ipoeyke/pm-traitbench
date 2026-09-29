@@ -13,6 +13,8 @@ from pm_traitbench.enums import (
     Kind,
     PositionAction,
     RuleResponse,
+    RuleScope,
+    RuleSource,
     Side,
     Split,
     Tenor,
@@ -20,7 +22,15 @@ from pm_traitbench.enums import (
 )
 from pm_traitbench.errors import Gate1Error
 from pm_traitbench.gates.gate1.inputs import build_inputs
-from pm_traitbench.tables.schema import DriftEvent, Leg, Mandate, Persona, StatedProfile, Trait
+from pm_traitbench.tables.schema import (
+    DriftEvent,
+    Leg,
+    Mandate,
+    Persona,
+    Rule,
+    StatedProfile,
+    Trait,
+)
 from tests.gates.fixtures import idea_row, ledger_row, position_day, rule_event
 
 
@@ -84,6 +94,7 @@ def test_build_inputs_returns_only_direct_asset_pms_sorted(fixture_view) -> None
         ],
         traits=[*_bias_traits("pm_001"), *_bias_traits("pm_002")],
         drift_events=[],
+        rules=[],
         ideas=[],
         ledger=[],
         rule_events=[],
@@ -101,6 +112,7 @@ def test_build_inputs_skips_pm_ids_in_skipped(fixture_view) -> None:
         personas=[_persona("pm_001"), _persona("pm_010")],
         traits=_bias_traits("pm_001"),
         drift_events=[],
+        rules=[],
         ideas=[],
         ledger=[],
         rule_events=[],
@@ -110,6 +122,43 @@ def test_build_inputs_skips_pm_ids_in_skipped(fixture_view) -> None:
         skipped={"pm_010"},
     )
     assert [inputs.pm_id for inputs in result] == ["pm_001"]
+
+
+def _no_add_rule(pm_id: str, scope: RuleScope) -> Rule:
+    return Rule(
+        pm_id=pm_id,
+        rule_id="r_04",
+        source=RuleSource.SELF,
+        scope=scope,
+        trade_idea_id=None if scope == RuleScope.PM else "ti_001",
+        param="no_add_before_trigger",
+        field="triggers_fired",
+        op="==",
+        level=0.0,
+        unit=None,
+        window=1,
+        action="no_add",
+        text="I don't add to the position before a trigger fires",
+    )
+
+
+def test_build_inputs_flags_only_a_pm_scope_no_add_rule(fixture_view) -> None:
+    pm_ids = ("pm_001", "pm_002", "pm_003")
+    result = build_inputs(
+        config=Config(),
+        personas=[_persona(pm_id) for pm_id in pm_ids],
+        traits=[trait for pm_id in pm_ids for trait in _bias_traits(pm_id)],
+        drift_events=[],
+        rules=[_no_add_rule("pm_001", RuleScope.PM), _no_add_rule("pm_002", RuleScope.IDEA)],
+        ideas=[],
+        ledger=[],
+        rule_events=[],
+        position_days=[],
+        views={"T": fixture_view},
+        engine_counts={pm_id: {"c": 0} for pm_id in pm_ids},
+        skipped=set(),
+    )
+    assert [inputs.no_add_before_trigger for inputs in result] == [True, False, False]
 
 
 def test_build_inputs_partitions_rows_per_pm(fixture_view) -> None:
@@ -160,6 +209,7 @@ def test_build_inputs_partitions_rows_per_pm(fixture_view) -> None:
         personas=[_persona("pm_001"), _persona("pm_002")],
         traits=[*traits_1, *traits_2],
         drift_events=[drift_1, drift_2],
+        rules=[],
         ideas=[idea_1, idea_2],
         ledger=[ledger_1, ledger_2],
         rule_events=[rule_event_1, rule_event_2],
@@ -208,6 +258,7 @@ def test_build_inputs_entry_risk_reads_lead_leg_row_not_later_dates(fixture_view
         personas=[_persona("pm_001")],
         traits=_bias_traits("pm_001"),
         drift_events=[],
+        rules=[],
         ideas=[idea],
         ledger=[entry_row, later_row],
         rule_events=[],
@@ -249,6 +300,7 @@ def test_build_inputs_entry_risk_pair_reads_lead_leg_not_the_sum(fixture_view) -
         personas=[_persona("pm_001")],
         traits=_bias_traits("pm_001"),
         drift_events=[],
+        rules=[],
         ideas=[idea],
         ledger=[other_leg_row, lead_leg_row],
         rule_events=[],
@@ -293,6 +345,7 @@ def test_build_inputs_entry_risk_curve_reads_lead_leg_tenor(fixture_view) -> Non
         personas=[_persona("pm_001")],
         traits=_bias_traits("pm_001"),
         drift_events=[],
+        rules=[],
         ideas=[idea],
         ledger=[long_tenor_row, lead_tenor_row],
         rule_events=[],
@@ -327,6 +380,7 @@ def test_build_inputs_entry_risk_falls_back_to_first_row_when_no_leg_matches(
         personas=[_persona("pm_001")],
         traits=_bias_traits("pm_001"),
         drift_events=[],
+        rules=[],
         ideas=[idea],
         ledger=[first_row, second_row],
         rule_events=[],
@@ -357,6 +411,7 @@ def test_build_inputs_entry_conviction_reads_first_entry_date_ledger_row(fixture
         personas=[_persona("pm_001")],
         traits=_bias_traits("pm_001"),
         drift_events=[],
+        rules=[],
         ideas=[idea],
         ledger=[first_row, second_row],
         rule_events=[],
@@ -388,6 +443,7 @@ def test_build_inputs_sell_dates_and_acted(fixture_view) -> None:
         personas=[_persona("pm_001")],
         traits=_bias_traits("pm_001"),
         drift_events=[],
+        rules=[],
         ideas=[],
         ledger=[],
         rule_events=[acted_event, acked_event],
@@ -425,6 +481,7 @@ def test_build_inputs_drift_dates_maps_trait_ids_and_ignores_preferences(fixture
         personas=[_persona("pm_001")],
         traits=[*_bias_traits("pm_001"), _preference_trait("pm_001")],
         drift_events=[bias_event, preference_event],
+        rules=[],
         ideas=[],
         ledger=[],
         rule_events=[],
@@ -448,6 +505,7 @@ def test_build_inputs_missing_bias_trait_raises(fixture_view) -> None:
             personas=[_persona("pm_001")],
             traits=incomplete_traits,
             drift_events=[],
+            rules=[],
             ideas=[],
             ledger=[],
             rule_events=[],
@@ -465,6 +523,7 @@ def test_build_inputs_pm_missing_engine_counts_raises(fixture_view) -> None:
             personas=[_persona("pm_001")],
             traits=_bias_traits("pm_001"),
             drift_events=[],
+            rules=[],
             ideas=[],
             ledger=[],
             rule_events=[],
@@ -496,6 +555,7 @@ def test_build_inputs_is_real_seed_reflects_config(fixture_view) -> None:
         ],
         traits=[*_bias_traits("pm_001"), *_bias_traits("pm_002")],
         drift_events=[],
+        rules=[],
         ideas=[],
         ledger=[],
         rule_events=[],
@@ -515,6 +575,7 @@ def test_build_inputs_engine_counts_carried_per_pm(fixture_view) -> None:
         personas=[_persona("pm_001"), _persona("pm_002")],
         traits=[*_bias_traits("pm_001"), *_bias_traits("pm_002")],
         drift_events=[],
+        rules=[],
         ideas=[],
         ledger=[],
         rule_events=[],
@@ -535,6 +596,7 @@ def test_build_inputs_idea_with_no_entry_date_ledger_row_has_no_conviction(fixtu
         personas=[_persona("pm_001")],
         traits=_bias_traits("pm_001"),
         drift_events=[],
+        rules=[],
         ideas=[idea],
         ledger=[],
         rule_events=[],
@@ -555,6 +617,7 @@ def test_build_inputs_missing_view_for_seed_raises(fixture_view) -> None:
             personas=[_persona("pm_001", market_seed="ZZZ")],
             traits=_bias_traits("pm_001"),
             drift_events=[],
+            rules=[],
             ideas=[],
             ledger=[],
             rule_events=[],

@@ -1,4 +1,10 @@
-"""Loss aversion: the share of loss-side opportunities where a PM adds instead of cutting."""
+"""Loss aversion: the share of loss-side opportunities where a PM adds instead of cutting.
+
+A PM holding `no_add_before_trigger` can add before a trigger fires only by
+breaching the rule, at a rate set by exit deficiency rather than lambda, so
+those days are left out of the estimate. `opportunities` keeps them, since it
+must match the engine's own loss-side counter.
+"""
 
 from datetime import date
 
@@ -26,9 +32,14 @@ def opportunities(inputs: PmInputs, days: frozenset[date]) -> list[PositionDay]:
     ]
 
 
+def add_allowed(inputs: PmInputs, row: PositionDay) -> bool:
+    """Whether an add on this row was open to the PM without breaching its no-add rule."""
+    return not (inputs.no_add_before_trigger and row.triggers_fired == 0)
+
+
 def estimate(inputs: PmInputs, days: frozenset[date], knobs: Gate1Config) -> Estimate:
-    """Share of loss-side opportunities in `days` where the PM adds to the position."""
-    rows = opportunities(inputs, days)
+    """Share of add-allowed loss-side opportunities in `days` where the PM adds."""
+    rows = [row for row in opportunities(inputs, days) if add_allowed(inputs, row)]
     n = len(rows)
     if n == 0:
         return Estimate(value=None, n=0)

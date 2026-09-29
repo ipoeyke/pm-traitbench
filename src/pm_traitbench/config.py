@@ -568,10 +568,16 @@ class Gate1Config(BaseModel):
             "conviction_size_miscalibration",
             "disposition_ratio",
             "anchoring_rho",
+            "loss_aversion_lambda",
         ),
         json_schema_extra={
             "basis": "design",
-            "note": "parameters limited by how many decisions one PM makes a year",
+            "note": (
+                "parameters limited by how many decisions one PM makes a year. "
+                "loss_aversion_lambda's active rank correlation has median 0.53 over 9 "
+                "roots but falls below 0.4 on 2, since a no-add rule leaves most PMs few "
+                "add-allowed days; its pooled z is at least 4.9 on all 9"
+            ),
         },
     )
     report_only_params: tuple[str, ...] = Field(

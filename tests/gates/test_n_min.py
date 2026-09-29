@@ -7,7 +7,7 @@ from pm_traitbench.gates.gate1.n_min import N_MIN
 # (param, p0, p1): the neutral and active opportunity-share centres each n_min's margin is set from.
 _PAIRS = (
     ("exit_deficiency", 0.06, 0.44),
-    ("loss_aversion_lambda", 0.10, 0.40),
+    ("loss_aversion_lambda", 0.01, 0.10),
     ("herding_weight", 0.17, 0.58),
     ("anchoring_rho", 0.20, 0.50),
 )

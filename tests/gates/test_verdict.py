@@ -14,7 +14,7 @@ def _cell(
     seed_group: str = "synthetic",
     seed_group_kind: SeedGroupKind = SeedGroupKind.SYNTHETIC_POOL,
     asset_class: AssetClass | None = None,  # None: the pooled cross-class row, blocking-eligible
-    param: str = "loss_aversion_lambda",  # per-PM by default; not in population_params
+    param: str = "extrapolation_theta",  # per-PM by default; not in population_params
     split: Gate1Split = Gate1Split.ALL,
     higher_is_stronger: bool = True,
     n_neutral: int = 20,
@@ -190,7 +190,7 @@ def test_population_rule_ignores_the_rank_correlation() -> None:
 
 
 def test_per_pm_param_never_uses_the_population_rule() -> None:
-    cell = _cell(param="loss_aversion_lambda", pop_z=10.0, active_rank_corr=0.9, active_mean=0.14)
+    cell = _cell(param="extrapolation_theta", pop_z=10.0, active_rank_corr=0.9, active_mean=0.14)
     row = judge(cell, KNOBS)
     assert row.test == Gate1Test.PER_PM
     assert row.verdict == Gate1Verdict.FAIL  # gap_ok is False; pop_z is ignored
@@ -286,9 +286,10 @@ def test_every_other_field_copies_from_stats() -> None:
 def test_blocking_failures_lists_only_blocking_non_pass_rows_sorted() -> None:
     rows = [
         # cross-class, blocking, fail
-        judge(_cell(param="loss_aversion_lambda", active_rank_corr=0.3), KNOBS),
+        judge(_cell(param="extrapolation_theta", active_rank_corr=0.3), KNOBS),
         judge(_cell(param="exit_deficiency"), KNOBS),  # cross-class, blocking, pass
-        judge(_cell(param="extrapolation_theta"), KNOBS),  # cross-class, blocking, pass
+        # population, cross-class, blocking, pass
+        judge(_cell(param="loss_aversion_lambda", pop_z=10.0), KNOBS),
         judge(_cell(param="overconfidence_coverage"), KNOBS),  # cross-class, blocking, pass
         judge(
             _cell(
@@ -315,7 +316,7 @@ def test_blocking_failures_lists_only_blocking_non_pass_rows_sorted() -> None:
     # Every non-report-only param has a blocking row here, so nothing is missing.
     assert blocking_failures(rows, KNOBS) == [
         "all/conviction_size_miscalibration",
-        "all/loss_aversion_lambda",
+        "all/extrapolation_theta",
     ]
 
 
@@ -323,7 +324,7 @@ def test_blocking_failures_lists_missing_non_report_only_params_without_a_blocki
     # Four of the five non-report-only params get a passing blocking row; the
     # fifth, conviction_size_miscalibration, has none and is reported missing.
     rows = [
-        judge(_cell(param="loss_aversion_lambda"), KNOBS),
+        judge(_cell(param="loss_aversion_lambda", pop_z=10.0), KNOBS),
         judge(_cell(param="extrapolation_theta"), KNOBS),
         judge(_cell(param="overconfidence_coverage"), KNOBS),
         judge(_cell(param="exit_deficiency"), KNOBS),

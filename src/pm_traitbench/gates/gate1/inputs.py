@@ -14,6 +14,7 @@ from pm_traitbench.engine.adapters import adapter_for
 from pm_traitbench.engine.adapters.base import series_for_idea
 from pm_traitbench.engine.market_view import MarketView
 from pm_traitbench.engine.series import Series
+from pm_traitbench.engine.triggers import find_pm_rule
 from pm_traitbench.enums import AssetClass, Kind, PositionAction, RuleResponse
 from pm_traitbench.errors import Gate1Error
 from pm_traitbench.tables.schema import (
@@ -22,6 +23,7 @@ from pm_traitbench.tables.schema import (
     LedgerRow,
     Persona,
     PositionDay,
+    Rule,
     RuleEvent,
     Trait,
 )
@@ -51,6 +53,8 @@ class PmInputs:
     day_index: Mapping[date, int]
     horizon_days: int
     engine_counts: Mapping[str, int]
+    # The PM holds a PM-scope no_add_before_trigger rule.
+    no_add_before_trigger: bool
 
     @property
     def last_date(self) -> date:
@@ -115,6 +119,7 @@ def _build_pm_inputs(
     persona: Persona,
     pm_traits: Sequence[Trait],
     pm_drift: Sequence[DriftEvent],
+    pm_rules: Sequence[Rule],
     pm_ideas: Sequence[Idea],
     pm_ledger: Sequence[LedgerRow],
     pm_rule_events: Sequence[RuleEvent],
@@ -165,6 +170,7 @@ def _build_pm_inputs(
         day_index=day_index,
         horizon_days=config.engine.horizon_days,
         engine_counts=dict(engine_counts[pm_id]),
+        no_add_before_trigger=find_pm_rule(pm_rules, "no_add_before_trigger") is not None,
     )
 
 
@@ -187,6 +193,7 @@ def build_inputs(
     personas: Sequence[Persona],
     traits: Sequence[Trait],
     drift_events: Sequence[DriftEvent],
+    rules: Sequence[Rule],
     ideas: Sequence[Idea],
     ledger: Sequence[LedgerRow],
     rule_events: Sequence[RuleEvent],
@@ -203,6 +210,7 @@ def build_inputs(
     """
     traits_by_pm = _group_by_pm(traits)
     drift_by_pm = _group_by_pm(drift_events)
+    rules_by_pm = _group_by_pm(rules)
     ideas_by_pm = _group_by_pm(ideas)
     ledger_by_pm = _group_by_pm(ledger)
     rule_events_by_pm = _group_by_pm(rule_events)
@@ -216,6 +224,7 @@ def build_inputs(
                 persona,
                 traits_by_pm.get(persona.pm_id, []),
                 drift_by_pm.get(persona.pm_id, []),
+                rules_by_pm.get(persona.pm_id, []),
                 ideas_by_pm.get(persona.pm_id, []),
                 ledger_by_pm.get(persona.pm_id, []),
                 rule_events_by_pm.get(persona.pm_id, []),
