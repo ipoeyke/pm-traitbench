@@ -280,6 +280,50 @@ class Stances(BaseModel):
         return pattern_lines.get(asset_class.value, pattern_lines.get("all", ()))
 
 
+class BiasProbeLines(BaseModel):
+    """One bias parameter's probe question text, by the kind of question.
+
+    ``actions`` are the multiple-choice options in the order the probe stage indexes
+    them; ``decline`` is empty for biases whose request cannot breach the mandate.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    presence: StanceLines
+    behaviour: str
+    situation: StanceLines
+    actions: tuple[str, ...]
+    in_situ: StanceLines
+    decline: StanceLines = {}
+    governance: StanceLines
+
+
+class PreferenceProbeLines(BaseModel):
+    """One preference group's probe question text, by the kind of question."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    presence: StanceLines
+    mcq_question: StanceLines
+    in_situ: StanceLines
+    governance: StanceLines
+
+
+class ProbeBank(BaseModel):
+    """The probe bank: question text asked of a copilot about a PM's remembered traits."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    biases: dict[str, BiasProbeLines]
+    preferences: dict[PreferenceGroup, PreferenceProbeLines]
+    routine: StanceLines
+
+    @staticmethod
+    def pick(lines: StanceLines, asset_class: AssetClass) -> tuple[str, ...]:
+        """Asset-class lines if present, else the "all" lines."""
+        return lines.get(asset_class.value, lines["all"])
+
+
 class Voice(BaseModel):
     """One narrator voice: an id and a short instruction line, independent of any trait."""
 
@@ -342,6 +386,7 @@ class Catalogue(BaseModel):
     avoid: AvoidLines
     bias_labels: BiasLabels
     bias_definitions: BiasDefinitions
+    probes: ProbeBank
 
     def preferences_for(self, asset_class: AssetClass) -> tuple[PreferenceEntry, ...]:
         """Return preference entries applicable to an asset class, in catalogue order."""

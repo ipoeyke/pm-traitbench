@@ -39,6 +39,7 @@ _CATALOGUE_FILES = (
     "avoid.yaml",
     "bias_labels.yaml",
     "bias_definitions.yaml",
+    "probes.yaml",
 )
 _ASSET_CLASSES = list(AssetClass)
 _N_PREFERENCES_MAX = 8
