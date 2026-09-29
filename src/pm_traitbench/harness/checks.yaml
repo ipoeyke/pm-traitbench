@@ -1,0 +1,17 @@
+response_format:
+  short bullets: bullets
+  one prose paragraph: prose_paragraph
+  a table with columns: table
+  a memo with headers: headers
+number_language:
+  quote moves in basis points: units_bp
+  quote moves in percent: units_percent
+  quote moves in both basis points and percent: units_both
+length_on_routine_questions:
+  one sentence: one_sentence
+  two to three sentences: two_to_three_sentences
+  up to a short page: short_page
+hedging_language:
+  state views plainly, no qualifiers: no_hedges
+  flag uncertainty once, then commit to a view: judge
+  give an explicit confidence level on every call: confidence_level
