@@ -1,3 +1,4 @@
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -17,8 +18,6 @@ _JUDGE_KEY = ("hedging_language", "flag uncertainty once, then commit to a view"
 
 
 def _packaged_map() -> dict:
-    from importlib import resources
-
     text = (
         resources.files("pm_traitbench.harness").joinpath("checks.yaml").read_text(encoding="utf-8")
     )
@@ -135,3 +134,47 @@ def test_parse_routine_answer() -> None:
     assert parse_routine_answer("format: none; intrusion: none") == ()
     with pytest.raises(HarnessError):
         parse_routine_answer("garbage")
+
+
+_EXTRA = [
+    (CheckKind.UNITS_BP, "up 12 bps", FormatOutcome.PASS),
+    (CheckKind.UNITS_BP, "up 12 basis points", FormatOutcome.PASS),
+    (CheckKind.UNITS_PERCENT, "up 0.3 percent", FormatOutcome.PASS),
+    (CheckKind.UNITS_PERCENT, "up 0.3 per cent", FormatOutcome.PASS),
+    (CheckKind.UNITS_BP, "abp is a ticker", FormatOutcome.NOT_APPLICABLE),
+    (CheckKind.BULLETS, "1. x\n2) y", FormatOutcome.PASS),
+    (CheckKind.TWO_TO_THREE_SENTENCES, "Only one.", FormatOutcome.FAIL),
+    (CheckKind.TWO_TO_THREE_SENTENCES, "One. Two. Three.", FormatOutcome.PASS),
+    (CheckKind.CONFIDENCE_LEVEL, "80% confidence on the long", FormatOutcome.PASS),
+    (CheckKind.CONFIDENCE_LEVEL, "Conviction: medium.", FormatOutcome.PASS),
+    (CheckKind.CONFIDENCE_LEVEL, "confidence level of 70%", FormatOutcome.PASS),
+    (CheckKind.CONFIDENCE_LEVEL, "Yields up 0.3%.", FormatOutcome.FAIL),
+    (CheckKind.NO_HEDGES, "In May yields rose.", FormatOutcome.PASS),
+    (CheckKind.NO_HEDGES, "Yields may rise.", FormatOutcome.FAIL),
+]
+
+
+@pytest.mark.parametrize(("kind", "reply", "expected"), _EXTRA)
+def test_check_edge_cases(kind: CheckKind, reply: str, expected: FormatOutcome) -> None:
+    assert run_check(kind, reply, 400) is expected
+
+
+def test_map_with_extra_param_raises(catalogue: Catalogue, tmp_path: Path) -> None:
+    data = _packaged_map()
+    data["register"] = {"formal": "bullets"}
+    with pytest.raises(HarnessError, match="register"):
+        load_check_map(catalogue, _write(tmp_path, data))
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "format: response_format; intrusion: none",
+        "format: a=b=c; intrusion: none",
+        "format: a=b;c; intrusion: none",
+        "format: =b; intrusion: none",
+    ],
+)
+def test_parse_routine_answer_rejects_bad_items(answer: str) -> None:
+    with pytest.raises(HarnessError):
+        parse_routine_answer(answer)

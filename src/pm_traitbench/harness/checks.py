@@ -3,6 +3,7 @@
 import re
 from importlib import resources
 from pathlib import Path
+from typing import assert_never
 
 import yaml
 
@@ -24,11 +25,15 @@ _HEADER = re.compile(r"^#{1,6}\s+\S")
 _BP = re.compile(r"(?<![a-z])bps?\b|basis points?", re.IGNORECASE)
 _PERCENT = re.compile(r"%|\bper ?cent\b", re.IGNORECASE)
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
-_HEDGES = re.compile(
-    r"\b(might|may|could|perhaps|possibly|likely|unlikely|uncertain)\b", re.IGNORECASE
-)
+_HEDGES = re.compile(r"\b(might|could|perhaps|possibly|likely|unlikely|uncertain)\b", re.IGNORECASE)
+# Case-sensitive: a capitalised "May" is usually the month.
+_MAY = re.compile(r"\bmay\b")
+# A bare percentage is a quoted move, so a level must sit next to confidence or conviction.
+_LEVEL = r"(high|medium|low|\d+(\.\d+)?\s*%)"
 _CONFIDENCE = re.compile(
-    r"\d+(\.\d+)?\s*%|\b(high|medium|low)\s+(confidence|conviction)\b", re.IGNORECASE
+    rf"\b{_LEVEL}\s+(confidence|conviction)\b"
+    rf"|\b(confidence|conviction)(\s+level)?\s*(of|at|is|:)?\s*{_LEVEL}",
+    re.IGNORECASE,
 )
 
 
@@ -51,15 +56,18 @@ def load_check_map(
     if not isinstance(raw, dict):
         raise HarnessError("check map must be a mapping of param to value to check kind")
     catalogue_values = {p.param: p.values for p in catalogue.preferences}
+    extra = sorted(set(raw) - set(CHECKED_PARAMS))
+    if extra:
+        raise HarnessError(f"check map has unchecked params: {', '.join(map(str, extra))}")
     result: dict[tuple[str, str], CheckKind] = {}
     for param in CHECKED_PARAMS:
         entries = raw.get(param)
         if not isinstance(entries, dict):
             raise HarnessError(f"check map is missing param {param}")
         known = set(catalogue_values.get(param, ()))
-        for value in known - set(entries):
+        for value in sorted(known - set(entries)):
             raise HarnessError(f"check map has no entry for {param}: {value}")
-        for value, kind in entries.items():
+        for value, kind in sorted(entries.items()):
             if value not in known:
                 raise HarnessError(f"check map names {param} value not in catalogue: {value}")
             try:
@@ -143,11 +151,13 @@ def run_check(kind: CheckKind, reply: str, short_page_words: int) -> FormatOutco
         case CheckKind.SHORT_PAGE:
             return _outcome(len(reply.split()) <= short_page_words)
         case CheckKind.NO_HEDGES:
-            return _outcome(not _HEDGES.search(reply))
+            return _outcome(not (_HEDGES.search(reply) or _MAY.search(reply)))
         case CheckKind.CONFIDENCE_LEVEL:
             return _outcome(bool(_CONFIDENCE.search(reply)))
         case CheckKind.JUDGE:
             raise ValueError("judge values have no deterministic check; filter them first")
+        case _:
+            assert_never(kind)
 
 
 def parse_routine_answer(answer: str) -> tuple[tuple[str, str], ...]:
@@ -161,7 +171,7 @@ def parse_routine_answer(answer: str) -> tuple[tuple[str, str], ...]:
     pairs = []
     for item in body.split("; "):
         param, sep, value = item.partition("=")
-        if not sep or not param or not value:
+        if not sep or not param or not value or ";" in item or "=" in value:
             raise HarnessError(f"malformed routine answer item: {item!r}")
         pairs.append((param, value))
     return tuple(pairs)
