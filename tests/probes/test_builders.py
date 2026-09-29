@@ -515,6 +515,31 @@ def test_routine_rows_have_null_trait_and_list_communication_values_in_catalogue
     assert not skips
 
 
+def test_routine_omits_communication_preference_without_signal_in_context(corpus):
+    shown, hidden = (
+        entry_of(PreferenceGroup.COMMUNICATION, 0),
+        entry_of(PreferenceGroup.COMMUNICATION, 1),
+    )
+    t_shown = corpus.pref(shown.param, shown.values[0])
+    t_hidden = corpus.pref(hidden.param, hidden.values[0])
+    sid = corpus.sig(t_shown)
+    late = corpus.sig(t_hidden, t=T + 1)
+    seen = [s for s in corpus.signals if s.date <= corpus.day]
+    drafts, _ = routine_drafts(
+        corpus.inputs(), corpus.cp(), seen, BANK, rng_for, corpus.env, T, CONFIG
+    )
+    for d in drafts:
+        assert d.answer == f"format: {shown.param}={shown.values[0]}; intrusion: none"
+        assert d.supporting_signal_ids == (sid,) and late not in d.supporting_signal_ids
+
+
+def test_routine_with_no_supported_communication_preference_gets_format_none(corpus):
+    entry = entry_of(PreferenceGroup.COMMUNICATION)
+    corpus.pref(entry.param, entry.values[0])
+    drafts, _ = routine(corpus)
+    assert {d.answer for d in drafts} == {"format: none; intrusion: none"}
+
+
 def test_routine_without_communication_preferences_gets_format_none(corpus):
     drafts, _ = routine(corpus)
     assert {d.answer for d in drafts} == {"format: none; intrusion: none"}

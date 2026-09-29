@@ -430,22 +430,27 @@ def routine_drafts(
     t: int,
     config: Config,
 ) -> Built:
-    """Routine questions whose answer is the PM's communication format and no intrusion."""
+    """Routine questions whose answer is the PM's communication format and no intrusion.
+
+    Only communication preferences with a supporting signal in context are listed.
+    """
     order = {e.param: i for i, e in enumerate(pm.entries)}
+    supported = [
+        (t_, e, supporting_ids(t_, signals, pm.drift_events, cp.day))
+        for t_, e in _prefs(pm)
+        if e.group == PreferenceGroup.COMMUNICATION
+    ]
     held = sorted(
-        ((t_, e) for t_, e in _prefs(pm) if e.group == PreferenceGroup.COMMUNICATION),
-        key=lambda pair: order[pair[1].param],
+        ((t_, e, ids) for t_, e, ids in supported if ids), key=lambda x: order[x[1].param]
     )
     if held:
         formats = "; ".join(
-            f"{e.param}={preference_value_at(t_, pm.drift_events, cp.day)}" for t_, e in held
+            f"{e.param}={preference_value_at(t_, pm.drift_events, cp.day)}" for t_, e, _ in held
         )
     else:
         formats = "none"
     answer = f"format: {formats}; intrusion: none"
-    ids = tuple(
-        sorted({i for t_, _ in held for i in supporting_ids(t_, signals, pm.drift_events, cp.day)})
-    )
+    ids = tuple(sorted({i for _, _, own in held for i in own}))
     n = config.probes.routine_per_checkpoint
     instruments = rng_for("routine").permutation(np.array(env.universe))[:n]
     drafts = []
