@@ -60,7 +60,7 @@ from pm_traitbench.errors import EngineError
 from pm_traitbench.tables.schema import Idea, LedgerRow, Leg, Persona, Rule, Trait
 
 _SIDE_SIGN: dict[Side, int] = {Side.BUY: 1, Side.SELL: -1}
-_PRICE_QUOTED_OUTRIGHT_CLASSES = (AssetClass.EQUITIES, AssetClass.COMMODITIES)
+PRICE_QUOTED_OUTRIGHT_CLASSES = (AssetClass.EQUITIES, AssetClass.COMMODITIES)
 
 
 @dataclass(frozen=True)
@@ -315,7 +315,7 @@ def attempt_entry(
     )
 
     price_quoted = (
-        form == Expression.OUTRIGHT and adapter.asset_class in _PRICE_QUOTED_OUTRIGHT_CLASSES
+        form == Expression.OUTRIGHT and adapter.asset_class in PRICE_QUOTED_OUTRIGHT_CLASSES
     )
     trade_idea_id = idea_id(state.next_idea)
     rule_counter = state.next_rule
