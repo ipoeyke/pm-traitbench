@@ -120,7 +120,6 @@ class PublicProfile(BaseModel):          # frozen, extra="forbid"
 class PublicSession(BaseModel):          # frozen, extra="forbid"
     session_id: str
     date: datetime.date
-    kind: SessionKind
     turns: tuple[Turn, ...]
     idea_rules: tuple[Rule, ...]         # idea-scope rules of the ideas discussed, sorted by rule_id
 
@@ -185,7 +184,7 @@ class TranscriptSession(Protocol):
 - `tests/harness/fixtures.py` (created here): `persona_row(pm_id="pm_001", **overrides) -> Persona`, `rule_row(pm_id, rule_id, scope, trade_idea_id=None, text="...") -> Rule`, `session_row(pm_id, session_id, day, trade_idea_ids=(), turns=None) -> Session`, `probe_row(pm_id, n, day, form=ProbeForm.MCQ, probe_type=ProbeType.TRAIT_MCQ, options=("x","y"), answer="A", trait_id="t_01") -> ProbeRow`. Build valid rows by reusing `tests/gates/gate2/fixtures.py` helpers (`session_of`, `trait`) where they fit; read `ProbeRow`'s validators to set consistent `source_*` (non-null exactly where the option is non-null) and a probe id `p_<pm id without underscores>_<nnnn>`.
 
 - [ ] **Step 1: Write failing tests** in `tests/harness/test_views.py`
-  - `test_public_model_field_sets_are_exact` - `set(PublicProfile.model_fields) == {"pm_id", "mandate", "self_description", "rules"}`, and likewise for `PublicSession` (`session_id, date, kind, turns, idea_rules`) and `PublicProbe` (`probe_id, form, question, options`). Adding a field later must be a deliberate test change.
+  - `test_public_model_field_sets_are_exact` - `set(PublicProfile.model_fields) == {"pm_id", "mandate", "self_description", "rules"}`, and likewise for `PublicSession` (`session_id, date, turns, idea_rules`) and `PublicProbe` (`probe_id, form, question, options`). Adding a field later must be a deliberate test change.
   - `test_no_hidden_name_reaches_public_objects` - dump every public object built from fixture rows with `model_dump_json()`; assert none of the strings `typicality`, `anti_typical`, `market_seed`, `bias_flag`, the probe's `answer` value when it is not an option letter, `source_`, `supporting_signal`, `trait_id`, `checkpoint_label` appears as a key. Use a probe whose `trait_id` is `t_07` and assert `t_07` is absent from the dump.
   - `test_profile_keeps_pm_scope_rules_of_its_pm_only` - rules for two PMs, both scopes; the profile holds only its PM's PM-scope rules, sorted by id.
   - `test_session_carries_rules_of_discussed_ideas_only` - three idea rules on ideas `ti_1`, `ti_2`, `ti_3`; a session discussing `ti_1` and `ti_3` gets exactly those rules.
@@ -573,7 +572,7 @@ def run_eval(args: argparse.Namespace) -> int
     and in the stage paragraph after the `probes` sentence: "The `eval` commands are not a stage: they replay the corpus into a system under test and score its answers; see Evaluation."
   - `README.md`: new section `## Evaluation` between `## Probes` and `## Development`, covering, in prose with the one code block and one table:
     - the protocol (the `SystemUnderTest` and `SutFactory` code block from Task 2) and the optional `close()`;
-    - what a system observes (profile: mandate, self-description, PM-scope rules; per session: date, kind, turns, idea-scope rules of the ideas discussed) and what it never sees (typicality, split, market seed, ledger, ideas, rule events, market tables, signals, traits, drift events, hidden probe columns); why: this matches what Gate 2 saw, so Gate 2's recovery is the ceiling;
+    - what a system observes (profile: mandate, self-description, PM-scope rules; per session: date, turns, idea-scope rules of the ideas discussed) and what it never sees (typicality, split, market seed, session kind, ledger, ideas, rule events, market tables, signals, traits, drift events, hidden probe columns); why: this matches what Gate 2 saw, so Gate 2's recovery is the ceiling;
     - replay order and the read-only `answer` contract with its reason (governance premises are stale on purpose);
     - commands for a baseline and for a custom adapter, `--run-name`, `--workers`, `--force`, per-PM resume, and the output layout under `data/eval/<run_name>/`;
     - the two baselines and what each bounds (no memory: a profile-only floor; full context: the Gate 2 ceiling as a probe score);
