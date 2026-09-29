@@ -813,21 +813,24 @@ fails.
 
 **What a system sees.** The profile, given to the factory, holds the mandate,
 the self-description and the PM-scope rules. Each session holds its date, its
-turns and the idea-scope rules of the ideas it discusses. A probe holds its
-id, form, question and, for a multiple choice, its options in order. A system
-never sees typicality, the split, the market seed, the session kind, the
-ledger, the ideas, rule events, the market tables, signals, traits, drift
+turns and the idea-scope rules of the ideas it discusses. A probe holds an
+opaque id (a keyed hash of the corpus id), form, question and, for a multiple
+choice, its options in order. A system never sees typicality, the split, the
+market seed, the session kind, the ledger, the ideas, rule events, the market tables, signals, traits, drift
 events, or the hidden probe columns (`answer`, `source_a` to `source_d`,
 `supporting_signal_ids`, the probe type, trait and checkpoint label). This
 matches what Gate 2's recovery model saw, so Gate 2's recovery is the ceiling
 for what any system can learn from the corpus.
 
-**Replay.** Per PM, sessions are observed in date order, and every session
-dated at or before a checkpoint is observed before that checkpoint's first
-probe. A session dated after a checkpoint is not observed until that
-checkpoint's last probe is answered. `answer` must not write memory: a
-governance probe's premise is stale on purpose, so a system that stores the
-premise from the question would corrupt its own memory.
+**Replay.** Within a checkpoint, probes are asked in a seeded shuffle and
+under opaque ids, since the corpus numbers probes in construction order, which
+tracks the answers; responses are recorded under the corpus id. Per PM,
+sessions are observed in date order, and every session dated at or before a
+checkpoint is observed before that checkpoint's first probe. A session dated
+after a checkpoint is not observed until that checkpoint's last probe is
+answered. `answer` must not write memory: a governance probe's premise is
+stale on purpose, so a system that stores the premise from the question would
+corrupt its own memory.
 
 ```sh
 uv run pm-traitbench eval run --sut full-context --data-dir data
@@ -843,8 +846,9 @@ each failed PM with the last line of its traceback. A PM's responses are
 written as it finishes, so a rerun of the same command skips finished PMs and
 retries failed ones. Run metadata is recorded before replay starts, so a rerun
 over changed probes refuses without `--force`, which discards the run and
-starts again. `eval score` refuses a run with failed PMs, an unfinished run,
-or changed probes.
+starts again. A rerun also refuses without `--force` when the run was made by
+a different `--sut` or under a different `harness` config. `eval score`
+refuses a run with failed PMs, an unfinished run, or changed probes.
 
 A run directory holds `responses` (one row per probe), `scores`,
 `summary.json`, `parts/` (one responses file per finished PM), `cache/` (the
@@ -860,29 +864,47 @@ the probe; they differ in what else they keep.
   renders a transcript. Its score is the Gate 2 ceiling expressed as a probe
   score.
 
-**Scoring.** A multiple choice (`trait_presence` and the `trait_mcq`
-multiple choice) is scored by strict option-letter parsing: the reply must
-open with a valid letter, optionally in parentheses and followed by `.`,
-`)` or `:`. Anything else is a parse error and counts as wrong, so a reply
-that lists every letter earns nothing. A routine question is checked against
-the communication formats the PM holds, using a check map shipped in
-`harness/checks.yaml`. The reply passes when every held format with a
-deterministic check passes.
+**Scoring.** A multiple choice (`trait_presence` and the `trait_mcq` multiple
+choice) is scored by strict option-letter parsing: the reply must open with a
+valid letter, optionally in parentheses and followed by whitespace, `.`, `)`,
+`:` or the end of the text, so a bare `A` reads valid. Anything else is a
+parse error and counts as wrong, so a reply that lists every letter earns
+nothing. A routine question is checked against the communication formats the
+PM holds, using a check map shipped in `harness/checks.yaml`. The reply passes
+when every held format with a deterministic check passes. An empty reply is
+wrong. A probe whose checkable values are all not applicable to the reply gets
+no score row and is counted under `awaiting_judge`.
 
-| Preference value | Check |
-|---|---|
-| `bullets` | two or more lines, each starting with a list marker |
-| `prose_paragraph` | one paragraph with no list, table row or header |
-| `table` | a markdown table with a separator row |
-| `headers` | at least two markdown headers |
-| `units_bp` | basis points present and no percent (not applicable when the reply has neither) |
-| `units_percent` | percent present and no basis points (not applicable when the reply has neither) |
-| `units_both` | both present (not applicable when the reply has neither) |
-| `one_sentence` | exactly one sentence |
-| `two_to_three_sentences` | two or three sentences |
-| `short_page` | at most `harness.short_page_words` words |
-| `no_hedges` | none of might, could, perhaps, possibly, likely, unlikely, uncertain, and lowercase may |
-| `confidence_level` | a confidence or conviction word next to a level (high, medium, low or a percentage) |
+| Param | Value | Check |
+|---|---|---|
+| `response_format` | short bullets | `bullets` |
+| `response_format` | one prose paragraph | `prose_paragraph` |
+| `response_format` | a table with columns | `table` |
+| `response_format` | a memo with headers | `headers` |
+| `number_language` | quote moves in basis points | `units_bp` |
+| `number_language` | quote moves in percent | `units_percent` |
+| `number_language` | quote moves in both basis points and percent | `units_both` |
+| `length_on_routine_questions` | one sentence | `one_sentence` |
+| `length_on_routine_questions` | two to three sentences | `two_to_three_sentences` |
+| `length_on_routine_questions` | up to a short page | `short_page` |
+| `hedging_language` | state views plainly, no qualifiers | `no_hedges` |
+| `hedging_language` | flag uncertainty once, then commit to a view | `judge` (waits for a judge) |
+| `hedging_language` | give an explicit confidence level on every call | `confidence_level` |
+
+The checks are:
+
+- `bullets`: two or more lines, each starting with a list marker
+- `prose_paragraph`: one paragraph with no list, table row or header
+- `table`: a markdown table with a separator row
+- `headers`: at least two markdown headers
+- `units_bp`: basis points present and no percent (not applicable when the reply has neither)
+- `units_percent`: percent present and no basis points (not applicable when the reply has neither)
+- `units_both`: both present (not applicable when the reply has neither)
+- `one_sentence`: exactly one sentence
+- `two_to_three_sentences`: two or three sentences
+- `short_page`: at most `harness.short_page_words` words
+- `no_hedges`: none of might, could, perhaps, possibly, likely, unlikely, uncertain, and lowercase may
+- `confidence_level`: a confidence or conviction word next to a level (high, medium, low or a percentage)
 
 `no_hedges` counts `may` only in lowercase, since a capitalised May is
 usually the month. `confidence_level` needs the confidence or conviction word

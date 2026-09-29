@@ -540,7 +540,7 @@ supporting_signal_ids: [s_0587, s_0601]
 context_chars: 153600
 ```
 
-`probes.jsonl` (second row: routine question after the format preference was updated, open-ended, post-drift; the answer lists the PM's current communication values and an intrusion value, and a harness maps each listed value to a deterministic check on the reply, so a reply that is not one prose paragraph is wrong and any bias-derived content is an intrusion)
+`probes.jsonl` (second row: routine question after the format preference was updated, open-ended, post-drift; the answer lists the PM's current communication values and an intrusion value, and a harness maps each checkable listed value to a deterministic check on the reply (the rest wait for a judge), so a reply that is not one prose paragraph is wrong and any bias-derived content is an intrusion)
 ```yaml
 probe_id: p_pm017_0044
 pm_id: pm_017
