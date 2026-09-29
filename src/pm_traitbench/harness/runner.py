@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
+from pm_traitbench import rng
 from pm_traitbench.config import Config
 from pm_traitbench.errors import HarnessError
 from pm_traitbench.harness.protocol import SutFactory
@@ -89,11 +90,12 @@ class RunResult:
     failed: dict[str, str]
 
 
-def _replay_pm(replay: PmReplay, factory: SutFactory) -> list[ResponseRow]:
+def _replay_pm(replay: PmReplay, factory: SutFactory, root_seed: int) -> list[ResponseRow]:
     """Feed a PM's sessions in date order, answering each checkpoint after its sessions.
 
     A session dated on a checkpoint day is observed first, so a system never sees
-    the future and never misses what was known when it was asked.
+    the future and never misses what was known when it was asked. Probes are asked in
+    a seeded shuffle so emission order cannot reveal answers.
     """
     sut = factory(replay.profile)
     try:
@@ -103,9 +105,12 @@ def _replay_pm(replay: PmReplay, factory: SutFactory) -> list[ResponseRow]:
             while i < len(replay.sessions) and replay.sessions[i].date <= checkpoint.day:
                 sut.observe(replay.sessions[i])
                 i += 1
-            for row in checkpoint.probes:
+            order = rng.stream(
+                root_seed, "harness", replay.profile.pm_id, checkpoint.day.isoformat()
+            ).permutation(len(checkpoint.probes))
+            for row in (checkpoint.probes[j] for j in order):
                 start = time.perf_counter()
-                reply = sut.answer(checkpoint.day, public_probe(row))
+                reply = sut.answer(checkpoint.day, public_probe(row, root_seed))
                 latency_ms = int((time.perf_counter() - start) * 1000)
                 if not isinstance(reply, str):
                     raise HarnessError(
@@ -185,7 +190,7 @@ def run_sut(
     def run_pm(pm_id: str) -> None:
         start = time.perf_counter()
         try:
-            rows = _replay_pm(replays[pm_id], factory)
+            rows = _replay_pm(replays[pm_id], factory, config.seed.root)
             run_store.write(parts_spec(pm_id), rows)
         except Exception:
             failed[pm_id] = traceback.format_exc()

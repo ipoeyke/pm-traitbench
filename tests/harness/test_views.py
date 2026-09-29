@@ -8,6 +8,7 @@ from pm_traitbench.errors import HarnessError
 from pm_traitbench.gates.gate2.transcript import render_pm
 from pm_traitbench.harness.protocol import PublicProbe, PublicProfile, PublicSession
 from pm_traitbench.harness.views import (
+    opaque_probe_id,
     pm_replays,
     public_probe,
     public_profile,
@@ -17,6 +18,7 @@ from tests.harness.fixtures import persona_row, probe_row, rule_row, session_row
 
 PM = "pm_001"
 D1, D2, D3 = date(2026, 1, 5), date(2026, 1, 12), date(2026, 1, 19)
+ROOT = 20260101
 
 
 def _open_probe(n: int, day: date):
@@ -54,8 +56,8 @@ def test_no_hidden_name_reaches_public_objects():
     dumps = [
         public_profile(persona_row(PM), rules).model_dump_json(),
         public_session(session, rules).model_dump_json(),
-        public_probe(probe).model_dump_json(),
-        public_probe(open_probe).model_dump_json(),
+        public_probe(probe, ROOT).model_dump_json(),
+        public_probe(open_probe, ROOT).model_dump_json(),
     ]
     forbidden_keys = {
         "typicality",
@@ -117,8 +119,22 @@ def test_session_carries_rules_of_discussed_ideas_only():
 
 
 def test_public_probe_drops_null_options():
-    assert public_probe(probe_row(PM, 1, D1, options=("x", "y", "z"))).options == ("x", "y", "z")
-    assert public_probe(_open_probe(2, D1)).options == ()
+    assert public_probe(probe_row(PM, 1, D1, options=("x", "y", "z")), ROOT).options == (
+        "x",
+        "y",
+        "z",
+    )
+    assert public_probe(_open_probe(2, D1), ROOT).options == ()
+
+
+def test_public_probe_id_is_opaque_and_keyed_by_root_seed():
+    row = probe_row(PM, 1, D1)
+    view = public_probe(row, ROOT)
+    assert view.probe_id == opaque_probe_id(ROOT, row.probe_id)
+    assert view.probe_id.startswith("q_") and len(view.probe_id) == 18
+    assert row.probe_id not in view.probe_id and "pm001" not in view.probe_id
+    assert public_probe(row, ROOT + 1).probe_id != view.probe_id
+    assert public_probe(probe_row(PM, 2, D1), ROOT).probe_id != view.probe_id
 
 
 def test_pm_replays_groups_probes_by_checkpoint_and_sorts():

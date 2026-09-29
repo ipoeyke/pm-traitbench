@@ -18,6 +18,7 @@ from pm_traitbench.harness.runner import (
     run_dir,
     run_sut,
 )
+from pm_traitbench.harness.views import opaque_probe_id
 from pm_traitbench.tables.schema import probe_id
 from pm_traitbench.tables.specs import PERSONAS, PROBES, RESPONSES, RULES, SESSIONS
 from pm_traitbench.tables.store import DataStore
@@ -137,7 +138,9 @@ def test_received_objects_carry_no_hidden_fields(
 
 def test_close_called_per_pm(tmp_path) -> None:
     config, store = _synthetic_corpus(tmp_path)
-    factory, built = recording_factory(fail_on_probe_id=probe_id("pm_002", 1))
+    factory, built = recording_factory(
+        fail_on_probe_id=opaque_probe_id(config.seed.root, probe_id("pm_002", 1))
+    )
 
     _run(config, store, factory)
 
@@ -145,13 +148,15 @@ def test_close_called_per_pm(tmp_path) -> None:
     assert all(sut.closed for sut in built.values())
 
 
-def _first_probe_id(store: DataStore, pm_id: str) -> str:
-    return min(r.probe_id for r in store.read(PROBES) if r.pm_id == pm_id)
+def _first_probe_id(config, store: DataStore, pm_id: str) -> str:
+    """The opaque id of the PM's lowest probe id, as the system under test sees it."""
+    real = min(r.probe_id for r in store.read(PROBES) if r.pm_id == pm_id)
+    return opaque_probe_id(config.seed.root, real)
 
 
 def test_failing_pm_does_not_stop_others(tmp_path) -> None:
     config, store = _synthetic_corpus(tmp_path)
-    bad = _first_probe_id(store, "pm_002")
+    bad = _first_probe_id(config, store, "pm_002")
     factory, _ = recording_factory(fail_on_probe_id=bad)
 
     result = _run(config, store, factory)
@@ -166,7 +171,7 @@ def test_failing_pm_does_not_stop_others(tmp_path) -> None:
 
 def test_resume_skips_completed_pms(tmp_path) -> None:
     config, store = _synthetic_corpus(tmp_path)
-    failing, _ = recording_factory(fail_on_probe_id=_first_probe_id(store, "pm_002"))
+    failing, _ = recording_factory(fail_on_probe_id=_first_probe_id(config, store, "pm_002"))
     _run(config, store, failing)
     factory, built = recording_factory()
 
@@ -260,9 +265,49 @@ def test_non_str_answer_fails_pm(tmp_path) -> None:
     result = _run(config, store, factory)
 
     assert set(result.failed) == set(SYNTHETIC_PMS)
-    first = _first_probe_id(store, "pm_001")
-    assert first in result.failed["pm_001"]
+    assert "probe p_pm001_" in result.failed["pm_001"]
     assert "NoneType" in result.failed["pm_001"]
+
+
+def _ten_probe_corpus(tmp_path: Path):
+    config, store = _synthetic_corpus(tmp_path)
+    store.write(PERSONAS, [persona_row("pm_001")])
+    store.write(SESSIONS, [session_row("pm_001", "s_pm001_2026-01-06_a", date(2026, 1, 6))])
+    store.write(PROBES, [probe_row("pm_001", n, date(2026, 1, 13)) for n in range(1, 11)])
+    digest = hashlib.sha256(store.path(SESSIONS).read_bytes()).hexdigest()
+    _set_probes_hash(config, store, digest)
+    return config, store
+
+
+def test_ask_order_is_seeded_and_not_probe_id_order(tmp_path) -> None:
+    config, store = _ten_probe_corpus(tmp_path)
+    orders = []
+    for name in ("o1", "o2"):
+        factory, built = recording_factory()
+        run_sut(config, store, factory, sut_name="echo", run_name=name)
+        orders.append([e[2].probe_id for e in built["pm_001"].events if e[0] == "answer"])
+
+    assert orders[0] == orders[1]
+    natural = [opaque_probe_id(config.seed.root, probe_id("pm_001", n)) for n in range(1, 11)]
+    assert sorted(orders[0]) == sorted(natural)
+    assert orders[0] != natural
+
+    other = config.model_copy(update={"seed": config.seed.model_copy(update={"root": 7})})
+    factory, built = recording_factory()
+    run_sut(other, store, factory, sut_name="echo", run_name="o3")
+    natural_other = [opaque_probe_id(7, probe_id("pm_001", n)) for n in range(1, 11)]
+    assert [e[2].probe_id for e in built["pm_001"].events if e[0] == "answer"] != natural_other
+
+
+def test_system_sees_opaque_ids_and_responses_keep_real_ids(tmp_path) -> None:
+    config, store = _ten_probe_corpus(tmp_path)
+    factory, built = recording_factory()
+    result = run_sut(config, store, factory, sut_name="echo", run_name="o1")
+
+    seen = [e[2].probe_id for e in built["pm_001"].events if e[0] == "answer"]
+    assert all(q.startswith("q_") and "pm001" not in q and "pm_001" not in q for q in seen)
+    real = {r.probe_id for r in store.read(PROBES)}
+    assert {r.probe_id for r in result.run_store.read(RESPONSES)} == real
 
 
 def test_default_run_name() -> None:

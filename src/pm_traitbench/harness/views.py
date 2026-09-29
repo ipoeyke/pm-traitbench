@@ -5,6 +5,7 @@ system by omission from a deny-list.
 """
 
 import datetime
+import hashlib
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -52,11 +53,20 @@ def public_session(session: Session, rules: Sequence[Rule]) -> PublicSession:
     )
 
 
-def public_probe(row: ProbeRow) -> PublicProbe:
-    """The probe's question and non-null options; trait, type, slice and answer stay hidden."""
+def opaque_probe_id(root_seed: int, probe_id: str) -> str:
+    """A keyed hash of the probe id, so the id a system sees reveals no emission order."""
+    digest = hashlib.sha256(f"{root_seed}:{probe_id}".encode()).hexdigest()
+    return f"q_{digest[:16]}"
+
+
+def public_probe(row: ProbeRow, root_seed: int) -> PublicProbe:
+    """The probe's question and non-null options; trait, type, slice and answer stay hidden.
+
+    The id is opaque: corpus ids are numbered in construction order, which tracks the answer.
+    """
     options = (row.option_a, row.option_b, row.option_c, row.option_d)
     return PublicProbe(
-        probe_id=row.probe_id,
+        probe_id=opaque_probe_id(root_seed, row.probe_id),
         form=row.form,
         question=row.question,
         options=tuple(text for text in options if text is not None),

@@ -19,6 +19,7 @@ from pm_traitbench.harness.score import (
     score_run,
     summarise,
 )
+from pm_traitbench.harness.views import opaque_probe_id
 from pm_traitbench.tables.schema import ProbeRow, ScoreRow, probe_id
 from pm_traitbench.tables.specs import PROBES, RESPONSES, SCORES
 from pm_traitbench.tables.store import DataStore
@@ -297,7 +298,8 @@ def test_score_run_refuses_missing_response(tmp_path) -> None:
 
 def test_score_run_end_to_end(tmp_path, fixture_market, neutral_pm, monkeypatch) -> None:
     config, store = validated_corpus_with_probes(tmp_path, fixture_market, neutral_pm, monkeypatch)
-    answers = {p.probe_id: p.answer for p in store.read(PROBES)}
+    root = config.seed.root
+    answers = {opaque_probe_id(root, p.probe_id): p.answer for p in store.read(PROBES)}
 
     def answer(as_of, probe):
         if probe.form == ProbeForm.MCQ:
