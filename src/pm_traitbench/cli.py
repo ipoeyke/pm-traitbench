@@ -4,9 +4,9 @@ import argparse
 import sys
 from collections.abc import Sequence
 from importlib.metadata import version
-from pathlib import Path
 
 from pm_traitbench import pipeline
+from pm_traitbench.cli_args import add_common_args
 from pm_traitbench.config import load_config
 from pm_traitbench.errors import PmTraitbenchError
 from pm_traitbench.harness.cli import add_eval_parser, run_eval
@@ -42,20 +42,7 @@ def build_parser(stages: Sequence[Stage]) -> argparse.ArgumentParser:
 
     for stage in sorted(stages, key=lambda s: s.number):
         subparser = subparsers.add_parser(stage.name, help=f"stage {stage.number}: {stage.help}")
-        subparser.add_argument(
-            "--config",
-            type=Path,
-            default=None,
-            metavar="PATH",
-            help="YAML file overriding default settings",
-        )
-        subparser.add_argument(
-            "--data-dir",
-            type=Path,
-            default=Path("data"),
-            metavar="PATH",
-            help="directory for pipeline tables (default: data)",
-        )
+        add_common_args(subparser)
         subparser.add_argument(
             "--force", action="store_true", help="overwrite existing output tables"
         )
@@ -64,20 +51,7 @@ def build_parser(stages: Sequence[Stage]) -> argparse.ArgumentParser:
     fetch_parser = subparsers.add_parser(
         "fetch-market", help="fetch real market raw data into the raw cache"
     )
-    fetch_parser.add_argument(
-        "--config",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="YAML file overriding default settings",
-    )
-    fetch_parser.add_argument(
-        "--data-dir",
-        type=Path,
-        default=Path("data"),
-        metavar="PATH",
-        help="directory for pipeline tables (default: data)",
-    )
+    add_common_args(fetch_parser)
     fetch_parser.add_argument("--force", action="store_true", help="refetch every cached raw file")
 
     add_eval_parser(subparsers)

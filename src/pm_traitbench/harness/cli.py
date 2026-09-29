@@ -2,9 +2,9 @@
 
 import argparse
 import sys
-from pathlib import Path
 from typing import Any
 
+from pm_traitbench.cli_args import add_common_args
 from pm_traitbench.config import load_config
 from pm_traitbench.harness.baselines import BASELINES, baseline_factory
 from pm_traitbench.harness.runner import (
@@ -37,24 +37,8 @@ def add_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     eval_sub = eval_parser.add_subparsers(dest="eval_command", required=True)
 
-    def common(parser: argparse.ArgumentParser) -> None:
-        parser.add_argument(
-            "--config",
-            type=Path,
-            default=None,
-            metavar="PATH",
-            help="YAML file overriding default settings",
-        )
-        parser.add_argument(
-            "--data-dir",
-            type=Path,
-            default=Path("data"),
-            metavar="PATH",
-            help="directory for pipeline tables (default: data)",
-        )
-
     run = eval_sub.add_parser("run", help="replay every PM into a system under test")
-    common(run)
+    add_common_args(run)
     run.add_argument(
         "--sut",
         required=True,
@@ -68,7 +52,7 @@ def add_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     run.add_argument("--force", action="store_true", help="discard an existing run first")
 
     score = eval_sub.add_parser("score", help="score a finished run")
-    common(score)
+    add_common_args(score)
     score.add_argument("--run-name", required=True, metavar="NAME", help="the run to score")
 
 
@@ -115,5 +99,6 @@ def run_eval(args: argparse.Namespace) -> int:
         f"failed {len(result.failed)}"
     )
     for pm_id, trace in result.failed.items():
-        print(f"{pm_id}: {trace.strip().splitlines()[-1]}", file=sys.stderr)
+        last = trace.strip().splitlines()[-1:] or ["no traceback"]
+        print(f"{pm_id}: {last[0]}", file=sys.stderr)
     return 1 if result.failed else 0
