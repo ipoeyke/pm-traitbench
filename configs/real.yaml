@@ -1,0 +1,8 @@
+# Every PM, pilot and full, replays the real market seed R1 (run fetch-market first).
+# full_per_cell 9 keeps the full split at its default size on one seed instead of three.
+# Gate 1 blocks only on the synthetic pool, so with no synthetic PMs it fails every
+# blocking parameter as missing; review the R1 rows in gate1_cells, then resume from plan.
+population:
+  market_seeds: [R1]
+  pilot_market_seeds: [R1]
+  full_per_cell: 9
