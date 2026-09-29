@@ -49,6 +49,8 @@ uv run pm-traitbench dialogue --config configs/demo.yaml --data-dir data
 uv run pm-traitbench validate --config configs/demo.yaml --data-dir data
 uv run pm-traitbench gate2 --config configs/demo.yaml --data-dir data
 uv run pm-traitbench probes --config configs/demo.yaml --data-dir data
+uv run pm-traitbench eval run --sut full-context --data-dir data
+uv run pm-traitbench eval score --run-name full-context --data-dir data
 ```
 
 The `sample` stage writes four tables to `data`: `personas`, `traits`,
@@ -89,7 +91,9 @@ pooled Poisson-binomial test over every held preference, at `gate2.alpha`.
 A blocking row below `gate2.min_class` PMs either side is `insufficient`
 and reported but never blocks. The `probes` stage writes `probes`, one row per question with ground truth at
 each checkpoint of a PM's schedule, calling no model; `answer`, the option
-sources and the supporting signal ids are hidden columns. Pass `--force` to
+sources and the supporting signal ids are hidden columns. The `eval` commands are
+not a stage: they replay the corpus into a system under test and score its
+answers; see Evaluation. Pass `--force` to
 overwrite a table that already exists. Run `uv run pm-traitbench --help` for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
@@ -787,6 +791,122 @@ and note in the config.
 **Hidden columns.** `answer`, `source_a` to `source_d` and
 `supporting_signal_ids` are hidden: they are ground truth and provenance for
 scoring and slicing, never shown to a system under test.
+
+## Evaluation
+
+The `eval` commands replay the corpus into a copilot memory system, the
+system under test, and score its answers to the probes. They call no model
+unless the system does, and they write only under `data/eval/<run_name>/`,
+never into the corpus tables. A system is an in-process object with one
+instance per PM, built by a factory:
+
+```python
+class SystemUnderTest(Protocol):
+    def observe(self, session: PublicSession) -> None: ...
+    def answer(self, as_of: datetime.date, probe: PublicProbe) -> str: ...
+
+SutFactory = Callable[[PublicProfile], SystemUnderTest]
+```
+
+A system may also define `close()`, called once after its PM finishes or
+fails.
+
+**What a system sees.** The profile, given to the factory, holds the mandate,
+the self-description and the PM-scope rules. Each session holds its date, its
+turns and the idea-scope rules of the ideas it discusses. A probe holds its
+id, form, question and, for a multiple choice, its options in order. A system
+never sees typicality, the split, the market seed, the session kind, the
+ledger, the ideas, rule events, the market tables, signals, traits, drift
+events, or the hidden probe columns (`answer`, `source_a` to `source_d`,
+`supporting_signal_ids`, the probe type, trait and checkpoint label). This
+matches what Gate 2's recovery model saw, so Gate 2's recovery is the ceiling
+for what any system can learn from the corpus.
+
+**Replay.** Per PM, sessions are observed in date order, and every session
+dated at or before a checkpoint is observed before that checkpoint's first
+probe. A session dated after a checkpoint is not observed until that
+checkpoint's last probe is answered. `answer` must not write memory: a
+governance probe's premise is stale on purpose, so a system that stores the
+premise from the question would corrupt its own memory.
+
+```sh
+uv run pm-traitbench eval run --sut full-context --data-dir data
+uv run pm-traitbench eval run --sut mypackage.adapter:factory --run-name mine --workers 4
+uv run pm-traitbench eval score --run-name mine --data-dir data
+```
+
+`--sut` is a baseline name or a `package.module:factory` path. `--run-name`
+defaults to the `--sut` value with dots and colons replaced by underscores,
+and may contain only lowercase letters, digits, `_` and `-`. `--workers` runs
+that many PMs in parallel. `eval run` exits 1 when any PM failed and prints
+each failed PM with the last line of its traceback. A PM's responses are
+written as it finishes, so a rerun of the same command skips finished PMs and
+retries failed ones. Run metadata is recorded before replay starts, so a rerun
+over changed probes refuses without `--force`, which discards the run and
+starts again. `eval score` refuses a run with failed PMs, an unfinished run,
+or changed probes.
+
+A run directory holds `responses` (one row per probe), `scores`,
+`summary.json`, `parts/` (one responses file per finished PM), `cache/` (the
+baselines' model replies, keyed by request) and `run_metadata/`.
+
+**Baselines.** Both answer at the Gate 2 model and effort
+(`harness.model`, `harness.effort`) with the advisor prompt, the profile and
+the probe; they differ in what else they keep.
+
+- `no-memory` sees the profile only. Its score is a floor for what the
+  profile alone predicts.
+- `full-context` also sees every session observed so far, rendered as Gate 2
+  renders a transcript. Its score is the Gate 2 ceiling expressed as a probe
+  score.
+
+**Scoring.** A multiple choice (`trait_presence` and the `trait_mcq`
+multiple choice) is scored by strict option-letter parsing: the reply must
+open with a valid letter, optionally in parentheses and followed by `.`,
+`)` or `:`. Anything else is a parse error and counts as wrong, so a reply
+that lists every letter earns nothing. A routine question is checked against
+the communication formats the PM holds, using a check map shipped in
+`harness/checks.yaml`. The reply passes when every held format with a
+deterministic check passes.
+
+| Preference value | Check |
+|---|---|
+| `bullets` | two or more lines, each starting with a list marker |
+| `prose_paragraph` | one paragraph with no list, table row or header |
+| `table` | a markdown table with a separator row |
+| `headers` | at least two markdown headers |
+| `units_bp` | basis points present and no percent (not applicable when the reply has neither) |
+| `units_percent` | percent present and no basis points (not applicable when the reply has neither) |
+| `units_both` | both present (not applicable when the reply has neither) |
+| `one_sentence` | exactly one sentence |
+| `two_to_three_sentences` | two or three sentences |
+| `short_page` | at most `harness.short_page_words` words |
+| `no_hedges` | none of might, could, perhaps, possibly, likely, unlikely, uncertain, and lowercase may |
+| `confidence_level` | a confidence or conviction word next to a level (high, medium, low or a percentage) |
+
+`no_hedges` counts `may` only in lowercase, since a capitalised May is
+usually the month. `confidence_level` needs the confidence or conviction word
+because a bare percentage is a quoted move. The bp unit matches glued forms
+such as `12bp`. The `register`, `pushback_style`, `answer_ordering` and "flag
+uncertainty once" values have no deterministic check and wait for judges.
+
+`summary.json` holds `by_type` (per probe type, form and scorer: `n`,
+`correct`, `accuracy`, `chance` for option-letter rows, and `parse_errors`),
+`slices` (accuracy per scorer by trait kind, checkpoint label and evidence
+type: `explicit`, `implicit`, `mixed` or `none`, from the modes of the
+probe's supporting signals), `presence` (accuracy on yes and no answers and
+their balanced accuracy, since most presence answers are no and an always-no
+reply would otherwise look strong) and `awaiting_judge`. Open probes are not
+scored here: the open twin of each multiple choice, `in_situ`, `governance`,
+the intrusion half of each routine question and the judge-only format values
+are counted under `awaiting_judge`.
+
+**Config.** `harness.model` (the Gate 2 model, design) and `harness.effort`
+(high, design) set the baselines' model; `max_answer_tokens` (8000, design)
+bounds a reply including thinking, and a reply cut off at the limit is an
+unparsable reply. `short_page_words` (400, design) is the `short_page`
+ceiling. `pm_token_budget` (unset, guess) is a per-PM soft stop on fresh
+tokens for a baseline. Each carries its basis and note in the config.
 
 ## Development
 
