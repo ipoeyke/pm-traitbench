@@ -31,6 +31,7 @@ from pm_traitbench.config import (
 from pm_traitbench.distributions import BetaSpec, LogNormalSpec
 from pm_traitbench.enums import Effort, EventType, Regime, SessionKind, Split
 from pm_traitbench.errors import ConfigError
+from pm_traitbench.sampling.population import build_population
 
 
 def _write_yaml(tmp_path: Path, data: dict) -> Path:
@@ -173,6 +174,14 @@ def test_pilot_config_differs_from_default_only_in_dialogue_filter() -> None:
     config = load_config(path)
     assert config.dialogue.pm_filter == PmFilter(split=Split.PILOT)
     assert config.model_copy(update={"dialogue": DialogueConfig()}) == Config()
+
+
+def test_real_config_puts_every_pm_on_a_real_seed_at_default_size() -> None:
+    path = Path(__file__).resolve().parents[1] / "configs" / "real.yaml"
+    config = load_config(path)
+    slots = build_population(config)
+    assert {slot.market_seed for slot in slots} == {"R1"}
+    assert len(slots) == len(build_population(Config()))
 
 
 def test_probability_outside_unit_interval_raises() -> None:

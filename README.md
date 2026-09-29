@@ -31,6 +31,19 @@ scripts/generate.sh --config configs/pilot.yaml
 scripts/generate.sh --config configs/pilot.yaml --from plan   # after a default-config gate1
 ```
 
+`configs/real.yaml` puts every PM, pilot and full, on the real seed R1, with
+`full_per_cell` raised to 9 so the full split keeps its default size on one
+seed. Gate 1 blocks only on the synthetic pool, so under this config it fails
+every blocking parameter as missing; review the R1 rows in `gate1_cells`, then
+resume from `plan`. It changes the population, so use a fresh data directory
+holding a copy of the raw market cache:
+
+```sh
+mkdir -p data-real/raw && cp -r data/raw/market data-real/raw/
+scripts/generate.sh --config configs/real.yaml --data-dir data-real --from sample
+scripts/generate.sh --config configs/real.yaml --data-dir data-real --from plan   # after gate1
+```
+
 The API-billed stages print a progress line to stderr for each finished session
 or unit, with calls, fresh tokens spent and elapsed time.
 
