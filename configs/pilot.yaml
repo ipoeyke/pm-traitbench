@@ -1,0 +1,6 @@
+# Default population, with dialogue narrated for the pilot split only.
+# The full split still runs through engine and gate1, which blocks on the
+# synthetic pool, so only the API-billed stages are scoped to the pilot.
+dialogue:
+  pm_filter:
+    split: pilot
