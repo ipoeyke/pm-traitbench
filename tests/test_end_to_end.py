@@ -298,7 +298,7 @@ def test_sample_market_engine_plan_then_dialogue_on_synthetic_seeds(tmp_path: Pa
     )
     dialogue_args = ["--config", str(dialogue_config_path), "--data-dir", str(data_dir)]
     fake_dialogue_stage = make_stage(lambda c: FakeClient(default_responder))
-    stages = (*pipeline.STAGES[:-3], fake_dialogue_stage)
+    stages = (*pipeline.STAGES[:-4], fake_dialogue_stage)
 
     assert main(["dialogue", *dialogue_args], stages=stages) == 0
 
@@ -347,7 +347,7 @@ def test_dialogue_then_validate_on_synthetic_seeds(tmp_path: Path) -> None:
     fake_validate_stage = make_validate_stage(lambda c: FakeClient(_judge_clean_responder))
     # `default_responder` gives every narrated turn no mentions, so every decision
     # session fails the ledger layer on every attempt and drops at the cap.
-    stages = (*pipeline.STAGES[:-3], fake_dialogue_stage, fake_validate_stage)
+    stages = (*pipeline.STAGES[:-4], fake_dialogue_stage, fake_validate_stage)
 
     assert main(["dialogue", *dialogue_args], stages=stages) == 0
     assert main(["validate", *dialogue_args], stages=stages) == 0
@@ -389,7 +389,7 @@ def test_validate_then_gate2_on_synthetic_seeds(tmp_path: Path) -> None:
     fake_gate2_stage = make_gate2_stage(lambda c: FakeClient(truthful_responder(store)))
     # `default_responder` gives every narrated turn no mentions, so every decision
     # session fails the ledger layer on every attempt and drops at the cap.
-    stages = (*pipeline.STAGES[:-3], fake_dialogue_stage, fake_validate_stage, fake_gate2_stage)
+    stages = (*pipeline.STAGES[:-4], fake_dialogue_stage, fake_validate_stage, fake_gate2_stage)
 
     assert main(["dialogue", *dialogue_args], stages=stages) == 0
     assert main(["validate", *dialogue_args], stages=stages) == 0
