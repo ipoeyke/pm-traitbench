@@ -44,7 +44,7 @@ def blocking_id(row: Gate2CellRow) -> str:
 
 def blocking_failures(rows: Sequence[Gate2CellRow]) -> list[str]:
     """Sorted ids of blocking rows whose verdict is fail. Insufficient rows never block:
-    a class below `min_class` says nothing about narration recovery either way.
+    a sample too small for perfect recovery to reach `alpha` says nothing about narration.
     """
     failing = (row for row in rows if row.blocking and row.verdict == Gate2Verdict.FAIL)
     return sorted(blocking_id(row) for row in failing)
@@ -82,7 +82,11 @@ def _confusion_cell(
     tn = n_inactive - fp
     n_positive = tp + tn
     rate = None if n_active == 0 or n_inactive == 0 else (tp / n_active + tn / n_inactive) / 2
-    if min(n_active, n_inactive) < config.min_class:
+    # Too few PMs, or so few that even perfect recovery cannot reach `alpha`.
+    if (
+        min(n_active, n_inactive) < config.min_class
+        or fisher_upper_p(n_active, n_active, n_inactive, n_active) >= config.alpha
+    ):
         p, verdict = None, Gate2Verdict.INSUFFICIENT
     else:
         p = fisher_upper_p(tp, n_active, n_inactive, tp + fp)
@@ -116,7 +120,8 @@ def _pooled_preference_cell(
     rate = n_positive / n if n else None
     chances = [1 / k_by_param[row.param] for row in held_rows]
     chance = sum(chances) / n if n else None
-    if n < config.min_class:
+    # Too few pairs, or so few that even all hits cannot reach `alpha`.
+    if n < config.min_class or poisson_binomial_upper_p(chances, n) >= config.alpha:
         p, verdict = None, Gate2Verdict.INSUFFICIENT
     else:
         p = poisson_binomial_upper_p(chances, n_positive)

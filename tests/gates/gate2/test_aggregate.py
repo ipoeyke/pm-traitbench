@@ -169,6 +169,16 @@ def test_build_cells_bias_row_verdicts():
     assert row.verdict == Gate2Verdict.INSUFFICIENT
     assert row.p is None
 
+    # 3 active and 3 inactive: perfect recovery gives p = 1/20 = alpha, so the row cannot pass.
+    small_rows = [_bias_row(f"pm_{i:03d}", True, True) for i in range(3)] + [
+        _bias_row(f"pm_{i:03d}", False, False) for i in range(3, 6)
+    ]
+    cells = build_cells(small_rows, [], [], {}, config)
+    row = _row(cells, Gate2Slice.ALL, "all", BIAS_PARAM)
+    assert row.verdict == Gate2Verdict.INSUFFICIENT
+    assert row.p is None
+    assert blocking_failures(cells) == []
+
     fail_rows = (
         [_bias_row("pm_000", True, True)]
         + [_bias_row(f"pm_{i:03d}", True, False) for i in range(1, 3)]
@@ -212,7 +222,9 @@ def test_build_cells_pooled_preference_row_and_per_param_rows():
     assert held.n_positive == 3
     assert held.rate == pytest.approx(0.75)
     assert held.blocking is False
-    assert held.p == pytest.approx(fisher_upper_p(2, 2, 2, 3))
+    # Two holders and two non-holders: best-case p is 1/6, so the row is insufficient.
+    assert held.verdict == Gate2Verdict.INSUFFICIENT
+    assert held.p is None
 
     kind_pref = _row(cells, Gate2Slice.KIND, "preference", None)
     assert kind_pref.n == 4
@@ -338,3 +350,16 @@ def test_build_cells_pooled_preference_all_wrong_gives_fail_with_p_one():
     assert pooled.n_positive == 0
     assert pooled.p == 1.0
     assert pooled.verdict == Gate2Verdict.FAIL
+
+
+def test_build_cells_pooled_preference_too_few_pairs_to_pass_is_insufficient():
+    """Two pairs at k=3 give a best-case p of 1/9, so even all hits cannot pass."""
+    config = Gate2Config()
+    k_by_param = {"register": 3}
+    rows = [_pref_row(f"pm_{i:03d}", "register", "blunt", "blunt") for i in range(2)]
+    cells = build_cells(rows, [], [], k_by_param, config)
+    pooled = _row(cells, Gate2Slice.ALL, "all", None)
+    assert pooled.n_positive == 2
+    assert pooled.verdict == Gate2Verdict.INSUFFICIENT
+    assert pooled.p is None
+    assert blocking_failures(cells) == []
