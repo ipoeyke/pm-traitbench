@@ -11,6 +11,7 @@ from pm_traitbench.probes.actions import (
     assemble_action_options,
     assemble_value_options,
     horizons,
+    loss_side_outcomes,
 )
 
 CONFIG = Config()
@@ -27,13 +28,22 @@ def test_default_horizons():
 
 def test_loss_aversion_typical_at_the_active_floor():
     assert index("loss_aversion_lambda", 1.5) == 0
-    assert index("loss_aversion_lambda", 1.1) == 1
+    assert index("loss_aversion_lambda", 2.0) == 0
+    assert index("loss_aversion_lambda", 1.1) == 2
+
+
+def test_loss_side_outcomes_at_the_neutral_median():
+    add, hold, cut = loss_side_outcomes(1.1, NEUTRAL_FACTS, HORIZONS["loss_aversion_lambda"])
+    assert add + hold + cut == pytest.approx(1.0)
+    assert (add, hold, cut) == pytest.approx((0.15, 0.14, 0.70), abs=0.01)
 
 
 def test_no_add_rule_scales_the_add_hazard():
     low = PmFacts(no_add_rule=True, lambda_active=True, exit_deficiency=0.06)
     high = PmFacts(no_add_rule=True, lambda_active=True, exit_deficiency=1.0)
-    assert index("loss_aversion_lambda", 2.0, low) == 1
+    add, hold, cut = loss_side_outcomes(2.0, low, HORIZONS["loss_aversion_lambda"])
+    assert (add, hold, cut) == pytest.approx((0.13, 0.34, 0.53), abs=0.01)
+    assert index("loss_aversion_lambda", 2.0, low) == 2
     assert index("loss_aversion_lambda", 2.0, high) == 0
 
 

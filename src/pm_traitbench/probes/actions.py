@@ -40,6 +40,24 @@ def _params(param: str, value: float) -> EffectiveParams:
     return EffectiveParams({param: value}, {param: True})
 
 
+def loss_side_outcomes(value: float, facts: PmFacts, horizon: int) -> tuple[float, float, float]:
+    """Probabilities that a losing position is added to first, held throughout, or cut first.
+
+    Each of `horizon` loss-side sessions draws cut, add or hold from lambda-scaled hazards, as
+    the engine does; the first cut or add ends the run.
+    """
+    p_cut = LOSS_CUT_HAZARD / value
+    p_add = min(LOSS_ADD_CAP, LOSS_ADD_SLOPE * max(value - 1.0, 0.0))
+    if facts.no_add_rule:
+        # An add before any trigger needs a rule breach first.
+        p_add *= facts.exit_deficiency
+    total = p_cut + p_add
+    if total == 0:
+        return 0.0, 1.0, 0.0
+    hold = max(1 - total, 0.0) ** horizon
+    return p_add / total * (1 - hold), hold, p_cut / total * (1 - hold)
+
+
 def typical_probability(
     param: str, value: float, facts: PmFacts, horizon: int | None, config: Config
 ) -> float:
@@ -47,15 +65,7 @@ def typical_probability(
     if param == "loss_aversion_lambda":
         if horizon is None:
             raise ValueError(f"{param} needs a horizon")
-        p_cut = LOSS_CUT_HAZARD / value
-        p_add = min(LOSS_ADD_CAP, LOSS_ADD_SLOPE * max(value - 1.0, 0.0))
-        if facts.no_add_rule:
-            # An add before any trigger needs a rule breach first.
-            p_add *= facts.exit_deficiency
-        total = p_cut + p_add
-        if total == 0:
-            return 0.0
-        return p_add / total * (1 - max(1 - total, 0.0) ** horizon)
+        return loss_side_outcomes(value, facts, horizon)[0]
     if param == "disposition_ratio":
         if horizon is None:
             raise ValueError(f"{param} needs a horizon")
@@ -99,11 +109,18 @@ def action_index(
     horizons: Mapping[str, int | None],
     config: Config,
 ) -> int:
-    """Index into the bank's actions of the engine's most likely action at `value`."""
+    """Index into the bank's actions of the engine's most likely action at `value`.
+
+    Loss aversion takes the most likely of add (0), hold (1) and cut (2) over its horizon, ties
+    going to the lower index; disposition is binary on the sell probability.
+    """
     if param in HAZARD_PARAMS:
         horizon = horizons[param]
         if horizon is None:
             raise ValueError(f"no horizon separates active from neutral for '{param}'")
+        if param == "loss_aversion_lambda":
+            outcomes = loss_side_outcomes(value, facts, horizon)
+            return outcomes.index(max(outcomes))
         p = typical_probability(param, value, facts, horizon, config)
         return 0 if p >= 0.5 else 1
     if param in _THRESHOLD_PARAMS:

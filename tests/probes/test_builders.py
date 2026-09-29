@@ -369,7 +369,7 @@ def test_dormant_exit_deficiency_uses_neutral_value_for_no_add_answer(corpus):
     assert d.options[LETTERS.index(d.answer)] == actions[0]
     corpus.event(DriftEventType.DORMANT, exit_id, t=UPDATE_T)
     (d,) = bias_mcqs(mcq(corpus)[0])
-    assert d.options[LETTERS.index(d.answer)] == actions[1]
+    assert d.options[LETTERS.index(d.answer)] == actions[2]
 
 
 def test_exit_deficiency_add_reads_the_planted_loss_aversion_flag(corpus):
