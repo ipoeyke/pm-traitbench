@@ -1,7 +1,10 @@
 """Shared harness test fixtures: small keyword-overridable corpus row builders."""
 
+from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 
+from pm_traitbench.config import Config
 from pm_traitbench.enums import (
     Action,
     AssetClass,
@@ -14,6 +17,9 @@ from pm_traitbench.enums import (
     Split,
     Typicality,
 )
+from pm_traitbench.harness.protocol import PublicProbe, PublicProfile, PublicSession, SutFactory
+from pm_traitbench.probes.stage import PROBES_STAGE
+from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.schema import (
     Mandate,
     Persona,
@@ -23,7 +29,9 @@ from pm_traitbench.tables.schema import (
     StatedProfile,
     probe_id,
 )
+from pm_traitbench.tables.store import DataStore
 from tests.gates.gate2.fixtures import session_of
+from tests.probes.test_stage import _run_validated_corpus
 
 _LETTERS = "abcd"
 
@@ -121,3 +129,68 @@ def probe_row(
         context_chars=0,
         **fields,
     )
+
+
+class RecordingSut:
+    """A system under test that logs every call and answers from a scripted callable."""
+
+    def __init__(
+        self,
+        profile: PublicProfile,
+        answer_fn: Callable[[date, PublicProbe], str] | None = None,
+        fail_on_probe_id: str | None = None,
+    ) -> None:
+        self.profile = profile
+        self.events: list[tuple] = []
+        self.closed = False
+        self._answer_fn = answer_fn or (lambda as_of, probe: "A")
+        self._fail_on_probe_id = fail_on_probe_id
+
+    def observe(self, session: PublicSession) -> None:
+        self.events.append(("observe", session))
+
+    def answer(self, as_of: date, probe: PublicProbe) -> str:
+        self.events.append(("answer", as_of, probe))
+        if probe.probe_id == self._fail_on_probe_id:
+            raise RuntimeError(f"scripted failure on {probe.probe_id}")
+        return self._answer_fn(as_of, probe)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def recording_factory(**kwargs) -> tuple[SutFactory, dict[str, RecordingSut]]:
+    """A factory of `RecordingSut`s built with `kwargs`, plus the instances keyed by pm_id."""
+    built: dict[str, RecordingSut] = {}
+
+    def factory(profile: PublicProfile) -> RecordingSut:
+        sut = RecordingSut(profile, **kwargs)
+        built[profile.pm_id] = sut
+        return sut
+
+    return factory, built
+
+
+def _raise_in_answer(as_of: date, probe: PublicProbe) -> str:
+    raise RuntimeError("scripted failure")
+
+
+def _echo_factory(profile: PublicProfile) -> RecordingSut:
+    return RecordingSut(profile)
+
+
+def _failing_factory(profile: PublicProfile) -> RecordingSut:
+    return RecordingSut(profile, answer_fn=_raise_in_answer)
+
+
+ECHO_FACTORY: SutFactory = _echo_factory
+FAILING_FACTORY: SutFactory = _failing_factory
+
+
+def validated_corpus_with_probes(
+    tmp_path: Path, fixture_market: dict, neutral_pm, monkeypatch
+) -> tuple[Config, DataStore]:
+    """A validated dialogue corpus with the probes stage run on top."""
+    config, store = _run_validated_corpus(tmp_path, fixture_market, neutral_pm, monkeypatch)
+    run_stage(PROBES_STAGE, config, store)
+    return config, store
