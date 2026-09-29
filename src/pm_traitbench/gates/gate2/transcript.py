@@ -23,7 +23,7 @@ class TranscriptSession(Protocol):
     def turns(self) -> Sequence[Turn]: ...
 
 
-def _date_then_id(session: TranscriptSession) -> tuple:
+def session_order_key(session: TranscriptSession) -> tuple:
     """The sort key that orders a PM's sessions the same way everywhere: date, then id."""
     return (session.date, session.session_id)
 
@@ -42,7 +42,7 @@ def render_session(session: TranscriptSession) -> str:
 
 def render_pm(sessions: Sequence[TranscriptSession]) -> str:
     """`sessions` rendered in date-then-id order, each session's block separated by a blank line."""
-    ordered = sorted(sessions, key=_date_then_id)
+    ordered = sorted(sessions, key=session_order_key)
     return "\n\n".join(render_session(session) for session in ordered)
 
 
@@ -52,7 +52,7 @@ def pm_turn_text(sessions: Sequence[TranscriptSession]) -> str:
     Sorted the same way as `render_pm` so a containment metric built from
     this text never depends on the order sessions happen to be passed in.
     """
-    ordered = sorted(sessions, key=_date_then_id)
+    ordered = sorted(sessions, key=session_order_key)
     return "\n".join(
         turn.text for session in ordered for turn in session.turns if turn.role == TurnRole.PM
     )

@@ -37,7 +37,6 @@ def test_public_model_field_sets_are_exact():
     assert set(PublicSession.model_fields) == {
         "session_id",
         "date",
-        "kind",
         "turns",
         "idea_rules",
     }
@@ -71,6 +70,7 @@ def test_no_hidden_name_reaches_public_objects():
         "probe_type",
         "context_chars",
         "split",
+        "kind",
     }
 
     def keys(node):

@@ -6,7 +6,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
-from pm_traitbench.enums import ProbeForm, SessionKind
+from pm_traitbench.enums import ProbeForm
 from pm_traitbench.tables.schema import Mandate, Rule, Turn
 
 
@@ -28,7 +28,6 @@ class PublicSession(BaseModel):
 
     session_id: str
     date: datetime.date
-    kind: SessionKind
     turns: tuple[Turn, ...]
     idea_rules: tuple[Rule, ...]
 

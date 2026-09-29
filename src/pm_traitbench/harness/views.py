@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from pm_traitbench.enums import RuleScope
 from pm_traitbench.errors import HarnessError
+from pm_traitbench.gates.gate2.transcript import session_order_key
 from pm_traitbench.harness.protocol import PublicProbe, PublicProfile, PublicSession
 from pm_traitbench.tables.schema import Persona, ProbeRow, Rule, Session
 
@@ -46,7 +47,6 @@ def public_session(session: Session, rules: Sequence[Rule]) -> PublicSession:
     return PublicSession(
         session_id=session.session_id,
         date=session.date,
-        kind=session.kind,
         turns=session.turns,
         idea_rules=tuple(discussed),
     )
@@ -103,7 +103,7 @@ def pm_replays(
         by_day: dict[datetime.date, list[ProbeRow]] = defaultdict(list)
         for probe in probes_by_pm[pm_id]:
             by_day[probe.checkpoint_date].append(probe)
-        ordered = sorted(sessions_by_pm[pm_id], key=lambda s: (s.date, s.session_id))
+        ordered = sorted(sessions_by_pm[pm_id], key=session_order_key)
         replays[pm_id] = PmReplay(
             profile=public_profile(persona, rules),
             sessions=tuple(public_session(s, rules) for s in ordered),
