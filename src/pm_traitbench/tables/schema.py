@@ -1469,6 +1469,12 @@ def probe_id(pm_id: str, n: int) -> str:
     return f"p_{pm_id.replace('_', '')}_{n:04d}"
 
 
+def _check_probe_prefix(probe_id: str, pm_id: str) -> None:
+    prefix = f"p_{pm_id.replace('_', '')}_"
+    if not probe_id.startswith(prefix):
+        raise ValueError(f"probe_id must start with '{prefix}'")
+
+
 class ProbeRow(BaseModel):
     """One question put to a copilot at a checkpoint, with its deterministic ground truth."""
 
@@ -1517,9 +1523,7 @@ class ProbeRow(BaseModel):
 
     @model_validator(mode="after")
     def _check_probe_id_prefix(self) -> "ProbeRow":
-        prefix = f"p_{self.pm_id.replace('_', '')}_"
-        if not self.probe_id.startswith(prefix):
-            raise ValueError(f"probe_id must start with '{prefix}'")
+        _check_probe_prefix(self.probe_id, self.pm_id)
         return self
 
     @model_validator(mode="after")
@@ -1618,12 +1622,6 @@ def to_record(row: BaseModel) -> dict[str, Any]:
 def multiplier_field(regime: Regime) -> str:
     """Return the Trait multiplier field name for a regime."""
     return "mult_" + regime.value
-
-
-def _check_probe_prefix(probe_id: str, pm_id: str) -> None:
-    prefix = f"p_{pm_id.replace('_', '')}_"
-    if not probe_id.startswith(prefix):
-        raise ValueError(f"probe_id must start with '{prefix}'")
 
 
 class ResponseRow(BaseModel):
