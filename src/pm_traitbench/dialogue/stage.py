@@ -17,6 +17,7 @@ from pm_traitbench.catalogues.models import Catalogue, Voice
 from pm_traitbench.config import Config
 from pm_traitbench.dialogue.client import AnthropicClient, CachedClient, LlmClient, scope_prefix
 from pm_traitbench.dialogue.context import PmTables, SessionContext, build_contexts, select_pms
+from pm_traitbench.dialogue.progress import Progress
 from pm_traitbench.dialogue.prompts import prompt_sha256, read_advisor_prompt
 from pm_traitbench.dialogue.session import SessionResult, narrate_session
 from pm_traitbench.dialogue.tools import MarketLookup
@@ -170,21 +171,34 @@ async def run_bounded[I, T](
     worker: Callable[[I], Awaitable[T]],
     client: CachedClient,
     max_concurrency: int,
+    *,
+    label: str,
+    unit: str,
 ) -> list[T | BaseException]:
     """Run `worker` over `items` with at most `max_concurrency` in flight, then close `client`.
 
     Results come back in `items` order, with a failure returned in place, not raised.
+    A progress line named `label` and counting `unit`s prints as each finishes.
     """
+    pending = tuple(items)
+    progress = Progress(label, unit, len(pending), client.totals, client.token_budget)
     # Bounding sessions in flight, not just letting `gather` start them all,
     # caps the budget's overshoot and memory use at the concurrency limit.
     semaphore = asyncio.Semaphore(max_concurrency)
 
     async def bounded(item: I) -> T:
         async with semaphore:
-            return await worker(item)
+            try:
+                result = await worker(item)
+            except BaseException:
+                progress.finish(failed=True)
+                raise
+            progress.finish(failed=False)
+            return result
 
+    progress.start(max_concurrency)
     try:
-        return await asyncio.gather(*(bounded(item) for item in items), return_exceptions=True)
+        return await asyncio.gather(*(bounded(item) for item in pending), return_exceptions=True)
     finally:
         # Closed here, inside the loop `asyncio.run` owns, whether the run
         # succeeded or failed: the SDK client's HTTP pool cannot be closed
@@ -274,7 +288,14 @@ def _run(
         return await narrate_session(ctx, client, config.dialogue, advisor_prompt)
 
     results = asyncio.run(
-        run_bounded(frozen_contexts, narrate, client, config.dialogue.max_concurrency)
+        run_bounded(
+            frozen_contexts,
+            narrate,
+            client,
+            config.dialogue.max_concurrency,
+            label="dialogue",
+            unit="sessions",
+        )
     )
     raise_on_failure(tuple(ctx.skeleton.session_id for ctx in frozen_contexts), results, client)
 

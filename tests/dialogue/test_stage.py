@@ -11,7 +11,7 @@ import pytest
 from pm_traitbench.catalogues.models import Catalogue
 from pm_traitbench.config import Config, DialogueConfig, PmFilter
 from pm_traitbench.dialogue.client import CachedClient, Reply, request_key
-from pm_traitbench.dialogue.stage import make_stage, raise_on_failure
+from pm_traitbench.dialogue.stage import make_stage, raise_on_failure, run_bounded
 from pm_traitbench.errors import DialogueBudgetError, DialogueError
 from pm_traitbench.stages import run_stage
 from pm_traitbench.tables.specs import DIALOGUE_LOGS, SESSIONS, SKELETONS
@@ -407,3 +407,27 @@ def test_raise_on_failure_keeps_session_wording_by_default(tmp_path: Path) -> No
 
     with pytest.raises(DialogueError, match=f"^session {SESSION_ID}: "):
         raise_on_failure((SESSION_ID,), [DialogueError("boom")], client)
+
+
+def test_run_bounded_prints_progress_and_keeps_failures_in_place(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = CachedClient(lambda: FakeClient(default_responder), tmp_path / "cache", None)
+
+    async def worker(item: int) -> int:
+        await asyncio.sleep(0)
+        if item == 1:
+            raise DialogueError("boom")
+        return item
+
+    results = asyncio.run(
+        run_bounded([0, 1, 2], worker, client, 2, label="dialogue", unit="sessions")
+    )
+
+    assert results[0] == 0
+    assert isinstance(results[1], DialogueError)
+    assert results[2] == 2
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[0] == "[dialogue] 3 sessions, concurrency 2"
+    assert len(lines) == 4
+    assert lines[-1].startswith("[dialogue] 3/3 sessions (1 failed) | 0 calls, 0 cached")
