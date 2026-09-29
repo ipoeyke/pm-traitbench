@@ -814,17 +814,19 @@ fails.
 **What a system sees.** The profile, given to the factory, holds the mandate,
 the self-description and the PM-scope rules. Each session holds its date, its
 turns and the idea-scope rules of the ideas it discusses. A probe holds an
-opaque id (a keyed hash of the corpus id), form, question and, for a multiple
-choice, its options in order. A system never sees typicality, the split, the
-market seed, the session kind, the ledger, the ideas, rule events, the market tables, signals, traits, drift
-events, or the hidden probe columns (`answer`, `source_a` to `source_d`,
+opaque id (a hash of the corpus id keyed by a per-run secret), form, question
+and, for a multiple choice, its options in order. A system never sees
+typicality, the split, the market seed, the session kind, the ledger, the
+ideas, rule events, the market tables, signals, traits, drift events, or the
+hidden probe columns (`answer`, `source_a` to `source_d`,
 `supporting_signal_ids`, the probe type, trait and checkpoint label). This
 matches what Gate 2's recovery model saw, so Gate 2's recovery is the ceiling
 for what any system can learn from the corpus.
 
 **Replay.** Within a checkpoint, probes are asked in a seeded shuffle and
-under opaque ids, since the corpus numbers probes in construction order, which
-tracks the answers; responses are recorded under the corpus id. Per PM,
+under opaque ids keyed by a per-run secret recorded in the run's metadata
+(reused on resume), since the corpus numbers probes in construction order,
+which tracks the answers; responses are recorded under the corpus id. Per PM,
 sessions are observed in date order, and every session dated at or before a
 checkpoint is observed before that checkpoint's first probe. A session dated
 after a checkpoint is not observed until that checkpoint's last probe is
@@ -839,16 +841,17 @@ uv run pm-traitbench eval score --run-name mine --data-dir data
 ```
 
 `--sut` is a baseline name or a `package.module:factory` path. `--run-name`
-defaults to the `--sut` value with dots and colons replaced by underscores
-and lowercased, and may contain only lowercase letters, digits, `_` and `-`. `--workers` runs
-that many PMs in parallel. `eval run` exits 1 when any PM failed and prints
-each failed PM with the last line of its traceback. A PM's responses are
-written as it finishes, so a rerun of the same command skips finished PMs and
-retries failed ones. Run metadata is recorded before replay starts, so a rerun
-over changed probes refuses without `--force`, which discards the run and
-starts again. A rerun also refuses without `--force` when the run was made by
-a different `--sut` or under a different `harness` config. `eval score`
-refuses a run with failed PMs, an unfinished run, or changed probes.
+defaults to the `--sut` value with dots and colons replaced by underscores and
+lowercased, and may contain only lowercase letters, digits, `_` and `-`.
+`--workers` runs that many PMs in parallel. `eval run` exits 1 when any PM
+failed and prints each failed PM with the last line of its traceback. A PM's
+responses are written as it finishes, so a rerun of the same command skips
+finished PMs and retries failed ones. Run metadata is recorded before replay
+starts, so a rerun over changed probes refuses without `--force`, which
+discards the run and starts again. A rerun also refuses without `--force` when
+the run was made by a different `--sut` or under a different `harness` config.
+`eval score` refuses a run with failed PMs, an unfinished run, or changed
+probes.
 
 A run directory holds `responses` (one row per probe), `scores`,
 `summary.json`, `parts/` (one responses file per finished PM), `cache/` (the
