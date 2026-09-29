@@ -263,7 +263,7 @@ def parse_routine_answer(answer: str) -> tuple[tuple[str, str], ...]   # (param,
   - Sentences: split on `(?<=[.!?])\s+`, count non-empty pieces; a decimal like `4.25` never splits because no whitespace follows the dot. `one_sentence`: count == 1; `two_to_three_sentences`: 2 <= count <= 3.
   - `short_page`: word count (`len(reply.split())`) <= `short_page_words`.
   - `no_hedges`: none of `might`, `could`, `perhaps`, `possibly`, `likely`, `unlikely`, `uncertain` as whole words case-insensitive, nor `may` as a whole lowercase word (capitalised "May" is usually the month).
-  - `confidence_level`: a confidence or conviction word adjacent to a level, case-insensitive: `\b(high|medium|low|\d+(\.\d+)?\s*%)\s+(confidence|conviction)\b` or `\b(confidence|conviction)(\s+level)?\s*(of|at|is|:)?\s*(high|medium|low|\d+(\.\d+)?\s*%)`. A bare percentage is a quoted move, not a confidence level.
+  - `confidence_level`: a confidence or conviction word adjacent to a level, case-insensitive: `\b(high|medium|low|\d+(\.\d+)?\s*%)\s+(confidence|conviction)\b` or `\b(confidence|conviction)(\s+level)?\s*(of|at|is|:)?\s*(high|medium|low|\d+(\.\d+)?\s*%)(?!\w)`. A bare percentage is a quoted move, not a confidence level.
 
 - [ ] **Step 1: Write failing tests** in `tests/harness/test_checks.py`
   - `test_packaged_map_covers_catalogue` - `load_check_map(catalogue)` (the `catalogue` fixture in `tests/conftest.py`) returns an entry for every value of the four params, and `("hedging_language", "flag uncertainty once, then commit to a view")` maps to `JUDGE`.
