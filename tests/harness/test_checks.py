@@ -149,6 +149,8 @@ _EXTRA = [
     (CheckKind.CONFIDENCE_LEVEL, "Conviction: medium.", FormatOutcome.PASS),
     (CheckKind.CONFIDENCE_LEVEL, "confidence level of 70%", FormatOutcome.PASS),
     (CheckKind.CONFIDENCE_LEVEL, "Yields up 0.3%.", FormatOutcome.FAIL),
+    (CheckKind.CONFIDENCE_LEVEL, "My confidence is lower now.", FormatOutcome.FAIL),
+    (CheckKind.CONFIDENCE_LEVEL, "Conviction is highly dependent on data.", FormatOutcome.FAIL),
     (CheckKind.NO_HEDGES, "In May yields rose.", FormatOutcome.PASS),
     (CheckKind.NO_HEDGES, "Yields may rise.", FormatOutcome.FAIL),
 ]

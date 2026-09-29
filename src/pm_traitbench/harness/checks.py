@@ -32,7 +32,7 @@ _MAY = re.compile(r"\bmay\b")
 _LEVEL = r"(high|medium|low|\d+(\.\d+)?\s*%)"
 _CONFIDENCE = re.compile(
     rf"\b{_LEVEL}\s+(confidence|conviction)\b"
-    rf"|\b(confidence|conviction)(\s+level)?\s*(of|at|is|:)?\s*{_LEVEL}",
+    rf"|\b(confidence|conviction)(\s+level)?\s*(of|at|is|:)?\s*{_LEVEL}(?!\w)",
     re.IGNORECASE,
 )
 
@@ -56,7 +56,7 @@ def load_check_map(
     if not isinstance(raw, dict):
         raise HarnessError("check map must be a mapping of param to value to check kind")
     catalogue_values = {p.param: p.values for p in catalogue.preferences}
-    extra = sorted(set(raw) - set(CHECKED_PARAMS))
+    extra = sorted(set(raw) - set(CHECKED_PARAMS), key=str)
     if extra:
         raise HarnessError(f"check map has unchecked params: {', '.join(map(str, extra))}")
     result: dict[tuple[str, str], CheckKind] = {}
@@ -65,9 +65,9 @@ def load_check_map(
         if not isinstance(entries, dict):
             raise HarnessError(f"check map is missing param {param}")
         known = set(catalogue_values.get(param, ()))
-        for value in sorted(known - set(entries)):
+        for value in sorted(known - set(entries), key=str):
             raise HarnessError(f"check map has no entry for {param}: {value}")
-        for value, kind in sorted(entries.items()):
+        for value, kind in sorted(entries.items(), key=str):
             if value not in known:
                 raise HarnessError(f"check map names {param} value not in catalogue: {value}")
             try:
