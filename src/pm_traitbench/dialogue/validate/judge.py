@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pm_traitbench.catalogues.models import BiasLabels
 from pm_traitbench.config import BIAS_PARAMS, ValidateConfig
-from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_until_accepted
+from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_parsed
 from pm_traitbench.dialogue.prompts import base_request
 from pm_traitbench.enums import TurnRole
 from pm_traitbench.errors import ValidateError
@@ -178,20 +178,13 @@ async def send_judged[T](
     session_id: str,
     max_retries: int,
 ) -> tuple[T, int]:
-    """Send `request` through `send_until_accepted`, retrying an unparsable reply.
-
-    Raises `ValidateError` once `max_retries` retries are spent.
-    """
-
-    def classify(response: Mapping[str, Any]) -> tuple[T | None, str]:
-        return parse(response), "the judge reply was unparsable or schema-invalid"
-
-    _, parsed, rejected = await send_until_accepted(
+    """Send `request` through `send_parsed`; raises `ValidateError` once retries are spent."""
+    return await send_parsed(
         client,
         request,
-        classify,
+        parse,
         scope=session_id,
         max_retries=max_retries,
         error_type=ValidateError,
+        reason="the judge reply was unparsable or schema-invalid",
     )
-    return parsed, rejected

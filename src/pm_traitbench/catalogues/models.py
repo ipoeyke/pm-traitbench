@@ -314,6 +314,18 @@ class BiasLabels(BaseModel):
     labels: dict[str, tuple[str, ...]]
 
 
+class BiasDefinitions(BaseModel):
+    """One neutral definition line per bias param, shown beside the param name in a prompt.
+
+    Keyed by bias param; since the prompt already names the param next to it, a line
+    must describe the behaviour and never restate the name.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    definitions: dict[str, str]
+
+
 class Catalogue(BaseModel):
     """The full reference catalogue that samplers draw from."""
 
@@ -329,6 +341,7 @@ class Catalogue(BaseModel):
     voices: tuple[Voice, ...]
     avoid: AvoidLines
     bias_labels: BiasLabels
+    bias_definitions: BiasDefinitions
 
     def preferences_for(self, asset_class: AssetClass) -> tuple[PreferenceEntry, ...]:
         """Return preference entries applicable to an asset class, in catalogue order."""

@@ -231,6 +231,27 @@ class SeedGroupKind(StrEnum):
     REAL_SEED = "real_seed"
 
 
+# Gate 2
+
+
+class Gate2Verdict(StrEnum):
+    PASS = "pass"
+    FAIL = "fail"
+    INSUFFICIENT = "insufficient"
+
+
+class Gate2Slice(StrEnum):
+    """A cell's slicing dimension: the whole population, or one grouping within it."""
+
+    ALL = "all"
+    HELD = "held"
+    KIND = "kind"
+    MODE = "mode"
+    ASSET_CLASS = "asset_class"
+    TYPICALITY = "typicality"
+    DRIFT = "drift"
+
+
 # Derived groupings
 
 

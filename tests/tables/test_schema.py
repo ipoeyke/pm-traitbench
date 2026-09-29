@@ -35,6 +35,10 @@ from pm_traitbench.tables.schema import (
     ConsensusRow,
     CurvePoint,
     DriftEvent,
+    Gate2CellRow,
+    Gate2PmRow,
+    Gate2SignalRow,
+    Gate2TraitRow,
     Idea,
     Instrument,
     LedgerRow,
@@ -70,6 +74,10 @@ ROW_MODELS = [
     LedgerRow,
     RuleEvent,
     PositionDay,
+    Gate2TraitRow,
+    Gate2SignalRow,
+    Gate2PmRow,
+    Gate2CellRow,
 ]
 MARKET_ROW_MODELS = [Instrument, Price, CurvePoint, ConsensusRow, CalendarEvent, RegimeSpan]
 ENGINE_ROW_MODELS = [Leg, Idea, LedgerRow, RuleEvent, PositionDay]

@@ -1,6 +1,7 @@
 """Enforces the dialogue package's dependency boundary in both directions: no module under
 it may import the behaviour engine, signal plan, gate 1 or market packages, and no module
-outside it (besides pipeline.py) may import the dialogue package itself.
+outside it may import the dialogue package, except pipeline.py and gate 2, which may reach
+only its client, prompts and stage plumbing.
 """
 
 import ast
@@ -13,10 +14,21 @@ _FORBIDDEN_PREFIXES = (
     "pm_traitbench.market",
 )
 _DIALOGUE_PREFIX = "pm_traitbench.dialogue"
+_GATE2_ALLOWED_PREFIXES = (
+    "pm_traitbench.dialogue.client",
+    "pm_traitbench.dialogue.prompts",
+    "pm_traitbench.dialogue.stage",
+)
+_GATE2_FORBIDDEN_PREFIXES = (
+    "pm_traitbench.dialogue.validate",
+    "pm_traitbench.signals",
+    "pm_traitbench.engine",
+)
 
 _SRC_ROOT = Path(__file__).resolve().parents[2] / "src"
 _DIALOGUE_ROOT = _SRC_ROOT / "pm_traitbench" / "dialogue"
 _PIPELINE_PATH = _SRC_ROOT / "pm_traitbench" / "pipeline.py"
+_GATE2_ROOT = _SRC_ROOT / "pm_traitbench" / "gates" / "gate2"
 
 
 def _package_for(path: Path) -> str:
@@ -83,15 +95,37 @@ def test_dialogue_package_never_imports_engine_signals_gates_or_market():
     assert not violations, "\n".join(violations)
 
 
-def test_only_pipeline_imports_the_dialogue_package():
+def _violations_under(root: Path, forbidden: tuple[str, ...]) -> list[str]:
+    """Every import under `root` whose name starts with one of `forbidden`."""
     violations = []
-    for path in sorted(_SRC_ROOT.rglob("*.py")):
-        if _DIALOGUE_ROOT in path.parents or path == _PIPELINE_PATH:
-            continue  # dialogue/ may import within itself; pipeline.py is the one caller
+    for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         package = _package_for(path)
         for name in sorted(_imported_names(tree, package)):
-            if _has_prefix(name, _DIALOGUE_PREFIX):
+            if any(_has_prefix(name, prefix) for prefix in forbidden):
                 violations.append(f"{path.relative_to(_SRC_ROOT)}: imports '{name}'")
+    return violations
+
+
+def test_dialogue_package_is_imported_only_by_pipeline_and_gate2_plumbing():
+    violations = []
+    for path in sorted(_SRC_ROOT.rglob("*.py")):
+        if _DIALOGUE_ROOT in path.parents or path == _PIPELINE_PATH:
+            continue  # dialogue/ may import within itself; pipeline.py wires it in
+        in_gate2 = _GATE2_ROOT in path.parents
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        package = _package_for(path)
+        for name in sorted(_imported_names(tree, package)):
+            if not _has_prefix(name, _DIALOGUE_PREFIX):
+                continue
+            if in_gate2 and any(_has_prefix(name, p) for p in _GATE2_ALLOWED_PREFIXES):
+                continue
+            violations.append(f"{path.relative_to(_SRC_ROOT)}: imports '{name}'")
+
+    assert not violations, "\n".join(violations)
+
+
+def test_gate2_never_imports_validate_signals_or_engine():
+    violations = _violations_under(_GATE2_ROOT, _GATE2_FORBIDDEN_PREFIXES)
 
     assert not violations, "\n".join(violations)

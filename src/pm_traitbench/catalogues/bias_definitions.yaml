@@ -1,0 +1,9 @@
+definitions:
+  loss_aversion_lambda: adds to or holds a losing position to avoid taking the loss, rather than cutting it as the rules say
+  disposition_ratio: sells positions at a gain sooner than positions at a loss, holding losers longer than winners
+  anchoring_rho: sets exits and valuations around a reference number such as the entry price, a target or a round level rather than the current view
+  extrapolation_theta: enters after a move has already run, expecting the recent trend to continue
+  herding_weight: follows the street view or crowd positioning over their own signal when the two disagree
+  overconfidence_coverage: states ranges that are too narrow and sizes positions as if more certain than the evidence supports
+  conviction_size_miscalibration: position sizes do not track the conviction stated for the idea
+  exit_deficiency: does not act when their own stop, target or signpost fires, or acts late

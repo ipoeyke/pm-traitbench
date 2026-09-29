@@ -19,6 +19,7 @@ from pm_traitbench.enums import (
     AssetClass,
     CommodityGroup,
     DriftEventType,
+    DriftStatus,
     EventType,
     ExpiryRule,
     Expression,
@@ -26,6 +27,8 @@ from pm_traitbench.enums import (
     Gate1Split,
     Gate1Test,
     Gate1Verdict,
+    Gate2Slice,
+    Gate2Verdict,
     InstrumentKind,
     Kind,
     MentionKind,
@@ -81,6 +84,8 @@ __all__ = [
     "Gate1Verdict",
     "Gate1Split",
     "SeedGroupKind",
+    "Gate2Verdict",
+    "Gate2Slice",
     "SignalMode",
     "Valence",
     "Ownership",
@@ -119,6 +124,10 @@ __all__ = [
     "TurnLog",
     "DialogueLog",
     "ValidationRow",
+    "Gate2TraitRow",
+    "Gate2SignalRow",
+    "Gate2PmRow",
+    "Gate2CellRow",
     "to_record",
     "multiplier_field",
 ]
@@ -1183,6 +1192,256 @@ class ValidationRow(BaseModel):
     def _check_unjudged_leak(self) -> "ValidationRow":
         if not self.leak_judged and not self.leak_ok:
             raise ValueError("leak_ok must be true when leak_judged is false")
+        return self
+
+
+class Gate2TraitRow(BaseModel):
+    """A PM's per-trait ground truth versus what the recovery model predicted for it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pm_id: str = Field(pattern=_PM_ID_PATTERN, description="Identifier of the PM the row covers.")
+    param: str = Field(description="Name of the underlying trait parameter.")
+    trait_id: str | None = Field(
+        pattern=_TRAIT_ID_PATTERN,
+        description="Trait identifier; set for a bias, and for a preference that is held.",
+    )
+    kind: Kind = Field(description="Whether the trait is a bias or a preference.")
+    truth_active: bool | None = Field(
+        description="Whether the bias was truly active; null for a preference."
+    )
+    truth_value: str | None = Field(
+        description="Preference's true value; null for a bias or when not held."
+    )
+    predicted_active: bool | None = Field(
+        description="Whether the recovery model predicted the bias active; null for a preference."
+    )
+    predicted_value: str | None = Field(
+        description="Preference value the recovery model predicted; null for a bias or when "
+        "predicted not held."
+    )
+    correct: bool = Field(description="Whether the prediction matched the truth.")
+    cited_session_ids: tuple[str, ...] = Field(
+        description="Sessions the recovery model cited as evidence, sorted and unique."
+    )
+    false_attribution_ids: tuple[str, ...] = Field(
+        description="Cited sessions that do not in fact carry evidence for this trait."
+    )
+
+    @model_validator(mode="after")
+    def _check_bias_kind(self) -> "Gate2TraitRow":
+        if self.kind != Kind.BIAS:
+            return self
+        if self.trait_id is None:
+            raise ValueError("kind 'bias' requires trait_id to be set")
+        if self.truth_active is None or self.predicted_active is None:
+            raise ValueError("kind 'bias' requires truth_active and predicted_active to be set")
+        if self.truth_value is not None or self.predicted_value is not None:
+            raise ValueError("kind 'bias' requires truth_value and predicted_value to be null")
+        return self
+
+    @model_validator(mode="after")
+    def _check_preference_kind(self) -> "Gate2TraitRow":
+        if self.kind == Kind.PREFERENCE and (
+            self.truth_active is not None or self.predicted_active is not None
+        ):
+            raise ValueError(
+                "kind 'preference' requires truth_active and predicted_active to be null"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_preference_trait_id(self) -> "Gate2TraitRow":
+        if self.kind == Kind.PREFERENCE and (self.trait_id is not None) != (
+            self.truth_value is not None
+        ):
+            raise ValueError(
+                "kind 'preference' requires trait_id to be set exactly when truth_value is set"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_cited_session_ids(self) -> "Gate2TraitRow":
+        prefix = _session_pm_prefix(self.pm_id)
+        for session_id in self.cited_session_ids:
+            if not session_id.startswith(prefix):
+                raise ValueError("cited_session_ids must belong to the row's own pm")
+        if list(self.cited_session_ids) != sorted(set(self.cited_session_ids)):
+            raise ValueError("cited_session_ids must be sorted and unique")
+        return self
+
+    @model_validator(mode="after")
+    def _check_false_attribution_ids(self) -> "Gate2TraitRow":
+        if list(self.false_attribution_ids) != sorted(set(self.false_attribution_ids)):
+            raise ValueError("false_attribution_ids must be sorted and unique")
+        if not set(self.false_attribution_ids) <= set(self.cited_session_ids):
+            raise ValueError("false_attribution_ids must be a subset of cited_session_ids")
+        return self
+
+
+class Gate2SignalRow(BaseModel):
+    """One planted signal and how the recovery model cited, recovered and classified it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM the signal belongs to."
+    )
+    signal_id: str = Field(
+        pattern=_SIGNAL_ID_PATTERN, description="Signal identifier the row reports on."
+    )
+    session_id: str = Field(pattern=_SESSION_ID_PATTERN, description="Session the signal sits on.")
+    trait_id: str = Field(pattern=_TRAIT_ID_PATTERN, description="Trait the signal expresses.")
+    param: str = Field(description="Name of the underlying trait parameter.")
+    kind: Kind = Field(description="Whether the trait is a bias or a preference.")
+    mode: SignalMode = Field(description="How the signal expresses its trait.")
+    valence: Valence = Field(description="Whether the signal confirms or retracts its trait.")
+    ownership: Ownership = Field(description="Who the signal is attributed to.")
+    pre_update: bool = Field(description="Whether the signal predates a drift update to its trait.")
+    cited: bool = Field(description="Whether the recovery model cited this signal as evidence.")
+    recovered: bool = Field(
+        description="Whether citing this signal contributed to a correct prediction."
+    )
+    classified: bool = Field(
+        description="Whether the classify step assigned this signal a predicted kind."
+    )
+    kind_predicted: Kind | None = Field(
+        description="Kind the classify step predicted for this signal; null when unclassified."
+    )
+    kind_ok: bool | None = Field(
+        description="Whether the predicted kind is correct; null unless classified."
+    )
+
+    @model_validator(mode="after")
+    def _check_recovered_implies_cited(self) -> "Gate2SignalRow":
+        if self.recovered and not self.cited:
+            raise ValueError("recovered requires cited to be true")
+        return self
+
+    @model_validator(mode="after")
+    def _check_kind_ok_set_exactly_when_classified(self) -> "Gate2SignalRow":
+        if self.classified != (self.kind_ok is not None):
+            raise ValueError("kind_ok must be set exactly when classified is true")
+        return self
+
+    @model_validator(mode="after")
+    def _check_kind_predicted_implies_classified(self) -> "Gate2SignalRow":
+        if self.kind_predicted is not None and not self.classified:
+            raise ValueError("kind_predicted requires classified to be true")
+        return self
+
+    @model_validator(mode="after")
+    def _check_unpredicted_classification_fails(self) -> "Gate2SignalRow":
+        if self.classified and self.kind_predicted is None and self.kind_ok is not False:
+            raise ValueError("classified with no kind_predicted requires kind_ok to be false")
+        return self
+
+    @model_validator(mode="after")
+    def _check_kind_ok_matches_prediction(self) -> "Gate2SignalRow":
+        if self.kind_predicted is not None and self.kind_ok != (self.kind_predicted == self.kind):
+            raise ValueError(
+                "kind_ok must equal (kind_predicted == kind) when kind_predicted is set"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_pre_update_requires_preference(self) -> "Gate2SignalRow":
+        if self.pre_update and self.kind != Kind.PREFERENCE:
+            raise ValueError("pre_update requires kind to be 'preference'")
+        return self
+
+    @model_validator(mode="after")
+    def _check_session_id(self) -> "Gate2SignalRow":
+        if not self.session_id.startswith(_session_pm_prefix(self.pm_id)):
+            raise ValueError("session_id must belong to the row's own pm")
+        return self
+
+
+class Gate2PmRow(BaseModel):
+    """A single PM's Gate 2 recovery counts and context summary."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pm_id: str = Field(pattern=_PM_ID_PATTERN, description="Identifier of the PM the row covers.")
+    asset_class: AssetClass = Field(description="Asset class of the PM's mandate.")
+    typicality: Typicality = Field(description="Whether the PM is typical or anti-typical.")
+    drift: DriftStatus = Field(description="Whether the PM's traits drifted during the run.")
+    seed: str = Field(description="Market seed the PM's scenario draws from.")
+    sessions: int = Field(ge=1, description="Number of sessions in the PM's context.")
+    context_chars: int = Field(ge=0, description="Character count of the PM's context.")
+    ngram_containment: float = Field(
+        ge=0,
+        le=1,
+        description="Share of this PM's word n-grams that the nearest other PM's PM turns "
+        "also contain.",
+    )
+    biases_correct: int = Field(
+        ge=0, le=8, description="Number of the PM's 8 biases correctly predicted."
+    )
+    preferences_held: int = Field(ge=0, description="Number of preferences truly held.")
+    preferences_correct: int = Field(
+        ge=0, description="Number of held preferences correctly predicted."
+    )
+    stated_signals: int = Field(ge=0, description="Number of stated-mode signals classified.")
+    stated_kind_ok: int = Field(
+        ge=0, description="Number of stated-mode signals with a correct predicted kind."
+    )
+
+    @model_validator(mode="after")
+    def _check_preferences_correct_bounded(self) -> "Gate2PmRow":
+        if self.preferences_correct > self.preferences_held:
+            raise ValueError("preferences_correct must not exceed preferences_held")
+        return self
+
+    @model_validator(mode="after")
+    def _check_stated_kind_ok_bounded(self) -> "Gate2PmRow":
+        if self.stated_kind_ok > self.stated_signals:
+            raise ValueError("stated_kind_ok must not exceed stated_signals")
+        return self
+
+
+class Gate2CellRow(BaseModel):
+    """A recovery-rate comparison for one slice of the PM population, optionally by parameter."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    slice: Gate2Slice = Field(description="Which grouping of PMs the cell covers.")
+    slice_value: str = Field(min_length=1, description="Value of the slice this cell covers.")
+    param: str | None = Field(
+        description="Trait parameter the cell covers; null when the cell pools every parameter."
+    )
+    n: int = Field(ge=0, description="Number of observations contributing to the cell.")
+    n_positive: int = Field(ge=0, description="Number of correct or recovered observations.")
+    rate: float | None = Field(
+        ge=0,
+        le=1,
+        description="The cell's rate: balanced accuracy on a two-by-two cell, otherwise "
+        "n_positive over n; null when n is 0.",
+    )
+    chance: float | None = Field(description="Chance-level rate the cell is tested against.")
+    p: float | None = Field(
+        ge=0, le=1, description="One-sided exact test p-value; set only for a judged cell."
+    )
+    verdict: Gate2Verdict | None = Field(description="The cell's recovery verdict, if judged.")
+    blocking: bool = Field(description="Whether a failing verdict on this cell blocks the gate.")
+
+    @model_validator(mode="after")
+    def _check_n_positive_bounded(self) -> "Gate2CellRow":
+        if self.n_positive > self.n:
+            raise ValueError("n_positive must not exceed n")
+        return self
+
+    @model_validator(mode="after")
+    def _check_verdict_p_consistency(self) -> "Gate2CellRow":
+        judged = self.verdict in (Gate2Verdict.PASS, Gate2Verdict.FAIL)
+        if judged != (self.p is not None):
+            raise ValueError("p must be set exactly when verdict is 'pass' or 'fail'")
+        return self
+
+    @model_validator(mode="after")
+    def _check_blocking_requires_all_slice(self) -> "Gate2CellRow":
+        if self.blocking and self.slice != Gate2Slice.ALL:
+            raise ValueError("blocking requires slice to be 'all'")
         return self
 
 

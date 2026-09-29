@@ -26,9 +26,14 @@ from pm_traitbench.errors import DialogueBudgetError, DialogueError, PmTraitbenc
 _NO_CREDENTIALS_MESSAGE = "no Anthropic credentials: run `ant auth login` or set ANTHROPIC_API_KEY"
 
 
+def scope_prefix(label: str, scope: str) -> str:
+    """The `{label} {scope}: ` lead of a per-unit error or warning."""
+    return f"{label} {scope}: "
+
+
 def session_prefix(session_id: str) -> str:
     """The `session {id}: ` lead of every per-session error and warning."""
-    return f"session {session_id}: "
+    return scope_prefix("session", session_id)
 
 
 class LlmClient(Protocol):
@@ -258,6 +263,7 @@ async def send_until_accepted[T](
     scope: str,
     max_retries: int,
     error_type: type[PmTraitbenchError],
+    label: str = "session",
 ) -> tuple[Reply, T, int]:
     """Send `request`, retrying a reply `classify` rejects up to `max_retries` times.
 
@@ -265,7 +271,8 @@ async def send_until_accepted[T](
     the cache too, so an entry that no longer validates is never replayed forever
     and a run does not alternate between it and a fresh call. An accepted reply is
     committed before it is returned with the rejected count; at the cap, raises
-    `error_type` with the last rejection's reason.
+    `error_type` with the last rejection's reason, led by `label` and `scope`
+    (a session id by default, a unit id of another kind when `label` is set).
     """
     refresh = False
     rejected = 0
@@ -278,4 +285,31 @@ async def send_until_accepted[T](
             return reply, accepted, rejected
         refresh = refresh or reply.cached
         rejected += 1
-    raise error_type(f"{session_prefix(scope)}{reason}")
+    raise error_type(f"{scope_prefix(label, scope)}{reason}")
+
+
+async def send_parsed[T](
+    client: CachedClient,
+    request: Mapping[str, Any],
+    parse: Callable[[Mapping[str, Any]], T | None],
+    *,
+    scope: str,
+    max_retries: int,
+    error_type: type[PmTraitbenchError],
+    label: str = "session",
+    reason: str,
+) -> tuple[T, int]:
+    """Send `request` until `parse` accepts a reply; that reply with the rejected count.
+
+    A thin `send_until_accepted` whose every rejection carries the one `reason`.
+    """
+    _, parsed, rejected = await send_until_accepted(
+        client,
+        request,
+        lambda response: (parse(response), reason),
+        scope=scope,
+        max_retries=max_retries,
+        error_type=error_type,
+        label=label,
+    )
+    return parsed, rejected

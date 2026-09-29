@@ -12,6 +12,10 @@ from pm_traitbench.tables.schema import (
     DriftEvent,
     Gate1CellRow,
     Gate1PmRow,
+    Gate2CellRow,
+    Gate2PmRow,
+    Gate2SignalRow,
+    Gate2TraitRow,
     Idea,
     Instrument,
     LedgerRow,
@@ -77,6 +81,12 @@ GATE1_CELLS = TableSpec(
     "gate1_cells", Gate1CellRow, ("seed_group", "asset_class", "param", "split")
 )
 GATE1_TABLES: tuple[TableSpec, ...] = (GATE1_PM, GATE1_CELLS)
+
+GATE2_TRAITS = TableSpec("gate2_traits", Gate2TraitRow, ("pm_id", "param"))
+GATE2_SIGNALS = TableSpec("gate2_signals", Gate2SignalRow, ("pm_id", "signal_id"))
+GATE2_PM = TableSpec("gate2_pm", Gate2PmRow, ("pm_id",))
+GATE2_CELLS = TableSpec("gate2_cells", Gate2CellRow, ("slice", "slice_value", "param"))
+GATE2_TABLES: tuple[TableSpec, ...] = (GATE2_TRAITS, GATE2_SIGNALS, GATE2_PM, GATE2_CELLS)
 
 SIGNALS = TableSpec("signals", Signal, ("pm_id", "signal_id"))
 SKELETONS = TableSpec("skeletons", Skeleton, ("pm_id", "session_id"))
