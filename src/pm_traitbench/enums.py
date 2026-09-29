@@ -377,3 +377,39 @@ class AdvisorTool(StrEnum):
     GET_CONSENSUS = "get_consensus"
     GET_CALENDAR = "get_calendar"
     GET_HISTORY = "get_history"
+
+
+class ProbeType(StrEnum):
+    TRAIT_PRESENCE = "trait_presence"
+    TRAIT_MCQ = "trait_mcq"
+    IN_SITU = "in_situ"
+    ROUTINE_QUESTION = "routine_question"
+    GOVERNANCE = "governance"
+
+
+class ProbeForm(StrEnum):
+    MCQ = "mcq"
+    OPEN = "open"
+
+
+class CheckpointLabel(StrEnum):
+    WEEK4 = "week4"
+    WEEK13 = "week13"
+    PRE_DRIFT = "pre_drift"
+    POST_DRIFT = "post_drift"
+    REGIME_SHIFT = "regime_shift"
+    WEEK52 = "week52"
+
+
+class OptionSource(StrEnum):
+    CURRENT = "current"
+    PRE_UPDATE = "pre_update"
+    STATED_PROFILE = "stated_profile"
+    THIRD_PARTY = "third_party"
+    NONE = "none"
+
+
+class ProbeSkip(StrEnum):
+    NO_SUPPORT = "no_supporting_signal"
+    NO_SITUATION = "no_situation"
+    NO_HORIZON = "no_horizon"

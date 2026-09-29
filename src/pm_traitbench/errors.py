@@ -95,3 +95,9 @@ class CorpusError(PmTraitbenchError):
     """
 
     exit_code = 1
+
+
+class ProbesError(PmTraitbenchError):
+    """Raised when the probes stage cannot run or cannot build a probe its inputs promise."""
+
+    exit_code = 1

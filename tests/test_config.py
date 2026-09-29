@@ -20,6 +20,7 @@ from pm_traitbench.config import (
     MarketConfig,
     PlanConfig,
     PmFilter,
+    ProbesConfig,
     RealSeedSpec,
     RegimeParams,
     TurnRanges,
@@ -1140,3 +1141,33 @@ def test_gate2_config_rejects_out_of_range() -> None:
         Gate2Config(min_class=0)
     with pytest.raises(ValidationError):
         Gate2Config(ngram_n=1)
+
+
+def test_probes_config_defaults_and_basis() -> None:
+    config = Config().probes
+    assert config.post_drift_weeks == 4
+    assert config.presence_never_held == 3
+    assert config.routine_per_checkpoint == 2
+    assert config.disposition_progress == 0.5
+    assert config.loss_depth == 0.5
+    assert config.anchor_approach == 0.9
+    assert config.extrapolation_thesis_sd == -1.0
+    assert config.extrapolation_trailing_sd == 3.0
+    assert config.overconfidence_size_edges == (1.25, 2.0)
+    assert config.conviction_rating == 2
+    assert config.decline_excess_pct == 5.0
+    assert config.max_horizon == 60
+    assert config.situation_attempts == 10
+
+    paths = {row.path for row in Config().dump_with_basis()}
+    for name in ProbesConfig.model_fields:
+        assert f"probes.{name}" in paths
+
+
+def test_probes_config_rejects_out_of_range() -> None:
+    with pytest.raises(ValidationError):
+        ProbesConfig(extrapolation_thesis_sd=0.5)
+    with pytest.raises(ValidationError):
+        ProbesConfig(overconfidence_size_edges=(2.0, 1.5))
+    with pytest.raises(ValidationError):
+        ProbesConfig(overconfidence_size_edges=(0.9, 2.0))
