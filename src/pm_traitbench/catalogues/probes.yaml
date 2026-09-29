@@ -1,5 +1,7 @@
 # Probe question text per bias and preference group. Each entry holds the stems for one probe
 # type; a bias's actions are its MCQ option texts keyed by the engine outcome they stand for.
+# Line lists are keyed by asset class: "all" applies to every PM, and an asset-class key
+# (equities, rates_credit, commodities, multi_asset) overrides it for that class's PMs.
 biases:
   loss_aversion_lambda:
     presence:
