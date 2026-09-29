@@ -107,6 +107,24 @@ def test_stale_validate_metadata_raises_probes_error_and_writes_nothing(
     assert not store.exists(PROBES)
 
 
+def test_pm_missing_a_bias_trait_raises_probes_error(
+    tmp_path: Path, fixture_market: dict, neutral_pm, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, store = _run_validated_corpus(tmp_path, fixture_market, neutral_pm, monkeypatch)
+    pm_id = min(s.pm_id for s in store.read(SESSIONS))
+    traits = [
+        t
+        for t in store.read(TRAITS)
+        if not (t.pm_id == pm_id and t.kind == Kind.BIAS and t.param == "herding_weight")
+    ]
+    store.write(TRAITS, traits)
+
+    with pytest.raises(
+        ProbesError, match=rf"pm {pm_id}: missing bias trait\(s\) \['herding_weight'\]"
+    ):
+        run_stage(PROBES_STAGE, config, store)
+
+
 def test_stage_is_registered() -> None:
     assert PROBES_STAGE in STAGES
     assert (PROBES_STAGE.number, PROBES_STAGE.name) == (9, "probes")

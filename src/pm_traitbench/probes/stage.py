@@ -10,11 +10,11 @@ from typing import Any
 import numpy as np
 
 from pm_traitbench.catalogues.loader import check_probes_catalogue, load_catalogue
-from pm_traitbench.config import Config
+from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.corpus_checks import check_validated_corpus
 from pm_traitbench.engine.adapters import adapter_for
 from pm_traitbench.engine.stage import build_views
-from pm_traitbench.enums import ProbeSkip, RuleScope
+from pm_traitbench.enums import Kind, ProbeSkip, RuleScope
 from pm_traitbench.errors import CorpusError, ProbesError
 from pm_traitbench.probes.actions import horizons
 from pm_traitbench.probes.builders import (
@@ -130,6 +130,9 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
     for pm_id in session_pm_ids:
         persona = personas[pm_id]
         traits = tuple(traits_by_pm.get(pm_id, ()))
+        missing = set(BIAS_PARAMS) - {t.param for t in traits if t.kind == Kind.BIAS}
+        if missing:
+            raise ProbesError(f"pm {pm_id}: missing bias trait(s) {sorted(missing)}")
         pm_rules = tuple(r for r in rules_by_pm.get(pm_id, ()) if r.scope == RuleScope.PM)
         pm = PmInputs(
             persona=persona,
