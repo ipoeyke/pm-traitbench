@@ -9,7 +9,7 @@ import pytest
 
 from pm_traitbench.enums import ProbeForm
 from pm_traitbench.errors import HarnessError
-from pm_traitbench.harness.protocol import PublicProbe, PublicSession
+from pm_traitbench.harness.protocol import PublicProbe, PublicProfile, PublicSession
 from pm_traitbench.harness.runner import (
     RUN_METADATA,
     check_run_name,
@@ -51,10 +51,12 @@ def _synthetic_corpus(tmp_path: Path):
     store.write(SESSIONS, sessions)
     store.write(PROBES, probes)
     digest = hashlib.sha256(store.path(SESSIONS).read_bytes()).hexdigest()
-    meta = tmp_path / "run_metadata"
-    meta.mkdir()
-    (meta / "probes.json").write_text(json.dumps({"sessions_sha256": digest}))
+    store.write_run_metadata("probes", config, {"sessions_sha256": digest})
     return config, store
+
+
+def _set_probes_hash(config, store, digest: str) -> None:
+    store.write_run_metadata("probes", config, {"sessions_sha256": digest})
 
 
 def _run(config, store, factory, **kwargs):
@@ -81,6 +83,7 @@ def test_replay_invariant(tmp_path, fixture_market, neutral_pm, monkeypatch) -> 
     factory, built = recording_factory()
     _run(config, store, factory)
 
+    sessions = store.read(SESSIONS)
     assert built
     for sut in built.values():
         observed: list[PublicSession] = []
@@ -91,7 +94,9 @@ def test_replay_invariant(tmp_path, fixture_market, neutral_pm, monkeypatch) -> 
                 continue
             answered += 1
             as_of = event[1]
-            assert all(s.date <= as_of for s in observed)
+            pm_id = sut.profile.pm_id
+            expected = {s.session_id for s in sessions if s.pm_id == pm_id and s.date <= as_of}
+            assert {s.session_id for s in observed} == expected
         assert answered
         all_sessions = [e[1] for e in sut.events if e[0] == "observe"]
         assert [(s.date, s.session_id) for s in all_sessions] == sorted(
@@ -103,7 +108,7 @@ def test_sessions_due_at_checkpoint_precede_its_first_probe(tmp_path) -> None:
     config, store = _synthetic_corpus(tmp_path)
     store.write(SESSIONS, [session_row("pm_001", "s_pm001_2026-01-13_a", date(2026, 1, 13))])
     digest = hashlib.sha256(store.path(SESSIONS).read_bytes()).hexdigest()
-    (tmp_path / "run_metadata" / "probes.json").write_text(json.dumps({"sessions_sha256": digest}))
+    _set_probes_hash(config, store, digest)
     factory, built = recording_factory()
 
     _run(config, store, factory)
@@ -120,7 +125,9 @@ def test_received_objects_carry_no_hidden_fields(
     _run(config, store, factory)
 
     hidden = {r.probe_id: r.answer for r in store.read(PROBES) if r.form == ProbeForm.OPEN}
+    assert hidden
     for sut in built.values():
+        assert isinstance(sut.profile, PublicProfile)
         for event in sut.events:
             obj = event[1] if event[0] == "observe" else event[2]
             assert isinstance(obj, PublicSession | PublicProbe)
@@ -185,7 +192,7 @@ def test_force_reruns_everything(tmp_path) -> None:
 
 def test_stale_probes_metadata_raises(tmp_path) -> None:
     config, store = _synthetic_corpus(tmp_path)
-    (tmp_path / "run_metadata" / "probes.json").write_text(json.dumps({"sessions_sha256": "bad"}))
+    _set_probes_hash(config, store, "bad")
     factory, built = recording_factory()
 
     with pytest.raises(HarnessError, match="sessions changed"):
@@ -282,3 +289,36 @@ def test_load_factory_errors() -> None:
 
 def test_load_factory_loads_callable() -> None:
     assert load_factory("tests.harness.fixtures:ECHO_FACTORY") is ECHO_FACTORY
+
+
+def test_interrupted_run_with_other_probes_raises_without_force(tmp_path) -> None:
+    config, store = _synthetic_corpus(tmp_path)
+    _run(config, store, recording_factory()[0])
+    path = run_dir(tmp_path, "r1") / "run_metadata" / f"{RUN_METADATA}.json"
+    meta = json.loads(path.read_text())
+    meta.update(status="running", pms_completed=[], probes_sha256="old-probes")
+    path.write_text(json.dumps(meta))
+
+    with pytest.raises(HarnessError, match="--force"):
+        _run(config, store, recording_factory()[0])
+
+
+def test_metadata_is_recorded_before_any_pm_runs(tmp_path) -> None:
+    config, store = _synthetic_corpus(tmp_path)
+    seen = []
+
+    def factory(profile):
+        meta = DataStore(run_dir(tmp_path, "r1"), config.output).read_run_metadata(RUN_METADATA)
+        seen.append(meta["status"])
+        return recording_factory()[0](profile)
+
+    result = _run(config, store, factory)
+
+    assert set(seen) == {"running"}
+    assert result.run_store.read_run_metadata(RUN_METADATA)["status"] == "finished"
+
+
+def test_zero_workers_raises(tmp_path) -> None:
+    config, store = _synthetic_corpus(tmp_path)
+    with pytest.raises(HarnessError, match="workers"):
+        _run(config, store, recording_factory()[0], workers=0)

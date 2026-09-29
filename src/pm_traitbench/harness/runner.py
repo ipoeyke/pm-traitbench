@@ -141,6 +141,8 @@ def run_sut(
     PMs with an existing part file are skipped; `force` clears the run first.
     """
     check_run_name(run_name)
+    if workers < 1:
+        raise HarnessError(f"workers must be at least 1, got {workers}")
     check_probes_fresh(store)
     digest = probes_sha256(store)
     rd = run_dir(store.data_dir, run_name)
@@ -154,10 +156,28 @@ def run_sut(
             f"run '{run_name}' was made from different probes; rerun with --force to replace it"
         )
 
+    # Recorded before any part is written, so an interrupted run still pins its probes.
+    def write_metadata(status: str, completed, skipped, failed, seconds) -> None:
+        run_store.write_run_metadata(
+            RUN_METADATA,
+            config,
+            {
+                "status": status,
+                "sut": sut_name,
+                "run_name": run_name,
+                "probes_sha256": digest,
+                "pms_completed": completed,
+                "pms_skipped": skipped,
+                "pms_failed": dict(sorted(failed.items())),
+                "pm_seconds": dict(sorted(seconds.items())),
+            },
+        )
+
+    write_metadata("running", [], [], {}, {})
     replays = pm_replays(
         store.read(PERSONAS), store.read(RULES), store.read(SESSIONS), store.read(PROBES)
     )
-    skipped = [pm for pm in replays if run_store.exists(parts_spec(pm))]
+    skipped = {pm for pm in replays if run_store.exists(parts_spec(pm))}
     pending = [pm for pm in replays if pm not in skipped]
     failed: dict[str, str] = {}
     seconds: dict[str, float] = {}
@@ -179,19 +199,7 @@ def run_sut(
     for pm_id in completed:
         merged.extend(run_store.read(parts_spec(pm_id)))
     run_store.write(RESPONSES, merged)
-    run_store.write_run_metadata(
-        RUN_METADATA,
-        config,
-        {
-            "sut": sut_name,
-            "run_name": run_name,
-            "probes_sha256": digest,
-            "pms_completed": completed,
-            "pms_skipped": skipped,
-            "pms_failed": dict(sorted(failed.items())),
-            "pm_seconds": dict(sorted(seconds.items())),
-        },
-    )
+    write_metadata("finished", completed, sorted(skipped), failed, seconds)
     return RunResult(
         run_store=run_store,
         completed=tuple(sorted(completed)),
