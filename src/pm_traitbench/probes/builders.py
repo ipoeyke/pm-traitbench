@@ -334,7 +334,7 @@ def mcq_drafts(
             lines.actions, sourced, rng_for("options", trait.trait_id)
         )
         question = _line(
-            pm, rng_for, lines.situation, ProbeType.TRAIT_MCQ, trait.trait_id, situation.slots
+            pm, rng_for, lines.mcq, ProbeType.TRAIT_MCQ, trait.trait_id, situation.slots
         )
         drafts.extend(_mcq_pair(trait.trait_id, question, options, ids))
 
@@ -358,7 +358,7 @@ def mcq_drafts(
         question = _line(
             pm,
             rng_for,
-            bank.preferences[entry.group].mcq_question,
+            bank.preferences[entry.group].mcq,
             ProbeType.TRAIT_MCQ,
             trait.trait_id,
         )

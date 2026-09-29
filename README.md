@@ -732,9 +732,9 @@ neutral exit deficiency its loss-aversion MCQ answer is usually "cut" even
 when loss aversion is active.
 
 **Bank.** Question wording lives in the authored bank `probes.yaml`, loaded
-and checked with the other catalogues: per bias, presence, situation,
+and checked with the other catalogues: per bias, presence, MCQ,
 in-situ, decline, governance and action lines; per preference group,
-presence, question, in-situ and governance lines; routine lines per asset
+presence, MCQ, in-situ and governance lines; routine lines per asset
 class. The loader checks slots and rejects a bias line that names the trait,
 since the question must not leak the label the corpus hides.
 

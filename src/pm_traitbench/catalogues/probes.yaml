@@ -5,7 +5,7 @@ biases:
       - "Does this PM tend to add to a losing position before any of its signposts has fired?"
       - "When a position is under water, does this PM tend to buy more rather than cut it?"
     behaviour: "add to losing positions rather than cut them"
-    situation:
+    mcq:
       all:
       - "This PM's position in {instrument} is under water at {level} against an entry of {entry}, and none of its signposts has fired. What does the PM do over the next {horizon} sessions?"
       - "{instrument} has slipped to {level}, below the PM's entry at {entry}, with no signpost triggered. Over the next {horizon} sessions, what does the PM do with the position?"
@@ -32,7 +32,7 @@ biases:
       - "Does this PM tend to sell winners quickly while letting losing positions sit?"
       - "Does this PM tend to bank a gain early and hold a loser hoping for a rebound?"
     behaviour: "sell winners early and hold on to losers"
-    situation:
+    mcq:
       all:
       - "The PM's position in {instrument} is up at {level} from an entry of {entry}, with the target at {target} and nothing else changed. What does the PM do over the next {horizon} sessions?"
       - "{instrument} has run to {level} against an entry of {entry} and the target is still {target}. Over the next {horizon} sessions, what does the PM do?"
@@ -55,7 +55,7 @@ biases:
       - "Does this PM tend to take profit at a round price well short of the target?"
       - "Does a round number tend to pull this PM out of a trade before the target is reached?"
     behaviour: "exit at a round price rather than at the target"
-    situation:
+    mcq:
       all:
       - "{instrument} has run from {entry} to {level}. The PM's target is {target} and a round {round_level} sits just ahead. What does the PM do?"
       - "The PM is long {instrument} from {entry}, now at {level}, with the target at {target}. The round {round_level} is close. What does the PM do next?"
@@ -78,7 +78,7 @@ biases:
       - "Does this PM tend to lean into a name because of how hard it has just moved?"
       - "Does a sharp recent run in a price tend to change this PM's forecast for it?"
     behaviour: "buy a name because it has just run hard"
-    situation:
+    mcq:
       all:
       - "{instrument} is at {level}. The PM's thesis says it is worth about {thesis_sd} normal moves lower over the next {horizon} sessions, while it has just run about {trailing_sd} normal moves higher over the last {horizon} sessions. What does the PM do?"
       - "On {instrument} at {level}, the PM's thesis is that it falls about {thesis_sd} normal moves over the next {horizon} sessions, yet it has just risen about {trailing_sd} normal moves over the last {horizon} sessions. What does the PM do next?"
@@ -100,7 +100,7 @@ biases:
       - "Does this PM tend to put a trade on the street's side even when its own read points the other way?"
       - "Does this PM tend to follow where other desks are positioned against its own call?"
     behaviour: "follow the street's positioning against its own read"
-    situation:
+    mcq:
       all:
       - "The street is {street} {instrument} at {level}, while the PM's own read is {own_side}. What does the PM do with the trade?"
       - "On {instrument} at {level}, the street is {street} and the PM's read is {own_side}. What does the PM do?"
@@ -123,7 +123,7 @@ biases:
       - "Does this PM tend to size up on a narrow range of outcomes without leaving room to be wrong?"
       - "Does this PM tend to trust its own read enough to size a trade well above normal?"
     behaviour: "size up on a tight range of outcomes"
-    situation:
+    mcq:
       all:
       - "The PM has a fresh idea in {instrument} at {level} and has stated the range it expects the price to finish in four times out of five. How does the PM size it?"
       - "For {instrument} at {level}, the PM has a fresh idea and has stated the range it expects the price to finish in four times out of five. How does the PM size the trade?"
@@ -150,7 +150,7 @@ biases:
       - "Does this PM tend to put on sizes that do not follow its own stated conviction?"
       - "Does this PM tend to size its best ideas smaller than its weaker ones?"
     behaviour: "size positions out of line with the conviction it states"
-    situation:
+    mcq:
       all:
       - "The PM rates {instrument} at {level} as {rating}. What size does the PM put on?"
       - "On {instrument} at {level}, the PM's own rating is {rating}. What size does the PM choose?"
@@ -173,7 +173,7 @@ biases:
       - "Does this PM tend to keep a position on after one of its own exit rules has fired?"
       - "Does this PM tend to delay closing a trade even after its own case has broken?"
     behaviour: "stay in a position after its own exit rule has fired"
-    situation:
+    mcq:
       all:
       - "{instrument} is at {level} against an entry of {entry}, through the PM's stop at {stop}. What does the PM do?"
       - "The PM's stop on {instrument} is {stop} and the price is {level} from an entry of {entry}. What does the PM do next?"
@@ -196,7 +196,7 @@ preferences:
       all:
       - "Is this the PM's standing preference for how the copilot communicates: {value}?"
       - "Does this PM want the following from the copilot: {value}?"
-    mcq_question:
+    mcq:
       all:
       - "Which of these does this PM want from the copilot?"
       - "Which of these is the PM's standing preference for how the copilot writes?"
@@ -213,7 +213,7 @@ preferences:
       all:
       - "Is this the PM's standing preference for what the copilot includes: {value}?"
       - "Does this PM want the following from the copilot: {value}?"
-    mcq_question:
+    mcq:
       all:
       - "Which of these does this PM want from the copilot?"
       - "Which of these is the PM's standing preference for the information the copilot gives?"
@@ -230,7 +230,7 @@ preferences:
       all:
       - "Is this the PM's standing preference for how the copilot works: {value}?"
       - "Does this PM want the following from the copilot: {value}?"
-    mcq_question:
+    mcq:
       all:
       - "Which of these does this PM want from the copilot?"
       - "Which of these is the PM's standing preference for how the copilot works with the desk?"
@@ -247,7 +247,7 @@ preferences:
       all:
       - "Is this the PM's standing preference for how the copilot shapes a trade: {value}?"
       - "Does this PM want the following from the copilot: {value}?"
-    mcq_question:
+    mcq:
       all:
       - "Which of these does this PM want from the copilot?"
       - "Which of these is the PM's standing preference for the form a trade idea takes?"

@@ -606,9 +606,9 @@ PROBE_ACTION_COUNTS: dict[str, int] = {
 }
 # The only biases whose request can breach the one mandate rule, the position cap.
 DECLINE_PARAMS: tuple[str, ...] = ("loss_aversion_lambda", "overconfidence_coverage")
-# Every situation line may use these slots; the required ones carry the number or level
+# Every bias MCQ line may use these slots; the required ones carry the number or level
 # the answer depends on, so a line without it asks an unanswerable question.
-SITUATION_SLOTS: dict[str, frozenset[str]] = {
+MCQ_SLOTS: dict[str, frozenset[str]] = {
     "loss_aversion_lambda": frozenset(
         {"instrument", "level", "entry", "stop", "target", "horizon"}
     ),
@@ -622,7 +622,7 @@ SITUATION_SLOTS: dict[str, frozenset[str]] = {
     "overconfidence_coverage": frozenset({"instrument", "level"}),
     "conviction_size_miscalibration": frozenset({"instrument", "level", "rating"}),
 }
-SITUATION_REQUIRED: dict[str, frozenset[str]] = {
+MCQ_REQUIRED: dict[str, frozenset[str]] = {
     "loss_aversion_lambda": frozenset({"horizon"}),
     "disposition_ratio": frozenset({"horizon"}),
     "anchoring_rho": frozenset({"round_level"}),
@@ -688,10 +688,10 @@ def check_probes_catalogue(catalogue: Catalogue) -> None:
         prefix = f"probes: bias '{param}'"
         _check_probe_lines(f"{prefix} entry 'presence'", bank.presence)
         _check_probe_lines(
-            f"{prefix} entry 'situation'",
-            bank.situation,
-            SITUATION_SLOTS[param],
-            SITUATION_REQUIRED[param],
+            f"{prefix} entry 'mcq'",
+            bank.mcq,
+            MCQ_SLOTS[param],
+            MCQ_REQUIRED[param],
         )
         _check_probe_lines(f"{prefix} entry 'in_situ'", bank.in_situ, _INSTRUMENT_LEVEL)
         _check_probe_lines(f"{prefix} entry 'governance'", bank.governance)
@@ -725,7 +725,7 @@ def check_probes_catalogue(catalogue: Catalogue) -> None:
             frozenset({"value"}),
             frozenset({"value"}),
         )
-        _check_probe_lines(f"{prefix} entry 'mcq_question'", pref_bank.mcq_question)
+        _check_probe_lines(f"{prefix} entry 'mcq'", pref_bank.mcq)
         _check_probe_lines(f"{prefix} entry 'in_situ'", pref_bank.in_situ, _INSTRUMENT_LEVEL)
         _check_probe_lines(
             f"{prefix} entry 'governance'",

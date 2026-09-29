@@ -291,7 +291,7 @@ class BiasProbeLines(BaseModel):
 
     presence: StanceLines
     behaviour: str
-    situation: StanceLines
+    mcq: StanceLines
     actions: tuple[str, ...]
     in_situ: StanceLines
     decline: StanceLines = {}
@@ -304,7 +304,7 @@ class PreferenceProbeLines(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     presence: StanceLines
-    mcq_question: StanceLines
+    mcq: StanceLines
     in_situ: StanceLines
     governance: StanceLines
 

@@ -72,11 +72,11 @@ def test_preference_in_situ_value_slot_raises(tmp_path: Path) -> None:
 
 def test_loss_aversion_situation_without_horizon_raises(tmp_path: Path) -> None:
     def mutate(d: dict[str, Any]) -> None:
-        d["biases"]["loss_aversion_lambda"]["situation"]["all"][0] = (
+        d["biases"]["loss_aversion_lambda"]["mcq"]["all"][0] = (
             "{instrument} is down at {level}. What next?"
         )
 
-    with pytest.raises(CatalogueError, match="loss_aversion_lambda.*situation.*horizon"):
+    with pytest.raises(CatalogueError, match="loss_aversion_lambda.*mcq.*horizon"):
         _check_modified(tmp_path, mutate)
 
 
@@ -127,7 +127,7 @@ def test_single_line_key_raises(tmp_path: Path) -> None:
 
 def test_bias_param_name_in_situation_raises(tmp_path: Path) -> None:
     def mutate(d: dict[str, Any]) -> None:
-        d["biases"]["herding_weight"]["situation"]["all"][0] = (
+        d["biases"]["herding_weight"]["mcq"]["all"][0] = (
             "The street is {street} {instrument} at {level}, the PM's read is {own_side}, "
             "and its loss_aversion_lambda is high."
         )
