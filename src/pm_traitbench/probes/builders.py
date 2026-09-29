@@ -53,7 +53,7 @@ RngFor = Callable[..., np.random.Generator]
 Skips = Counter[ProbeSkip]
 Built = tuple[tuple["Draft", ...], Skips]
 _NO_OPTIONS = (None, None, None, None)
-_GOVERNANCE_LABELS = (CheckpointLabel.POST_DRIFT, CheckpointLabel.WEEK52)
+_GOVERNANCE_LABELS = frozenset({CheckpointLabel.POST_DRIFT, CheckpointLabel.WEEK52})
 
 
 @dataclass(frozen=True)
@@ -471,7 +471,8 @@ def governance_drafts(
     """Questions with a false premise about a trait that dropped out or changed."""
     drafts: list[Draft] = []
     skips: Skips = Counter()
-    if not pm.drift_events or cp.label not in _GOVERNANCE_LABELS:
+    # The date decides, not which label won it.
+    if not pm.drift_events or not cp.covers & _GOVERNANCE_LABELS:
         return (), skips
     ptype = ProbeType.GOVERNANCE
     entries = {e.param: e for e in pm.entries}

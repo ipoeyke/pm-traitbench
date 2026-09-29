@@ -125,8 +125,8 @@ class Corpus:
             profile_params=self.profile,
         )
 
-    def cp(self, label=CheckpointLabel.WEEK13, index=0):
-        return Checkpoint(label, self.day, index)
+    def cp(self, label=CheckpointLabel.WEEK13, index=0, covers=None):
+        return Checkpoint(label, self.day, index, frozenset(covers or {label}))
 
 
 @pytest.fixture
@@ -562,6 +562,20 @@ def test_governance_only_at_drift_or_final_checkpoints(corpus):
     assert governance(corpus, corpus.cp(CheckpointLabel.WEEK13)) == ((), Counter())
     assert governance(corpus, corpus.cp(CheckpointLabel.PRE_DRIFT)) == ((), Counter())
     assert len(governance(corpus, corpus.cp(CheckpointLabel.WEEK52))[0]) == 1
+
+
+def test_governance_follows_the_covered_labels_not_the_winning_label(corpus):
+    tid = corpus.bias(LOSS)
+    corpus.sig(tid)
+    corpus.event(DriftEventType.UPDATE, tid, old=active_value(LOSS), new=neutral_value(LOSS))
+    final = corpus.cp(
+        CheckpointLabel.REGIME_SHIFT, covers={CheckpointLabel.REGIME_SHIFT, CheckpointLabel.WEEK52}
+    )
+    assert len(governance(corpus, final)[0]) == 1
+    shared = corpus.cp(
+        CheckpointLabel.PRE_DRIFT, covers={CheckpointLabel.PRE_DRIFT, CheckpointLabel.POST_DRIFT}
+    )
+    assert len(governance(corpus, shared)[0]) == 1
 
 
 def test_drift_pm_gets_one_row_per_updated_or_dormant_trait(corpus):

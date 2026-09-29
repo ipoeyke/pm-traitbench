@@ -89,6 +89,25 @@ def test_regime_shift_wins_over_week4():
     assert (L.WEEK4, friday(4)) not in cps
 
 
+def test_regime_shift_on_the_final_week_covers_week52():
+    starts = [TIMELINE.week_start(w) for w in (1, 51)]
+    regimes = spans("P", starts, TIMELINE.week_start(52) + timedelta(days=6))
+    last = run(regimes=regimes)[-1]
+    assert (last.label, last.day) == (L.REGIME_SHIFT, friday(52))
+    assert last.covers == {L.REGIME_SHIFT, L.WEEK52}
+
+
+def test_pre_drift_sharing_a_post_drift_week_covers_both():
+    cps = run([drift_in(10, "t_09"), drift_in(15, "t_10")])
+    (shared,) = [c for c in cps if c.day == friday(14)]
+    assert shared.label == L.PRE_DRIFT
+    assert shared.covers == {L.PRE_DRIFT, L.POST_DRIFT}
+
+
+def test_unshared_checkpoint_covers_its_own_label():
+    assert all(c.covers == {c.label} for c in run())
+
+
 def test_same_date_drift_events_give_one_pair():
     events = [drift_in(20, "t_09"), drift_in(20, "t_10")]
     cps = run(events)

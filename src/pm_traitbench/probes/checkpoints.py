@@ -11,9 +11,12 @@ from pm_traitbench.timeline import Timeline
 
 @dataclass(frozen=True)
 class Checkpoint:
+    """A checkpoint date, its winning label, and every label whose candidate landed on it."""
+
     label: CheckpointLabel
     day: date
     index: int
+    covers: frozenset[CheckpointLabel]
 
 
 # The drift labels are rarer and are what the drift analysis slices on, so they win a shared date.
@@ -49,7 +52,7 @@ def checkpoints_for(
     """A PM's checkpoints in date order, one per date.
 
     `regimes` are the spans of the PM's own market seed. A date shared by several
-    candidate labels keeps the one earliest in `LABEL_PRECEDENCE`.
+    candidate labels keeps the one earliest in `LABEL_PRECEDENCE` and covers them all.
     """
     candidates: list[tuple[CheckpointLabel, int]] = [
         (CheckpointLabel.WEEK4, 4),
@@ -63,16 +66,19 @@ def checkpoints_for(
     for span in sorted(regimes, key=lambda s: s.date_start)[1:]:
         candidates.append((CheckpointLabel.REGIME_SHIFT, week_of(span.date_start, timeline) + 1))
 
-    by_day: dict[date, CheckpointLabel] = {}
+    by_day: dict[date, set[CheckpointLabel]] = {}
     for label, week in candidates:
         if not 1 <= week <= timeline.n_weeks:
             continue
         day = last_trading_day(week, timeline, trading_days)
-        if day is None:
-            continue
-        held = by_day.get(day)
-        if held is None or LABEL_PRECEDENCE.index(label) < LABEL_PRECEDENCE.index(held):
-            by_day[day] = label
+        if day is not None:
+            by_day.setdefault(day, set()).add(label)
     return tuple(
-        Checkpoint(label=by_day[day], day=day, index=i) for i, day in enumerate(sorted(by_day))
+        Checkpoint(
+            label=min(by_day[day], key=LABEL_PRECEDENCE.index),
+            day=day,
+            index=i,
+            covers=frozenset(by_day[day]),
+        )
+        for i, day in enumerate(sorted(by_day))
     )
