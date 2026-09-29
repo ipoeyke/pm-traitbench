@@ -116,8 +116,9 @@ def test_single_line_key_raises(tmp_path: Path) -> None:
 def test_bias_param_name_in_situation_raises(tmp_path: Path) -> None:
     def mutate(d: dict[str, Any]) -> None:
         d["biases"]["herding_weight"]["situation"]["all"][0] = (
-            "The PM has a high loss_aversion_lambda on {instrument} at {level}."
+            "The street is {street} {instrument} at {level}, the PM's read is {own_side}, "
+            "and its loss_aversion_lambda is high."
         )
 
-    with pytest.raises(CatalogueError, match="herding_weight.*loss_aversion_lambda"):
+    with pytest.raises(CatalogueError, match="herding_weight.*names param 'loss_aversion_lambda'"):
         _check_modified(tmp_path, mutate)

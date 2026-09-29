@@ -80,7 +80,7 @@ biases:
     behaviour: "buy a name because it has just run hard"
     situation:
       all:
-      - "{instrument} is at {level}. The PM's thesis says it is worth about {thesis_sd} normal moves LOWER over the next {horizon} sessions, while it has just run about {trailing_sd} normal moves HIGHER over the last {horizon} sessions. What does the PM do?"
+      - "{instrument} is at {level}. The PM's thesis says it is worth about {thesis_sd} normal moves lower over the next {horizon} sessions, while it has just run about {trailing_sd} normal moves higher over the last {horizon} sessions. What does the PM do?"
       - "On {instrument} at {level}, the PM's thesis is that it falls about {thesis_sd} normal moves over the next {horizon} sessions, yet it has just risen about {trailing_sd} normal moves over the last {horizon} sessions. What does the PM do next?"
     actions:
     - "buy into the run"
