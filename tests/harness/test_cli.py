@@ -5,58 +5,81 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
-from pm_traitbench import cli, pipeline
+from pm_traitbench import pipeline
 from pm_traitbench.cli import build_parser, main
+from pm_traitbench.config import load_config
 from pm_traitbench.stages import Stage
 from tests.dialogue.fixtures import FakeClient, fake_message
+from tests.engine.fixtures import stage_config, stage_config_overrides
 from tests.harness.fixtures import validated_corpus_with_probes
 
 ECHO = "tests.harness.fixtures:ECHO_FACTORY"
 FAILING = "tests.harness.fixtures:FAILING_FACTORY"
+CONFIG_NAME = "config.yaml"
+_R1_REGIMES = [
+    ["range", "2018-06-04"],
+    ["risk_off", "2018-07-02"],
+    ["risk_on", "2018-08-06"],
+]
 
 
 @pytest.fixture
 def corpus(tmp_path, fixture_market, neutral_pm, monkeypatch) -> Path:
-    """A probes corpus on disk; the CLI loads the fixture config instead of the default."""
+    """A probes corpus on disk, with the config it was built with written beside its tables."""
     config, store = validated_corpus_with_probes(tmp_path, fixture_market, neutral_pm, monkeypatch)
-    monkeypatch.setattr(cli, "load_config", lambda path: config)
+    assert config == stage_config()
+    # YAML overrides deep-merge onto the defaults, so the default real seed is refit to 12 weeks.
+    overrides = stage_config_overrides()
+    overrides["market"]["real"] = {"seeds": {"R1": {"regime_starts": _R1_REGIMES}}}
+    path = tmp_path / CONFIG_NAME
+    path.write_text(yaml.safe_dump(overrides), encoding="utf-8")
+    loaded = load_config(path)
+    assert loaded.calendar == config.calendar and loaded.population == config.population
     return store.data_dir
 
 
+def _eval(corpus: Path, *argv: str) -> int:
+    """Run `pm-traitbench eval` against `corpus` under its fixture config."""
+    config = corpus / CONFIG_NAME
+    return main(["eval", *argv, "--config", str(config), "--data-dir", str(corpus)])
+
+
 def test_eval_run_then_score(corpus: Path, capsys) -> None:
-    args = ["--data-dir", str(corpus)]
-    assert main(["eval", "run", "--sut", ECHO, "--run-name", "echo", *args]) == 0
+    assert _eval(corpus, "run", "--sut", ECHO, "--run-name", "echo") == 0
     assert "completed" in capsys.readouterr().out
 
-    assert main(["eval", "score", "--run-name", "echo", *args]) == 0
+    assert _eval(corpus, "score", "--run-name", "echo") == 0
     assert "trait_presence" in capsys.readouterr().out
     assert (corpus / "eval" / "echo" / "summary.json").exists()
 
 
 def test_eval_run_exit_1_on_failed_pm(corpus: Path, capsys) -> None:
-    code = main(["eval", "run", "--sut", FAILING, "--run-name", "bad", "--data-dir", str(corpus)])
+    code = _eval(corpus, "run", "--sut", FAILING, "--run-name", "bad")
 
     assert code == 1
-    assert "pm_" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "pm_" in err
+    assert "scripted failure" in err
 
 
 def test_eval_run_bad_sut_exit_1(corpus: Path, capsys) -> None:
-    code = main(["eval", "run", "--sut", "nosuch.module:x", "--data-dir", str(corpus)])
-
-    assert code == 1
+    assert _eval(corpus, "run", "--sut", "nosuch.module:x") == 1
     assert "error:" in capsys.readouterr().err
 
 
 def test_eval_run_default_run_name(corpus: Path) -> None:
-    assert main(["eval", "run", "--sut", ECHO, "--data-dir", str(corpus)]) == 0
+    assert _eval(corpus, "run", "--sut", ECHO) == 0
 
     assert (corpus / "eval" / "tests_harness_fixtures_echo_factory").is_dir()
 
 
-def test_eval_run_rejects_zero_workers(corpus: Path) -> None:
+def test_eval_run_rejects_zero_workers(corpus: Path, capsys) -> None:
     with pytest.raises(SystemExit):
-        main(["eval", "run", "--sut", ECHO, "--workers", "0", "--data-dir", str(corpus)])
+        _eval(corpus, "run", "--sut", ECHO, "--workers", "0")
+
+    assert "must be at least 1" in capsys.readouterr().err
 
 
 def test_baseline_name_resolves(corpus: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -66,7 +89,7 @@ def test_baseline_name_resolves(corpus: Path, monkeypatch: pytest.MonkeyPatch) -
         lambda *args, **kwargs: FakeClient(lambda request: reply),
     )
 
-    assert main(["eval", "run", "--sut", "no-memory", "--data-dir", str(corpus)]) == 0
+    assert _eval(corpus, "run", "--sut", "no-memory") == 0
 
 
 def test_stage_named_eval_rejected() -> None:

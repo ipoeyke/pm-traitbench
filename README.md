@@ -91,10 +91,10 @@ pooled Poisson-binomial test over every held preference, at `gate2.alpha`.
 A blocking row below `gate2.min_class` PMs either side is `insufficient`
 and reported but never blocks. The `probes` stage writes `probes`, one row per question with ground truth at
 each checkpoint of a PM's schedule, calling no model; `answer`, the option
-sources and the supporting signal ids are hidden columns. The `eval` commands are
-not a stage: they replay the corpus into a system under test and score its
-answers; see Evaluation. Pass `--force` to
-overwrite a table that already exists. Run `uv run pm-traitbench --help` for the full command list.
+sources and the supporting signal ids are hidden columns. Pass `--force` to
+overwrite a table that already exists. The `eval` commands are not a stage:
+they replay the corpus into a system under test and score its answers; see
+Evaluation. Run `uv run pm-traitbench --help` for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
 market seed, as the default and demo configs both do for their pilot seed;
@@ -796,8 +796,8 @@ scoring and slicing, never shown to a system under test.
 
 The `eval` commands replay the corpus into a copilot memory system, the
 system under test, and score its answers to the probes. They call no model
-unless the system does, and they write only under `data/eval/<run_name>/`,
-never into the corpus tables. A system is an in-process object with one
+unless the system does. Runs live under `data/eval/<run_name>/` and never
+touch the corpus tables. A system is an in-process object with one
 instance per PM, built by a factory:
 
 ```python
@@ -836,8 +836,8 @@ uv run pm-traitbench eval score --run-name mine --data-dir data
 ```
 
 `--sut` is a baseline name or a `package.module:factory` path. `--run-name`
-defaults to the `--sut` value with dots and colons replaced by underscores,
-and may contain only lowercase letters, digits, `_` and `-`. `--workers` runs
+defaults to the `--sut` value with dots and colons replaced by underscores
+and lowercased, and may contain only lowercase letters, digits, `_` and `-`. `--workers` runs
 that many PMs in parallel. `eval run` exits 1 when any PM failed and prints
 each failed PM with the last line of its traceback. A PM's responses are
 written as it finishes, so a rerun of the same command skips finished PMs and
