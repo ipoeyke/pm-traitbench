@@ -23,6 +23,7 @@ uv run pm-traitbench plan --config configs/demo.yaml --data-dir data
 uv run pm-traitbench dialogue --config configs/demo.yaml --data-dir data
 uv run pm-traitbench validate --config configs/demo.yaml --data-dir data
 uv run pm-traitbench gate2 --config configs/demo.yaml --data-dir data
+uv run pm-traitbench probes --config configs/demo.yaml --data-dir data
 ```
 
 The `sample` stage writes four tables to `data`: `personas`, `traits`,
@@ -59,7 +60,7 @@ which traits the validated dialogue shows and writes `gate2_traits`,
 row fails - one one-sided Fisher exact test per bias parameter and one
 pooled Poisson-binomial test over every held preference, at `gate2.alpha`.
 A blocking row below `gate2.min_class` PMs either side is `insufficient`
-and reported but never blocks. Pass `--force` to overwrite a table that already
+and reported but never blocks. The `probes` stage writes `probes`, one row per question with ground truth at each checkpoint of a PM's schedule, calling no model; `answer`, the option sources and the supporting signal ids are hidden columns. Pass `--force` to overwrite a table that already
 exists. Run `uv run pm-traitbench --help` for the full command list.
 
 `fetch-market` only needs to run first when the config references a real
@@ -644,6 +645,104 @@ containment is reported and warned above `gate2.overlap_warning`, never
 blocking. A failing row is fixed by editing the plan stage's signal-mode
 weights and rerunning stages 5-8. Caching and credentials match the
 dialogue stage.
+
+## Probes
+
+The `probes` stage writes questions with deterministic ground truth for
+evaluating a copilot's memory of a PM. It needs validate's run metadata at
+or after dialogue's, like `gate2`, and calls no model: every answer key comes
+from `traits`, `drift_events`, `rules`, `signals` and the engine's own
+decision functions, and every question comes from an authored bank.
+
+**Checkpoints.** Each PM with sessions has its own schedule, one date per
+label, each the last trading day of a week: `week4`, `week13`, `week52` (the
+timeline's last week), `pre_drift` (the week before each drift event),
+`post_drift` (`probes.post_drift_weeks` weeks after it) and `regime_shift`
+(the week after each regime span of the PM's market seed except the first). A
+week outside the timeline is dropped. When labels share a date the earliest
+of `pre_drift`, `post_drift`, `regime_shift`, `week4`, `week13`, `week52`
+wins, since the drift labels are the rarer and are what drift analysis slices
+on. A checkpoint with no session on or before it is skipped and listed in run
+metadata under `skipped_checkpoints`.
+
+**Context.** The context at a checkpoint is every surviving session dated on
+or before it, so it is derived by filter. `context_chars` is the one derived
+column: the length of the same transcript rendering Gate 2 counts. A signal
+counts only when its session survives.
+
+**Types and answer keys.** A positive probe on a trait with no supporting
+signal in context is not emitted and is counted under `skipped_probes`.
+
+- `trait_presence`: a two-option multiple choice (yes, no). Yes for an active
+  bias and each held preference value; no for a dormant or never-active bias,
+  an old value replaced by an update, a value only a third party attributed,
+  and `probes.presence_never_held` never-held catalogue values.
+- `trait_mcq`: a multiple choice on the action the PM would take in a
+  hypothetical situation (per active bias) or on the held value (per
+  preference), each with an open twin whose answer is the correct option's
+  text. Option sources are `current`, `pre_update`, `stated_profile` (an
+  anti-typical PM's neutral value for a bias its self-description
+  contradicts), `third_party` (preference values) and `none` distractors.
+- `in_situ`: an open request per active trait. The key is `comply: honour
+  <value>` for a preference, `counteract: ...` for a bias, or `decline: ...`
+  for loss aversion and overconfidence on odd-indexed checkpoints, where the
+  request breaches the mandate risk cap by `probes.decline_excess_pct` points.
+- `routine_question`: `probes.routine_per_checkpoint` open questions per
+  checkpoint; the key is the PM's communication formats and no intrusion.
+- `governance`: at `post_drift` and `week52` checkpoints of a drifting PM, a
+  question with a false premise about a trait that went dormant or changed;
+  the key rejects the premise and gives the date and the current value.
+
+**Closed-form MCQ rule.** The situation is hypothetical, on the PM's universe
+at the checkpoint date. The action for each option value is the engine's most
+likely outcome in closed form, called with the parameters for that value and
+consuming no random draws. The bias-typical action is chosen when the
+probability of the bias-typical outcome is at or above 0.5, else the default.
+
+| Bias | Probability of the bias-typical outcome |
+|---|---|
+| `loss_aversion_lambda` | add is the first event within H sessions, from the cut, add and no-add-rule hazards |
+| `disposition_ratio` | a sale within H sessions, from the disposition hazard |
+| `anchoring_rho` | rho |
+| `exit_deficiency` | e |
+| `herding_weight` | w |
+| `extrapolation_theta` | the blended forecast against the entry threshold |
+| `overconfidence_coverage` | the size factor, bucketed at `probes.overconfidence_size_edges` |
+| `conviction_size_miscalibration` | 0.8 times m |
+
+The horizon H for the two hazard biases is the lower middle of the window of
+horizons at which the active median reads bias-typical and the neutral median
+does not, up to `probes.max_horizon`; at the defaults it is 34 for loss
+aversion and 14 for disposition, and it is recorded under `mcq_horizon`. The
+question states H. When the window is empty the bias emits no MCQ.
+
+**Collapse.** Sources that map to the same action collapse into one option,
+keeping the first of `current`, `pre_update`, `stated_profile`. Free slots
+take the engine's other actions from the bank in order, and options are
+shuffled with the PM's keyed stream. An MCQ is emitted whenever the current
+action is defined. A PM holding the `no_add_before_trigger` rule can add
+before a trigger only after a breach drawn at its exit deficiency, so with a
+neutral exit deficiency its loss-aversion MCQ answer is "hold" even when loss
+aversion is active.
+
+**Bank.** Question wording lives in the authored bank `probes.yaml`, loaded
+and checked with the other catalogues: per bias, presence, situation,
+in-situ, decline, governance and action lines; per preference group,
+presence, question, in-situ and governance lines; routine lines per asset
+class. The loader checks slots and rejects a bias line that names the trait,
+since the question must not leak the label the corpus hides.
+
+**Config.** `probes.post_drift_weeks` (4, design), `presence_never_held` (3,
+guess), `routine_per_checkpoint` (2, guess), `disposition_progress` (0.5,
+design), `extrapolation_thesis_sd` and `extrapolation_trailing_sd` (design),
+`overconfidence_size_edges` (design), `max_horizon` (60, design),
+`situation_attempts` (10, design), `loss_depth`, `anchor_approach`,
+`conviction_rating` and `decline_excess_pct` (design). Each carries its basis
+and note in the config.
+
+**Hidden columns.** `answer`, `source_a` to `source_d` and
+`supporting_signal_ids` are hidden: they are ground truth and provenance for
+scoring and slicing, never shown to a system under test.
 
 ## Development
 
