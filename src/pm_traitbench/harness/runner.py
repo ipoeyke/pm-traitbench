@@ -7,6 +7,7 @@ finishes, so an interrupted evaluation resumes without redoing completed PMs.
 import hashlib
 import importlib
 import re
+import secrets
 import shutil
 import time
 import traceback
@@ -91,12 +92,13 @@ class RunResult:
     failed: dict[str, str]
 
 
-def _replay_pm(replay: PmReplay, factory: SutFactory, root_seed: int) -> list[ResponseRow]:
+def _replay_pm(replay: PmReplay, factory: SutFactory, key: str) -> list[ResponseRow]:
     """Feed a PM's sessions in date order, answering each checkpoint after its sessions.
 
     A session dated on a checkpoint day is observed first, so a system never sees
     the future and never misses what was known when it was asked. Probes are asked in
-    a seeded shuffle so emission order cannot reveal answers.
+    a shuffle keyed by a per-run secret so the system under test cannot recompute
+    order or ids, and emission order cannot reveal answers.
     """
     sut = factory(replay.profile)
     try:
@@ -107,11 +109,11 @@ def _replay_pm(replay: PmReplay, factory: SutFactory, root_seed: int) -> list[Re
                 sut.observe(replay.sessions[i])
                 i += 1
             order = rng.stream(
-                root_seed, "harness", replay.profile.pm_id, checkpoint.day.isoformat()
+                int(key, 16) % 2**63, "harness", replay.profile.pm_id, checkpoint.day.isoformat()
             ).permutation(len(checkpoint.probes))
             for row in (checkpoint.probes[j] for j in order):
                 start = time.perf_counter()
-                reply = sut.answer(checkpoint.day, public_probe(row, root_seed))
+                reply = sut.answer(checkpoint.day, public_probe(row, key))
                 latency_ms = int((time.perf_counter() - start) * 1000)
                 if not isinstance(reply, str):
                     raise HarnessError(
@@ -171,6 +173,8 @@ def run_sut(
             raise HarnessError(
                 f"run '{run_name}' was made from {reason}; rerun with --force to replace it"
             )
+    # Reused on resume so a PM's ids and order stay stable across reruns.
+    probe_key = (previous or {}).get("probe_key") or secrets.token_hex(16)
 
     # Recorded before any part is written, so an interrupted run still pins its probes.
     def write_metadata(status: RunStatus, completed, skipped, failed, seconds) -> None:
@@ -182,6 +186,7 @@ def run_sut(
                 "sut": sut_name,
                 "run_name": run_name,
                 "probes_sha256": digest,
+                "probe_key": probe_key,
                 "pms_completed": completed,
                 "pms_skipped": skipped,
                 "pms_failed": dict(sorted(failed.items())),
@@ -201,7 +206,7 @@ def run_sut(
     def run_pm(pm_id: str) -> None:
         start = time.perf_counter()
         try:
-            rows = _replay_pm(replays[pm_id], factory, config.seed.root)
+            rows = _replay_pm(replays[pm_id], factory, probe_key)
             run_store.write(parts_spec(pm_id), rows)
         except Exception:
             failed[pm_id] = traceback.format_exc()

@@ -138,20 +138,20 @@ class RecordingSut:
         self,
         profile: PublicProfile,
         answer_fn: Callable[[date, PublicProbe], str] | None = None,
-        fail_on_probe_id: str | None = None,
+        fail_on: Callable[[str], bool] | None = None,
     ) -> None:
         self.profile = profile
         self.events: list[tuple] = []
         self.closed = False
         self._answer_fn = answer_fn or (lambda as_of, probe: "A")
-        self._fail_on_probe_id = fail_on_probe_id
+        self._fail_on = fail_on
 
     def observe(self, session: PublicSession) -> None:
         self.events.append(("observe", session))
 
     def answer(self, as_of: date, probe: PublicProbe) -> str:
         self.events.append(("answer", as_of, probe))
-        if probe.probe_id == self._fail_on_probe_id:
+        if self._fail_on is not None and self._fail_on(probe.probe_id):
             raise RuntimeError(f"scripted failure on {probe.probe_id}")
         return self._answer_fn(as_of, probe)
 

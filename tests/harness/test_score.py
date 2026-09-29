@@ -325,12 +325,16 @@ def test_score_run_end_to_end(tmp_path, fixture_market, neutral_pm, monkeypatch)
     first = next(p for p in probes if p.probe_type == ProbeType.ROUTINE_QUESTION)
     keyed = _variant(first, answer="format: response_format=short bullets; intrusion: none")
     store.write(PROBES, [keyed if p.probe_id == first.probe_id else p for p in probes])
-    root = config.seed.root
-    answers = {opaque_probe_id(root, p.probe_id): p.answer for p in store.read(PROBES)}
+    letters = {p.probe_id: p.answer for p in store.read(PROBES)}
 
     def answer(as_of, probe):
         if probe.form == ProbeForm.MCQ:
-            return answers[probe.probe_id]
+            # The run key exists in the metadata before any PM is asked.
+            meta = DataStore(run_dir(store.data_dir, "r1"), config.output).read_run_metadata(
+                RUN_METADATA
+            )
+            by_opaque = {opaque_probe_id(meta["probe_key"], pid): a for pid, a in letters.items()}
+            return by_opaque[probe.probe_id]
         return BULLETS
 
     factory, _ = recording_factory(answer_fn=answer)

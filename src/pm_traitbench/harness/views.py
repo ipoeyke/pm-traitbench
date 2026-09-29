@@ -53,20 +53,23 @@ def public_session(session: Session, rules: Sequence[Rule]) -> PublicSession:
     )
 
 
-def opaque_probe_id(root_seed: int, probe_id: str) -> str:
-    """A keyed hash of the probe id, so the id a system sees reveals no emission order."""
-    digest = hashlib.sha256(f"{root_seed}:{probe_id}".encode()).hexdigest()
+def opaque_probe_id(key: str, probe_id: str) -> str:
+    """A hash of the probe id keyed by the run's secret, so the id reveals no emission order.
+
+    The key is per run, not the public root seed, so a system cannot recompute ids.
+    """
+    digest = hashlib.sha256(f"{key}:{probe_id}".encode()).hexdigest()
     return f"q_{digest[:16]}"
 
 
-def public_probe(row: ProbeRow, root_seed: int) -> PublicProbe:
+def public_probe(row: ProbeRow, key: str) -> PublicProbe:
     """The probe's question and non-null options; trait, type, slice and answer stay hidden.
 
     The id is opaque: corpus ids are numbered in construction order, which tracks the answer.
     """
     options = (row.option_a, row.option_b, row.option_c, row.option_d)
     return PublicProbe(
-        probe_id=opaque_probe_id(root_seed, row.probe_id),
+        probe_id=opaque_probe_id(key, row.probe_id),
         form=row.form,
         question=row.question,
         options=tuple(text for text in options if text is not None),

@@ -125,8 +125,14 @@ def test_received_objects_carry_no_hidden_fields(
     factory, built = recording_factory()
     _run(config, store, factory)
 
-    hidden = {r.probe_id: r.answer for r in store.read(PROBES) if r.form == ProbeForm.OPEN}
+    key = _key(store)
+    hidden = {
+        opaque_probe_id(key, r.probe_id): r.answer
+        for r in store.read(PROBES)
+        if r.form == ProbeForm.OPEN
+    }
     assert hidden
+    checked = 0
     for sut in built.values():
         assert isinstance(sut.profile, PublicProfile)
         for event in sut.events:
@@ -134,12 +140,15 @@ def test_received_objects_carry_no_hidden_fields(
             assert isinstance(obj, PublicSession | PublicProbe)
             if isinstance(obj, PublicProbe) and obj.probe_id in hidden:
                 assert hidden[obj.probe_id] not in obj.model_dump_json()
+                checked += 1
+    assert checked
 
 
 def test_close_called_per_pm(tmp_path) -> None:
     config, store = _synthetic_corpus(tmp_path)
+    target = probe_id("pm_002", 1)
     factory, built = recording_factory(
-        fail_on_probe_id=opaque_probe_id(config.seed.root, probe_id("pm_002", 1))
+        fail_on=lambda seen: seen == opaque_probe_id(_key(store), target)
     )
 
     _run(config, store, factory)
@@ -148,16 +157,23 @@ def test_close_called_per_pm(tmp_path) -> None:
     assert all(sut.closed for sut in built.values())
 
 
-def _first_probe_id(config, store: DataStore, pm_id: str) -> str:
-    """The opaque id of the PM's lowest probe id, as the system under test sees it."""
+def _key(store: DataStore, run_name: str = "r1") -> str:
+    """The run's probe key, read from its metadata (written before any PM runs)."""
+    meta = DataStore(run_dir(store.data_dir, run_name), stage_config().output).read_run_metadata(
+        RUN_METADATA
+    )
+    return meta["probe_key"]
+
+
+def _fails_first_probe(store: DataStore, pm_id: str):
+    """A `fail_on` predicate for the PM's lowest probe id, resolved once the run key exists."""
     real = min(r.probe_id for r in store.read(PROBES) if r.pm_id == pm_id)
-    return opaque_probe_id(config.seed.root, real)
+    return lambda seen: seen == opaque_probe_id(_key(store), real)
 
 
 def test_failing_pm_does_not_stop_others(tmp_path) -> None:
     config, store = _synthetic_corpus(tmp_path)
-    bad = _first_probe_id(config, store, "pm_002")
-    factory, _ = recording_factory(fail_on_probe_id=bad)
+    factory, _ = recording_factory(fail_on=_fails_first_probe(store, "pm_002"))
 
     result = _run(config, store, factory)
 
@@ -171,7 +187,7 @@ def test_failing_pm_does_not_stop_others(tmp_path) -> None:
 
 def test_resume_skips_completed_pms(tmp_path) -> None:
     config, store = _synthetic_corpus(tmp_path)
-    failing, _ = recording_factory(fail_on_probe_id=_first_probe_id(config, store, "pm_002"))
+    failing, _ = recording_factory(fail_on=_fails_first_probe(store, "pm_002"))
     _run(config, store, failing)
     factory, built = recording_factory()
 
@@ -259,7 +275,7 @@ def test_workers_give_same_responses(tmp_path) -> None:
     config, store = _synthetic_corpus(tmp_path)
 
     def answer(as_of, probe):
-        return "B" if probe.probe_id.endswith("2") else "A"
+        return "B" if as_of.day > 20 else "A"
 
     one = _responses(
         run_sut(
@@ -307,24 +323,52 @@ def _ten_probe_corpus(tmp_path: Path):
     return config, store
 
 
-def test_ask_order_is_seeded_and_not_probe_id_order(tmp_path) -> None:
+def _asked(built) -> list[str]:
+    return [e[2].probe_id for e in built["pm_001"].events if e[0] == "answer"]
+
+
+def test_ask_order_follows_the_run_key_not_probe_id_order(tmp_path) -> None:
     config, store = _ten_probe_corpus(tmp_path)
-    orders = []
-    for name in ("o1", "o2"):
-        factory, built = recording_factory()
-        run_sut(config, store, factory, sut_name="echo", run_name=name)
-        orders.append([e[2].probe_id for e in built["pm_001"].events if e[0] == "answer"])
-
-    assert orders[0] == orders[1]
-    natural = [opaque_probe_id(config.seed.root, probe_id("pm_001", n)) for n in range(1, 11)]
-    assert sorted(orders[0]) == sorted(natural)
-    assert orders[0] != natural
-
-    other = config.model_copy(update={"seed": config.seed.model_copy(update={"root": 7})})
     factory, built = recording_factory()
-    run_sut(other, store, factory, sut_name="echo", run_name="o3")
-    natural_other = [opaque_probe_id(7, probe_id("pm_001", n)) for n in range(1, 11)]
-    assert [e[2].probe_id for e in built["pm_001"].events if e[0] == "answer"] != natural_other
+    run_sut(config, store, factory, sut_name="echo", run_name="o1")
+    first, key = _asked(built), _key(store, "o1")
+
+    natural = [opaque_probe_id(key, probe_id("pm_001", n)) for n in range(1, 11)]
+    assert sorted(first) == sorted(natural)
+    assert first != natural
+
+    # A fresh run under --force gets a new key, so ids and order change.
+    factory, built = recording_factory()
+    run_sut(config, store, factory, sut_name="echo", run_name="o1", force=True)
+    assert _key(store, "o1") != key
+    assert not set(_asked(built)) & set(first)
+
+
+def test_resume_keeps_the_key_ids_and_order(tmp_path) -> None:
+    config, store = _synthetic_corpus(tmp_path)
+    _run(config, store, recording_factory(fail_on=_fails_first_probe(store, "pm_002"))[0])
+    key = _key(store)
+    factory, built = recording_factory()
+
+    _run(config, store, factory)
+
+    assert _key(store) == key
+    expected = {opaque_probe_id(key, r.probe_id) for r in store.read(PROBES) if r.pm_id == "pm_002"}
+    asked = [e[2].probe_id for e in built["pm_002"].events if e[0] == "answer"]
+    assert set(asked) == expected
+
+
+def test_key_never_reaches_the_system(tmp_path, fixture_market, neutral_pm, monkeypatch) -> None:
+    config, store = validated_corpus_with_probes(tmp_path, fixture_market, neutral_pm, monkeypatch)
+    factory, built = recording_factory()
+    _run(config, store, factory)
+
+    key = _key(store)
+    assert built
+    for sut in built.values():
+        dumps = [sut.profile.model_dump_json()]
+        dumps += [e[1 if e[0] == "observe" else 2].model_dump_json() for e in sut.events]
+        assert not any(key in d for d in dumps)
 
 
 def test_system_sees_opaque_ids_and_responses_keep_real_ids(tmp_path) -> None:
