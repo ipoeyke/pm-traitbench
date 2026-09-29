@@ -102,7 +102,7 @@ class _Baseline:
         return []
 
     def answer(self, as_of: datetime.date, probe: PublicProbe) -> str:
-        """Ask the model the probe and return its answer string."""
+        """Ask the model the probe and return its answer string, or "" when it stays unparsable."""
         config = self._config
         system = f"{read_advisor_prompt(config.dialogue.advisor_prompt_path)}\n\n"
         system += profile_text(self._profile)
@@ -121,18 +121,22 @@ class _Baseline:
             ),
             "cache_control": {"type": "ephemeral"},
         }
-        parsed, _ = self._runner.run(
-            send_parsed(
-                self._client,
-                request,
-                parse_answer,
-                scope=f"eval:{self._run_name}:{probe.probe_id}",
-                max_retries=config.dialogue.max_retries,
-                error_type=HarnessError,
-                label="probe",
-                reason="reply is not an answer object",
+        try:
+            parsed, _ = self._runner.run(
+                send_parsed(
+                    self._client,
+                    request,
+                    parse_answer,
+                    scope=f"eval:{self._run_name}:{probe.probe_id}",
+                    max_retries=config.dialogue.max_retries,
+                    error_type=HarnessError,
+                    label="probe",
+                    reason="reply is not an answer object",
+                )
             )
-        )
+        except HarnessError:
+            # Unparsable after every retry: an empty reply scores wrong; budget errors still fail.
+            return ""
         return parsed
 
     def close(self) -> None:

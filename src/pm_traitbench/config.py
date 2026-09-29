@@ -2110,8 +2110,8 @@ class HarnessConfig(BaseModel):
         json_schema_extra={
             "basis": "design",
             "note": (
-                "high-effort thinking plus a reply up to a short page; a max-tokens stop is "
-                "an unparsable reply"
+                "high-effort thinking plus a reply up to a short page; a reply still "
+                "unparsable after retries is recorded empty and scores wrong"
             ),
         },
     )
@@ -2129,8 +2129,8 @@ class HarnessConfig(BaseModel):
         json_schema_extra={
             "basis": "guess",
             "note": (
-                "soft stop on fresh tokens per PM for a baseline, since each PM's adapter "
-                "owns its client"
+                "cap on fresh tokens per PM for a baseline, since each PM's adapter owns "
+                "its client; spending it fails that PM"
             ),
         },
     )

@@ -7,7 +7,7 @@ import pytest
 
 from pm_traitbench.dialogue.prompts import read_advisor_prompt
 from pm_traitbench.enums import ProbeForm, RuleScope
-from pm_traitbench.errors import HarnessError
+from pm_traitbench.errors import DialogueBudgetError, HarnessError
 from pm_traitbench.gates.gate2.prompt_parts import mandate_line, pm_rules_section
 from pm_traitbench.gates.gate2.transcript import render_pm
 from pm_traitbench.harness.baselines import (
@@ -70,8 +70,8 @@ def _probe(form: ProbeForm = ProbeForm.MCQ) -> PublicProbe:
     return PublicProbe(probe_id="p_pm_001_01", form=form, question="Which?", options=options)
 
 
-def _make(cls, tmp_path, responder=_responder):
-    config = stage_config()
+def _make(cls, tmp_path, responder=_responder, config=None):
+    config = config or stage_config()
     clients: list[FakeClient] = []
 
     def client_factory(_config):
@@ -151,13 +151,26 @@ def test_request_uses_harness_config(tmp_path) -> None:
     sut.close()
 
 
-def test_unparsable_reply_retries_then_raises(tmp_path) -> None:
+def test_unparsable_reply_retries_then_returns_empty(tmp_path) -> None:
     sut, clients, config = _make(FullContext, tmp_path, responder=_plain_responder)
 
-    with pytest.raises(HarnessError):
-        sut.answer(AS_OF, _probe())
+    assert sut.answer(AS_OF, _probe()) == ""
 
     assert len(clients[0].requests) == config.dialogue.max_retries + 1
+    sut.close()
+
+
+def test_spent_token_budget_still_raises(tmp_path) -> None:
+    base = stage_config()
+    config = base.model_copy(
+        update={"harness": base.harness.model_copy(update={"pm_token_budget": 1})}
+    )
+    sut, _, _ = _make(FullContext, tmp_path, config=config)
+    assert sut.answer(AS_OF, _probe()) == "B"
+
+    other = PublicProbe(probe_id="q_other", form=ProbeForm.OPEN, question="Else?", options=())
+    with pytest.raises(DialogueBudgetError):
+        sut.answer(AS_OF, other)
     sut.close()
 
 

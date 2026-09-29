@@ -903,10 +903,13 @@ are counted under `awaiting_judge`.
 
 **Config.** `harness.model` (the Gate 2 model, design) and `harness.effort`
 (high, design) set the baselines' model; `max_answer_tokens` (8000, design)
-bounds a reply including thinking, and a reply cut off at the limit is an
-unparsable reply. `short_page_words` (400, design) is the `short_page`
-ceiling. `pm_token_budget` (unset, guess) is a per-PM soft stop on fresh
-tokens for a baseline. Each carries its basis and note in the config.
+bounds a reply including thinking. A baseline reply still unparsable after
+`dialogue.max_retries` retries, including one cut off at the limit, is
+recorded as an empty response and scores wrong. `short_page_words` (400,
+design) is the `short_page` ceiling. `pm_token_budget` (unset, guess) caps
+fresh tokens per PM for a baseline; spending it fails that PM, and `eval
+score` then refuses the run until it is rerun. Each carries its basis and note
+in the config.
 
 ## Development
 
