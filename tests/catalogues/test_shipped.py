@@ -209,6 +209,7 @@ def test_packaged_yaml_files_exist() -> None:
         "avoid.yaml",
         "bias_labels.yaml",
         "bias_definitions.yaml",
+        "probes.yaml",
     ):
         assert base.joinpath(name).is_file()
 

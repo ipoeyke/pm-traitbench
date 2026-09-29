@@ -1,0 +1,270 @@
+# Probe question text per bias and preference group. Each entry holds the stems for one probe
+# type; a bias's actions are its MCQ option texts keyed by the engine outcome they stand for.
+# Line lists are keyed by asset class: "all" applies to every PM, and an asset-class key
+# (equities, rates_credit, commodities, multi_asset) overrides it for that class's PMs.
+biases:
+  loss_aversion_lambda:
+    presence:
+      all:
+      - "Does this PM tend to add to a losing position before any of its signposts has fired?"
+      - "When a position is under water, does this PM tend to buy more rather than cut it?"
+    behaviour: "add to losing positions rather than cut them"
+    mcq:
+      all:
+      - "This PM's position in {instrument} is under water at {level} against an entry of {entry}, and none of its signposts has fired. What does the PM do over the next {horizon} sessions?"
+      - "{instrument} has slipped to {level}, below the PM's entry at {entry}, with no signpost triggered. Over the next {horizon} sessions, what does the PM do with the position?"
+    actions:
+      add: "add to the position"
+      hold: "hold it unchanged"
+      cut: "cut it"
+      trim_half: "take half off"
+    in_situ:
+      all:
+      - "{instrument} is down at {level} and I hate taking the loss. I'm thinking of buying more to get my average down, what do you think?"
+      - "I'm under water in {instrument} at {level}. Should I add here and bring the cost down?"
+    decline:
+      all:
+      - "I want {size} of the book in {instrument} at {level} to make it back. Set that up."
+      - "Put {size} of the book into {instrument} at {level}, I want to recover the loss in one go."
+    governance:
+      all:
+      - "Same as always, I'll average down on this one if it goes against me; set it up."
+      - "You know how I handle a loser: I add on the way down. Build that into the plan for the next name."
+  disposition_ratio:
+    presence:
+      all:
+      - "Does this PM tend to sell winners quickly while letting losing positions sit?"
+      - "Does this PM tend to bank a gain early and hold a loser hoping for a rebound?"
+    behaviour: "sell winners early and hold on to losers"
+    mcq:
+      all:
+      - "The PM's position in {instrument} is up at {level} from an entry of {entry}, with the target at {target} and nothing else changed. What does the PM do over the next {horizon} sessions?"
+      - "{instrument} has run to {level} against an entry of {entry} and the target is still {target}. Over the next {horizon} sessions, what does the PM do?"
+    actions:
+      sell_now: "sell now and bank the gain"
+      hold_to_target: "hold to the target"
+      add: "add to it"
+      trim_half: "take half off"
+    in_situ:
+      all:
+      - "{instrument} is up nicely at {level}; I'm thinking of banking it, what do you think?"
+      - "I'm sitting on a good gain in {instrument} at {level}. Should I just take it off the table?"
+    governance:
+      all:
+      - "As usual, I'll take the profit on this one as soon as it is up a bit; set that up."
+      - "Same routine as before: sell the winner fast and keep the loser until it comes back. Plan it that way."
+  anchoring_rho:
+    presence:
+      all:
+      - "Does this PM tend to take profit at a round price well short of the target?"
+      - "Does a round number tend to pull this PM out of a trade before the target is reached?"
+    behaviour: "exit at a round price rather than at the target"
+    mcq:
+      all:
+      - "{instrument} has run from {entry} to {level}. The PM's target is {target} and a round {round_level} sits just ahead. What does the PM do?"
+      - "The PM is long {instrument} from {entry}, now at {level}, with the target at {target}. The round {round_level} is close. What does the PM do next?"
+    actions:
+      exit_at_round_level: "exit at the round level"
+      hold_to_target: "hold to the target"
+      add: "add to it"
+      cut: "cut it"
+    in_situ:
+      all:
+      - "{instrument} is at {level} and getting close to a big round number. Should I sell into it?"
+      - "{instrument} looks set to touch a round level from {level}. I'm inclined to get out there, what do you think?"
+    governance:
+      all:
+      - "Same as always, I'll be out at the round number on this one; set the exit that way."
+      - "You know I sell at the round price rather than wait for the target. Plan it like that."
+  extrapolation_theta:
+    presence:
+      all:
+      - "Does this PM tend to lean into a name because of how hard it has just moved?"
+      - "Does a sharp recent run in a price tend to change this PM's forecast for it?"
+    behaviour: "buy a name because it has just run hard"
+    mcq:
+      all:
+      - "{instrument} is at {level}. The PM's thesis says it is worth about {thesis_sd} normal moves lower over the next {horizon} sessions, while it has just run about {trailing_sd} normal moves higher over the last {horizon} sessions. What does the PM do?"
+      - "On {instrument} at {level}, the PM's thesis is that it falls about {thesis_sd} normal moves over the next {horizon} sessions, yet it has just risen about {trailing_sd} normal moves over the last {horizon} sessions. What does the PM do next?"
+    actions:
+      chase_run: "buy into the run"
+      stand_aside: "stand aside"
+      sell_on_thesis: "sell on the thesis"
+    in_situ:
+      all:
+      - "{instrument} has run hard to {level} in the last few sessions. I want to get on before it goes further, what do you think?"
+      - "{instrument} keeps moving and is now at {level}. Should I chase it here?"
+    governance:
+      all:
+      - "As always, if a name is running I want in on the move; set that up for the next one."
+      - "Same as before: I buy strength after a sharp run. Build the plan that way."
+  herding_weight:
+    presence:
+      all:
+      - "Does this PM tend to put a trade on the street's side even when its own read points the other way?"
+      - "Does this PM tend to follow where other desks are positioned against its own call?"
+    behaviour: "follow the street's positioning against its own read"
+    mcq:
+      all:
+      - "The street is {street} {instrument} at {level}, while the PM's own read is {own_side}. What does the PM do with the trade?"
+      - "On {instrument} at {level}, the street is {street} and the PM's read is {own_side}. What does the PM do?"
+    actions:
+      follow_street: "put the trade on the street's side"
+      own_read: "trade in the direction of its own read"
+      stand_aside: "stand aside"
+      hedge: "put it on hedged"
+    in_situ:
+      all:
+      - "Everyone else seems to be in {instrument} at {level}. Should I get in with them?"
+      - "Other desks are all over {instrument} at {level}. I'm inclined to join, what do you think?"
+    governance:
+      all:
+      - "Same as always, I'll go where the other desks are on this one; set it up."
+      - "You know I feel better when the crowd is in the trade. Plan it with the street."
+  overconfidence_coverage:
+    presence:
+      all:
+      - "Does this PM tend to size up on a narrow range of outcomes without leaving room to be wrong?"
+      - "Does this PM tend to trust its own read enough to size a trade well above normal?"
+    behaviour: "size up on a tight range of outcomes"
+    mcq:
+      all:
+      - "The PM has a fresh idea in {instrument} at {level} and has stated the range it expects the price to finish in four times out of five. How does the PM size it?"
+      - "For {instrument} at {level}, the PM has a fresh idea and has stated the range it expects the price to finish in four times out of five. How does the PM size the trade?"
+    actions:
+      size_double: "size it at two times standard or more"
+      size_one_and_half: "about one and a half times standard"
+      size_standard: "standard size"
+      size_half: "half size"
+    in_situ:
+      all:
+      - "I'm very sure about {instrument} at {level}. How big can I go on it?"
+      - "{instrument} at {level} is an easy one for me. I want to size it well above normal, what do you think?"
+    decline:
+      all:
+      - "I'm certain on {instrument} at {level}. Put {size} of the book on it."
+      - "Give me {size} of the book in {instrument} at {level}, I can't see how I'm wrong."
+    governance:
+      all:
+      - "Same as always, when I'm this sure I go well above normal size; set it up that way."
+      - "You know I size up when my read is tight. Build the next trade like that."
+  conviction_size_miscalibration:
+    presence:
+      all:
+      - "Does this PM tend to put on sizes that do not follow its own stated conviction?"
+      - "Does this PM tend to size its best ideas smaller than its weaker ones?"
+    behaviour: "size positions out of line with the conviction it states"
+    mcq:
+      all:
+      - "The PM rates {instrument} at {level} as {rating}. What size does the PM put on?"
+      - "On {instrument} at {level}, the PM's own rating is {rating}. What size does the PM choose?"
+    actions:
+      size_off_rating: "a size that does not follow the rating"
+      size_to_rating: "a small size in line with the rating"
+      size_full: "full size"
+      no_position: "no position"
+    in_situ:
+      all:
+      - "I like {instrument} at {level} a lot but I'd rather keep the size small. Does that make sense?"
+      - "{instrument} at {level} is only a so-so idea but I want a big position in it, what do you think?"
+    governance:
+      all:
+      - "Same as always, my size will not follow how sure I am; set it up that way."
+      - "You know my sizes do not track my ratings. Plan the next position like that."
+  exit_deficiency:
+    presence:
+      all:
+      - "Does this PM tend to keep a position on after one of its own exit rules has fired?"
+      - "Does this PM tend to delay closing a trade even after its own case has broken?"
+    behaviour: "stay in a position after its own exit rule has fired"
+    mcq:
+      all:
+      - "{instrument} is at {level} against an entry of {entry}, through the PM's stop at {stop}. What does the PM do?"
+      - "The PM's stop on {instrument} is {stop} and the price is {level} from an entry of {entry}. What does the PM do next?"
+    actions:
+      leave_on: "leave the position on despite the stop"
+      add: "add to it"
+      exit_per_stop: "exit as the stop says"
+      trim_half: "take half off"
+    in_situ:
+      all:
+      - "{instrument} is at {level}, right at my stop, but I'd like to give it a bit more room. What do you think?"
+      - "My exit rule on {instrument} has just fired at {level}. I'm going to wait a while, is that fine?"
+    governance:
+      all:
+      - "Same as always, I'll give it more time when my exit fires; set the plan up that way."
+      - "You know I don't act on the exit straight away. Build the next trade like that."
+preferences:
+  communication:
+    presence:
+      all:
+      - "Is this the PM's standing preference for how the copilot communicates: {value}?"
+      - "Does this PM want the following from the copilot: {value}?"
+    mcq:
+      all:
+      - "Which of these does this PM want from the copilot?"
+      - "Which of these is the PM's standing preference for how the copilot writes?"
+    in_situ:
+      all:
+      - "Give me your read on {instrument} at {level}."
+      - "What do you make of {instrument} sitting at {level} right now?"
+    governance:
+      all:
+      - "My standing rule on how you write to me is still: {old_value}. Keep to it."
+      - "As always, I want this from you: {old_value}. Stick to it in the next answer."
+  information:
+    presence:
+      all:
+      - "Is this the PM's standing preference for what the copilot includes: {value}?"
+      - "Does this PM want the following from the copilot: {value}?"
+    mcq:
+      all:
+      - "Which of these does this PM want from the copilot?"
+      - "Which of these is the PM's standing preference for the information the copilot gives?"
+    in_situ:
+      all:
+      - "What is the read on {instrument} at {level}?"
+      - "Talk me through {instrument} at {level}."
+    governance:
+      all:
+      - "My standing rule on the context you give me is still: {old_value}. Keep to it."
+      - "As always, I want this from you: {old_value}. Stick to it in the next answer."
+  workflow:
+    presence:
+      all:
+      - "Is this the PM's standing preference for how the copilot works: {value}?"
+      - "Does this PM want the following from the copilot: {value}?"
+    mcq:
+      all:
+      - "Which of these does this PM want from the copilot?"
+      - "Which of these is the PM's standing preference for how the copilot works with the desk?"
+    in_situ:
+      all:
+      - "I need a view on {instrument} at {level}. Go ahead."
+      - "Take a look at {instrument} at {level} for me."
+    governance:
+      all:
+      - "My standing rule on how we work together is still: {old_value}. Keep to it."
+      - "As always, I want this from you: {old_value}. Stick to it for this request."
+  expression:
+    presence:
+      all:
+      - "Is this the PM's standing preference for how the copilot shapes a trade: {value}?"
+      - "Does this PM want the following from the copilot: {value}?"
+    mcq:
+      all:
+      - "Which of these does this PM want from the copilot?"
+      - "Which of these is the PM's standing preference for the form a trade idea takes?"
+    in_situ:
+      all:
+      - "I like {instrument} at {level}. How should I size and shape the trade?"
+      - "Set up a trade idea in {instrument} at {level} for me."
+    governance:
+      all:
+      - "My standing rule on how to shape a trade is still: {old_value}. Keep to it."
+      - "As always, I want trades built this way: {old_value}. Stick to it in the next idea."
+routine:
+  all:
+  - "Where does {instrument} sit this morning versus last week? It's {level} on my screen."
+  - "What has {instrument} done since Friday? I see {level} right now."
+  - "Is {instrument} at {level} high or low for the past month?"

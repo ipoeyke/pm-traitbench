@@ -377,3 +377,67 @@ class AdvisorTool(StrEnum):
     GET_CONSENSUS = "get_consensus"
     GET_CALENDAR = "get_calendar"
     GET_HISTORY = "get_history"
+
+
+class ProbeType(StrEnum):
+    TRAIT_PRESENCE = "trait_presence"
+    TRAIT_MCQ = "trait_mcq"
+    IN_SITU = "in_situ"
+    ROUTINE_QUESTION = "routine_question"
+    GOVERNANCE = "governance"
+
+
+class ProbeForm(StrEnum):
+    MCQ = "mcq"
+    OPEN = "open"
+
+
+class CheckpointLabel(StrEnum):
+    WEEK4 = "week4"
+    WEEK13 = "week13"
+    PRE_DRIFT = "pre_drift"
+    POST_DRIFT = "post_drift"
+    REGIME_SHIFT = "regime_shift"
+    WEEK52 = "week52"
+
+
+class OptionSource(StrEnum):
+    CURRENT = "current"
+    PRE_UPDATE = "pre_update"
+    STATED_PROFILE = "stated_profile"
+    THIRD_PARTY = "third_party"
+    NONE = "none"
+
+
+class McqAction(StrEnum):
+    """An engine outcome a bias MCQ option stands for; an outcome shared by biases is one member."""
+
+    ADD = "add"
+    HOLD = "hold"
+    CUT = "cut"
+    TRIM_HALF = "trim_half"
+    SELL_NOW = "sell_now"
+    HOLD_TO_TARGET = "hold_to_target"
+    EXIT_AT_ROUND_LEVEL = "exit_at_round_level"
+    LEAVE_ON = "leave_on"
+    EXIT_PER_STOP = "exit_per_stop"
+    FOLLOW_STREET = "follow_street"
+    OWN_READ = "own_read"
+    STAND_ASIDE = "stand_aside"
+    HEDGE = "hedge"
+    CHASE_RUN = "chase_run"
+    SELL_ON_THESIS = "sell_on_thesis"
+    SIZE_DOUBLE = "size_double"
+    SIZE_ONE_AND_HALF = "size_one_and_half"
+    SIZE_STANDARD = "size_standard"
+    SIZE_HALF = "size_half"
+    SIZE_OFF_RATING = "size_off_rating"
+    SIZE_TO_RATING = "size_to_rating"
+    SIZE_FULL = "size_full"
+    NO_POSITION = "no_position"
+
+
+class ProbeSkip(StrEnum):
+    NO_SUPPORT = "no_supporting_signal"
+    NO_SITUATION = "no_situation"
+    NO_HORIZON = "no_horizon"

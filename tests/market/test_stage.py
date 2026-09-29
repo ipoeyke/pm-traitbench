@@ -204,7 +204,7 @@ def test_cli_returns_1_and_writes_nothing_when_a_later_seed_fails(
     assert not (result.data_dir / "run_metadata" / "market.json").exists()
 
 
-def test_pipeline_stage_names_are_sample_market_engine_gate1_plan_dialogue_validate_gate2() -> None:
+def test_pipeline_stage_names_follow_the_stage_order() -> None:
     assert tuple(stage.name for stage in pipeline.STAGES) == (
         "sample",
         "market",
@@ -214,6 +214,7 @@ def test_pipeline_stage_names_are_sample_market_engine_gate1_plan_dialogue_valid
         "dialogue",
         "validate",
         "gate2",
+        "probes",
     )
 
 

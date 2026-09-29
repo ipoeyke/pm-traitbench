@@ -47,6 +47,7 @@ from pm_traitbench.tables.schema import (
     Persona,
     PositionDay,
     Price,
+    ProbeRow,
     RegimeSpan,
     Rule,
     RuleEvent,
@@ -78,6 +79,7 @@ ROW_MODELS = [
     Gate2SignalRow,
     Gate2PmRow,
     Gate2CellRow,
+    ProbeRow,
 ]
 MARKET_ROW_MODELS = [Instrument, Price, CurvePoint, ConsensusRow, CalendarEvent, RegimeSpan]
 ENGINE_ROW_MODELS = [Leg, Idea, LedgerRow, RuleEvent, PositionDay]

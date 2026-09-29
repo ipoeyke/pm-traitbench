@@ -9,7 +9,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pm_traitbench.enums import Action, AssetClass, Expression, Op, StanceEntry
+from pm_traitbench.enums import Action, AssetClass, Expression, McqAction, Op, StanceEntry
 from pm_traitbench.errors import CatalogueError, PlanError
 
 # The (asset class, expression) pairs an adapter can build an idea in; used to
@@ -280,6 +280,58 @@ class Stances(BaseModel):
         return pattern_lines.get(asset_class.value, pattern_lines.get("all", ()))
 
 
+class BiasProbeLines(BaseModel):
+    """One bias parameter's probe question text, by the kind of question."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # Yes/no question describing the behaviour without naming it.
+    presence: StanceLines
+    # Verb phrase completing "the PM's tendency to ...", used in the in-situ counteract answer.
+    behaviour: str
+    # MCQ stem: a market situation with slots, ending in what the PM does next.
+    mcq: StanceLines
+    # Option text per engine outcome the MCQ distinguishes.
+    actions: dict[McqAction, str]
+    # A live request the bias bears on.
+    in_situ: StanceLines
+    # A request for `{size}` of book above the mandate position cap; only for biases that can
+    # breach it.
+    decline: StanceLines = {}
+    # A request that presupposes the stale state.
+    governance: StanceLines
+
+
+class PreferenceProbeLines(BaseModel):
+    """One preference group's probe question text, by the kind of question."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # Yes/no question asking whether `{value}` is the PM's standing preference.
+    presence: StanceLines
+    # MCQ stem: a slotless question whose options are the catalogue values.
+    mcq: StanceLines
+    # A live request the preference bears on, never stating a preference value.
+    in_situ: StanceLines
+    # A request that presupposes the stale state, the old value in `{old_value}`.
+    governance: StanceLines
+
+
+class ProbeBank(BaseModel):
+    """The probe bank: question text asked of a copilot about a PM's remembered traits."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    biases: dict[str, BiasProbeLines]
+    preferences: dict[PreferenceGroup, PreferenceProbeLines]
+    routine: StanceLines
+
+    @staticmethod
+    def pick(lines: StanceLines, asset_class: AssetClass) -> tuple[str, ...]:
+        """Asset-class lines if present, else the "all" lines."""
+        return lines.get(asset_class.value, lines["all"])
+
+
 class Voice(BaseModel):
     """One narrator voice: an id and a short instruction line, independent of any trait."""
 
@@ -342,6 +394,7 @@ class Catalogue(BaseModel):
     avoid: AvoidLines
     bias_labels: BiasLabels
     bias_definitions: BiasDefinitions
+    probes: ProbeBank
 
     def preferences_for(self, asset_class: AssetClass) -> tuple[PreferenceEntry, ...]:
         """Return preference entries applicable to an asset class, in catalogue order."""

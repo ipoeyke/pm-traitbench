@@ -17,6 +17,7 @@ from pm_traitbench.enums import (
     Action,
     AdvisorTool,
     AssetClass,
+    CheckpointLabel,
     CommodityGroup,
     DriftEventType,
     DriftStatus,
@@ -33,10 +34,13 @@ from pm_traitbench.enums import (
     Kind,
     MentionKind,
     Op,
+    OptionSource,
     Ownership,
     PnlState,
     PositionAction,
     Positioning,
+    ProbeForm,
+    ProbeType,
     RatingBand,
     Regime,
     RuleResponse,
@@ -94,6 +98,10 @@ __all__ = [
     "TurnRole",
     "MentionKind",
     "AdvisorTool",
+    "ProbeType",
+    "ProbeForm",
+    "CheckpointLabel",
+    "OptionSource",
     "Mandate",
     "StatedProfile",
     "Persona",
@@ -128,6 +136,8 @@ __all__ = [
     "Gate2SignalRow",
     "Gate2PmRow",
     "Gate2CellRow",
+    "ProbeRow",
+    "probe_id",
     "to_record",
     "multiplier_field",
 ]
@@ -1442,6 +1452,157 @@ class Gate2CellRow(BaseModel):
     def _check_blocking_requires_all_slice(self) -> "Gate2CellRow":
         if self.blocking and self.slice != Gate2Slice.ALL:
             raise ValueError("blocking requires slice to be 'all'")
+        return self
+
+
+_PROBE_ID_PATTERN = r"^p_pm\d{3,}_\d{4,}$"
+_OPTION_LETTERS = ("A", "B", "C", "D")
+_OPEN_TYPES = (ProbeType.IN_SITU, ProbeType.ROUTINE_QUESTION, ProbeType.GOVERNANCE)
+
+
+def probe_id(pm_id: str, n: int) -> str:
+    """Return the identifier of a PM's n-th probe."""
+    return f"p_{pm_id.replace('_', '')}_{n:04d}"
+
+
+class ProbeRow(BaseModel):
+    """One question put to a copilot at a checkpoint, with its deterministic ground truth."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    probe_id: str = Field(pattern=_PROBE_ID_PATTERN, description="Unique identifier for the probe.")
+    pm_id: str = Field(
+        pattern=_PM_ID_PATTERN, description="Identifier of the PM the probe is asked about."
+    )
+    checkpoint_date: datetime.date = Field(description="Date of the checkpoint the probe sits at.")
+    checkpoint_label: CheckpointLabel = Field(description="Which checkpoint the probe sits at.")
+    probe_type: ProbeType = Field(description="Kind of question the probe asks.")
+    trait_id: str | None = Field(
+        pattern=_TRAIT_ID_PATTERN,
+        description="Trait the probe tests; null for a presence negative or a routine question.",
+    )
+    form: ProbeForm = Field(description="Whether the probe is multiple choice or open.")
+    question: str = Field(min_length=1, description="The question text put to the copilot.")
+    option_a: str | None = Field(description="Text of option A; null for an open probe.")
+    option_b: str | None = Field(description="Text of option B; null for an open probe.")
+    option_c: str | None = Field(description="Text of option C; null when absent.")
+    option_d: str | None = Field(description="Text of option D; null when absent.")
+    answer: str = Field(
+        min_length=1, description="Ground-truth answer: an option letter, or the open reference."
+    )
+    source_a: OptionSource | None = Field(description="Where option A's content comes from.")
+    source_b: OptionSource | None = Field(description="Where option B's content comes from.")
+    source_c: OptionSource | None = Field(description="Where option C's content comes from.")
+    source_d: OptionSource | None = Field(description="Where option D's content comes from.")
+    supporting_signal_ids: tuple[str, ...] = Field(
+        description="Signals in the corpus that evidence the answer, sorted and unique."
+    )
+    context_chars: int = Field(
+        ge=0,
+        description=(
+            "Length of the rendered transcript of every surviving session at or before the "
+            "checkpoint, as Gate 2 counts it."
+        ),
+    )
+
+    def _options(self) -> tuple[str | None, ...]:
+        return (self.option_a, self.option_b, self.option_c, self.option_d)
+
+    def _sources(self) -> tuple[OptionSource | None, ...]:
+        return (self.source_a, self.source_b, self.source_c, self.source_d)
+
+    @model_validator(mode="after")
+    def _check_probe_id_prefix(self) -> "ProbeRow":
+        prefix = f"p_{self.pm_id.replace('_', '')}_"
+        if not self.probe_id.startswith(prefix):
+            raise ValueError(f"probe_id must start with '{prefix}'")
+        return self
+
+    @model_validator(mode="after")
+    def _check_supporting_signals(self) -> "ProbeRow":
+        ids = self.supporting_signal_ids
+        for signal_id in ids:
+            if not re.fullmatch(_SIGNAL_ID_PATTERN, signal_id):
+                raise ValueError(
+                    f"supporting_signal_ids must match {_SIGNAL_ID_PATTERN!r}, got '{signal_id}'"
+                )
+        if list(ids) != sorted(set(ids)):
+            raise ValueError("supporting_signal_ids must be sorted and unique")
+        return self
+
+    @model_validator(mode="after")
+    def _check_options_not_blank(self) -> "ProbeRow":
+        if any(text is not None and not text.strip() for text in self._options()):
+            raise ValueError("options must not be blank")
+        return self
+
+    @model_validator(mode="after")
+    def _check_open_has_no_options(self) -> "ProbeRow":
+        if self.form == ProbeForm.OPEN and any(
+            value is not None for value in (*self._options(), *self._sources())
+        ):
+            raise ValueError("open probe must have no options or sources")
+        return self
+
+    @model_validator(mode="after")
+    def _check_presence(self) -> "ProbeRow":
+        if self.probe_type != ProbeType.TRAIT_PRESENCE:
+            return self
+        if self.form != ProbeForm.MCQ:
+            raise ValueError("presence probe must be mcq")
+        if (self.option_a, self.option_b, self.option_c, self.option_d) != (
+            "yes",
+            "no",
+            None,
+            None,
+        ):
+            raise ValueError("presence probe options must be yes and no")
+        if self.source_a is None or any(source is not None for source in self._sources()[1:]):
+            raise ValueError("presence probe must set source_a only")
+        if self.answer not in ("A", "B"):
+            raise ValueError("presence answer must be A or B")
+        if (self.answer == "A") != (self.source_a == OptionSource.CURRENT):
+            raise ValueError("presence answer must be A exactly when source_a is current")
+        return self
+
+    @model_validator(mode="after")
+    def _check_trait_mcq(self) -> "ProbeRow":
+        if self.probe_type != ProbeType.TRAIT_MCQ or self.form != ProbeForm.MCQ:
+            return self
+        present = [text is not None for text in self._options()]
+        if sum(present) not in (3, 4):
+            raise ValueError("mcq must have 3 or 4 options")
+        if present != sorted(present, reverse=True):
+            raise ValueError("mcq options must be contiguous from option_a")
+        texts = [text for text in self._options() if text is not None]
+        if len(set(texts)) != len(texts):
+            raise ValueError("mcq option texts must be unique")
+        if [source is not None for source in self._sources()] != present:
+            raise ValueError("mcq source must be set exactly where an option is")
+        current = [
+            _OPTION_LETTERS[i]
+            for i, source in enumerate(self._sources())
+            if source == OptionSource.CURRENT
+        ]
+        if len(current) != 1:
+            raise ValueError("mcq must have exactly one current source")
+        if self.answer != current[0]:
+            raise ValueError("mcq answer must be the letter of the current option")
+        return self
+
+    @model_validator(mode="after")
+    def _check_open_types_are_open(self) -> "ProbeRow":
+        if self.probe_type in _OPEN_TYPES and self.form != ProbeForm.OPEN:
+            raise ValueError(f"{self.probe_type.value} probe must be open")
+        return self
+
+    @model_validator(mode="after")
+    def _check_trait_id_nullability(self) -> "ProbeRow":
+        nullable = (ProbeType.TRAIT_PRESENCE, ProbeType.ROUTINE_QUESTION)
+        if self.trait_id is None and self.probe_type not in nullable:
+            raise ValueError("trait_id may be null only for presence and routine_question probes")
+        if self.probe_type == ProbeType.ROUTINE_QUESTION and self.trait_id is not None:
+            raise ValueError("routine_question requires a null trait_id")
         return self
 
 

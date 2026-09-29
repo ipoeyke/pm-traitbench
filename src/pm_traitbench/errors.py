@@ -87,3 +87,17 @@ class Gate2Error(PmTraitbenchError):
     """
 
     exit_code = 1
+
+
+class CorpusError(PmTraitbenchError):
+    """Raised when a stage finds the validated corpus missing, stale or incomplete, or a PM's
+    traits incomplete.
+    """
+
+    exit_code = 1
+
+
+class ProbesError(PmTraitbenchError):
+    """Raised when the probes stage cannot run or cannot build a probe its inputs promise."""
+
+    exit_code = 1

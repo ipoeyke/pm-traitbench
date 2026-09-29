@@ -2173,6 +2173,150 @@ class Gate2Config(BaseModel):
     )
 
 
+class ProbesConfig(BaseModel):
+    """Settings for the probes stage: checkpoint offsets, probe counts and the MCQ situations."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    post_drift_weeks: int = Field(
+        4,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "the post-drift checkpoint sits four weeks after the event, time for the "
+                "change to show in several sessions"
+            ),
+        },
+    )
+    presence_never_held: int = Field(
+        3,
+        ge=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": ("never-held preference values asked per checkpoint as presence negatives"),
+        },
+    )
+    routine_per_checkpoint: int = Field(
+        2,
+        ge=0,
+        json_schema_extra={
+            "basis": "guess",
+            "note": ("routine questions per checkpoint"),
+        },
+    )
+    disposition_progress: float = Field(
+        0.5,
+        gt=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "a gain about halfway to target, where a sale is early by the PM's own target"
+            ),
+        },
+    )
+    loss_depth: float = Field(
+        0.5,
+        gt=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "the loss situation sits halfway to the stop, a loser the stop has not yet cut"
+            ),
+        },
+    )
+    anchor_approach: float = Field(
+        0.9,
+        gt=0,
+        lt=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": ("the price is most of the way from entry to the round level but short of it"),
+        },
+    )
+    extrapolation_thesis_sd: float = Field(
+        -1.0,
+        json_schema_extra={
+            "basis": "design",
+            "note": ("the own thesis at one normal move against the run"),
+        },
+    )
+    extrapolation_trailing_sd: float = Field(
+        3.0,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "a run of three normal moves; with the thesis at -1 the forecast reaches "
+                "the entry threshold 1.0 at theta 0.5, between the neutral and active "
+                "means"
+            ),
+        },
+    )
+    overconfidence_size_edges: tuple[float, float] = Field(
+        (1.25, 2.0),
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "size-factor bucket edges: calibrated coverage 0.8 gives factor 1.0, "
+                "standard size; the active centre 0.4 gives about 2.45, the top bucket"
+            ),
+        },
+    )
+    conviction_rating: int = Field(
+        2,
+        ge=1,
+        le=4,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "a low stated rating, so sizing to the rating and full size are different answers"
+            ),
+        },
+    )
+    decline_excess_pct: float = Field(
+        5.0,
+        gt=0,
+        json_schema_extra={
+            "basis": "design",
+            "note": ("a decline request asks for the mandate cap plus this many points of book"),
+        },
+    )
+    max_horizon: int = Field(
+        60,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "the longest horizon, in sessions, searched for a hazard bias's MCQ, "
+                "about a quarter of a year"
+            ),
+        },
+    )
+    situation_attempts: int = Field(
+        10,
+        ge=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": ("instruments tried before a situation is skipped"),
+        },
+    )
+
+    @model_validator(mode="after")
+    def _check_extrapolation_signs(self) -> "ProbesConfig":
+        if not self.extrapolation_thesis_sd < 0 < self.extrapolation_trailing_sd:
+            raise ValueError("extrapolation_thesis_sd must be negative and trailing_sd positive")
+        return self
+
+    @model_validator(mode="after")
+    def _check_size_edges(self) -> "ProbesConfig":
+        low, high = self.overconfidence_size_edges
+        if not 1.0 < low < high:
+            raise ValueError("overconfidence_size_edges must satisfy 1.0 < first < second")
+        return self
+
+
 class Config(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -2192,6 +2336,7 @@ class Config(BaseModel):
     dialogue: DialogueConfig = Field(default_factory=DialogueConfig)
     validation: ValidateConfig = Field(default_factory=ValidateConfig)
     gate2: Gate2Config = Field(default_factory=Gate2Config)
+    probes: ProbesConfig = Field(default_factory=ProbesConfig)
 
     @model_validator(mode="after")
     def _check_week_ranges_within_calendar(self) -> "Config":

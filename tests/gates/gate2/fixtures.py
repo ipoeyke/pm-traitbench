@@ -24,7 +24,6 @@ from pm_traitbench.enums import (
     Typicality,
     Valence,
 )
-from pm_traitbench.gates.gate2.recover import compute_truth
 from pm_traitbench.signals.assemble import session_id
 from pm_traitbench.tables.schema import (
     DialogueLog,
@@ -52,6 +51,7 @@ from pm_traitbench.tables.specs import (
     TRAITS,
 )
 from pm_traitbench.tables.store import DataStore
+from pm_traitbench.traits_truth import compute_truth
 from tests.dialogue.fixtures import default_responder, fake_message, rule
 
 PM_A = "pm_001"

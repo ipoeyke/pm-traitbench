@@ -20,6 +20,7 @@ from pm_traitbench.catalogues.models import (
     Phrasings,
     PreferenceEntry,
     PreferenceGroup,
+    ProbeBank,
     RuleCatalogue,
     SignpostTemplates,
     StanceLines,
@@ -29,7 +30,7 @@ from pm_traitbench.catalogues.models import (
     Voice,
 )
 from pm_traitbench.config import BIAS_PARAMS
-from pm_traitbench.enums import AssetClass, Kind, StanceEntry
+from pm_traitbench.enums import AssetClass, Kind, McqAction, StanceEntry
 from pm_traitbench.errors import CatalogueError
 
 _FILE_NAMES = (
@@ -44,6 +45,7 @@ _FILE_NAMES = (
     "avoid.yaml",
     "bias_labels.yaml",
     "bias_definitions.yaml",
+    "probes.yaml",
 )
 
 # A stance line's slots vary by (kind of trait, kind of evidence): which parts of the
@@ -177,6 +179,7 @@ def _build_catalogue(base: Any) -> Catalogue:
         avoid = AvoidLines.model_validate(raw["avoid.yaml"])
         bias_labels = BiasLabels.model_validate(raw["bias_labels.yaml"])
         bias_definitions = BiasDefinitions.model_validate(raw["bias_definitions.yaml"])
+        probes = ProbeBank.model_validate(raw["probes.yaml"])
     except ValidationError as e:
         raise CatalogueError(f"invalid catalogue content: {e}") from e
     return Catalogue(
@@ -191,6 +194,7 @@ def _build_catalogue(base: Any) -> Catalogue:
         avoid=avoid,
         bias_labels=bias_labels,
         bias_definitions=bias_definitions,
+        probes=probes,
     )
 
 
@@ -490,8 +494,17 @@ def _check_engine_templates(catalogue: Catalogue) -> None:
 
 
 def _check_stance_lines(
-    context: str, allowed_slots: frozenset[str], stance_lines: StanceLines
+    context: str,
+    allowed_slots: frozenset[str],
+    stance_lines: StanceLines,
+    required: frozenset[str] | None = None,
 ) -> None:
+    """Check keys, line counts, slots and banned words of one lines mapping.
+
+    `required` slots must appear in every line; by default only `{value}`, when allowed.
+    """
+    if required is None:
+        required = allowed_slots & {"value"}
     if "all" not in stance_lines:
         raise CatalogueError(f"{context} has no 'all' key")
     asset_class_values = {asset_class.value for asset_class in AssetClass}
@@ -507,8 +520,11 @@ def _check_stance_lines(
                 raise CatalogueError(
                     f"{context} line '{line}' uses unknown slot(s) {sorted(unknown)}"
                 )
-            if "value" in allowed_slots and "value" not in fields:
-                raise CatalogueError(f"{context} line '{line}' does not use the {{value}} slot")
+            missing = sorted(required - fields)
+            if missing:
+                raise CatalogueError(
+                    f"{context} line '{line}' does not use the {{{missing[0]}}} slot"
+                )
             banned = banned_words_in(line)
             if banned:
                 raise CatalogueError(f"{context} line '{line}' contains banned word '{banned[0]}'")
@@ -575,6 +591,188 @@ def check_stances(catalogue: Catalogue) -> None:
             raise CatalogueError(
                 f"stances: preference '{group.value}' entry 'revealed' must be empty"
             )
+
+
+# The engine outcomes each bias MCQ distinguishes; this order is the order options are
+# filled from when a source leaves a slot free.
+PROBE_ACTIONS: dict[str, tuple[McqAction, ...]] = {
+    "loss_aversion_lambda": (McqAction.ADD, McqAction.HOLD, McqAction.CUT, McqAction.TRIM_HALF),
+    "disposition_ratio": (
+        McqAction.SELL_NOW,
+        McqAction.HOLD_TO_TARGET,
+        McqAction.ADD,
+        McqAction.TRIM_HALF,
+    ),
+    "anchoring_rho": (
+        McqAction.EXIT_AT_ROUND_LEVEL,
+        McqAction.HOLD_TO_TARGET,
+        McqAction.ADD,
+        McqAction.CUT,
+    ),
+    "extrapolation_theta": (
+        McqAction.CHASE_RUN,
+        McqAction.STAND_ASIDE,
+        McqAction.SELL_ON_THESIS,
+    ),
+    "herding_weight": (
+        McqAction.FOLLOW_STREET,
+        McqAction.OWN_READ,
+        McqAction.STAND_ASIDE,
+        McqAction.HEDGE,
+    ),
+    "overconfidence_coverage": (
+        McqAction.SIZE_DOUBLE,
+        McqAction.SIZE_ONE_AND_HALF,
+        McqAction.SIZE_STANDARD,
+        McqAction.SIZE_HALF,
+    ),
+    "conviction_size_miscalibration": (
+        McqAction.SIZE_OFF_RATING,
+        McqAction.SIZE_TO_RATING,
+        McqAction.SIZE_FULL,
+        McqAction.NO_POSITION,
+    ),
+    "exit_deficiency": (
+        McqAction.LEAVE_ON,
+        McqAction.ADD,
+        McqAction.EXIT_PER_STOP,
+        McqAction.TRIM_HALF,
+    ),
+}
+# The only biases whose request can breach the one mandate rule, the position cap.
+DECLINE_PARAMS: tuple[str, ...] = ("loss_aversion_lambda", "overconfidence_coverage")
+# Every bias MCQ line may use these slots; the required ones carry the number or level
+# the answer depends on, so a line without it asks an unanswerable question.
+MCQ_SLOTS: dict[str, frozenset[str]] = {
+    "loss_aversion_lambda": frozenset(
+        {"instrument", "level", "entry", "stop", "target", "horizon"}
+    ),
+    "disposition_ratio": frozenset({"instrument", "level", "entry", "target", "horizon"}),
+    "anchoring_rho": frozenset({"instrument", "level", "entry", "target", "round_level"}),
+    "exit_deficiency": frozenset({"instrument", "level", "entry", "stop"}),
+    "herding_weight": frozenset({"instrument", "level", "street", "own_side"}),
+    "extrapolation_theta": frozenset(
+        {"instrument", "level", "thesis_sd", "trailing_sd", "horizon"}
+    ),
+    "overconfidence_coverage": frozenset({"instrument", "level"}),
+    "conviction_size_miscalibration": frozenset({"instrument", "level", "rating"}),
+}
+MCQ_REQUIRED: dict[str, frozenset[str]] = {
+    "loss_aversion_lambda": frozenset({"horizon"}),
+    "disposition_ratio": frozenset({"horizon"}),
+    "anchoring_rho": frozenset({"round_level"}),
+    "exit_deficiency": frozenset({"stop"}),
+    "herding_weight": frozenset({"street", "own_side"}),
+    "extrapolation_theta": frozenset({"thesis_sd", "trailing_sd"}),
+    "overconfidence_coverage": frozenset(),
+    "conviction_size_miscalibration": frozenset({"rating"}),
+}
+_INSTRUMENT_LEVEL = frozenset({"instrument", "level"})
+
+
+def _check_probe_text(context: str, text: str) -> None:
+    """Check one probe text is non-blank and leaks no label, param name or em dash."""
+    if not text.strip():
+        raise CatalogueError(f"{context} has a blank text")
+    banned = banned_words_in(text)
+    if banned:
+        raise CatalogueError(f"{context} text '{text}' contains banned word '{banned[0]}'")
+    matched = matched_params(text, BIAS_PARAMS)
+    if matched:
+        raise CatalogueError(f"{context} text '{text}' names param '{matched[0]}'")
+    if "—" in text:
+        raise CatalogueError(f"{context} text '{text}' contains an em dash")
+
+
+def _check_probe_lines(
+    context: str,
+    stance_lines: StanceLines,
+    allowed: frozenset[str] = frozenset(),
+    required: frozenset[str] = frozenset(),
+) -> None:
+    _check_stance_lines(context, allowed, stance_lines, required)
+    for lines in stance_lines.values():
+        for line in lines:
+            _check_probe_text(context, line)
+
+
+def check_probes_catalogue(catalogue: Catalogue) -> None:
+    """Check the probe bank's coverage, slot usage and label-free wording.
+
+    A probe asks about behaviour, never the bias it tests, so the copilot cannot answer
+    from a trait name; a request must not name the preference value, or it gives the
+    answer away.
+    """
+    probes = catalogue.probes
+    for entry in catalogue.preferences:
+        if len(entry.values) not in (3, 4):
+            raise CatalogueError(
+                f"probes: preference '{entry.param}' has {len(entry.values)} values, need 3 or 4"
+            )
+    _check_key_set(
+        "probes: biases keys", set(probes.biases), set(BIAS_PARAMS), "the bias parameter set"
+    )
+    _check_key_set(
+        "probes: preferences keys",
+        set(probes.preferences),
+        set(PreferenceGroup),
+        "the preference group set",
+    )
+
+    for param, bank in probes.biases.items():
+        prefix = f"probes: bias '{param}'"
+        _check_probe_lines(f"{prefix} entry 'presence'", bank.presence)
+        _check_probe_lines(
+            f"{prefix} entry 'mcq'",
+            bank.mcq,
+            MCQ_SLOTS[param],
+            MCQ_REQUIRED[param],
+        )
+        _check_probe_lines(f"{prefix} entry 'in_situ'", bank.in_situ, _INSTRUMENT_LEVEL)
+        _check_probe_lines(f"{prefix} entry 'governance'", bank.governance)
+        if bool(bank.decline) != (param in DECLINE_PARAMS):
+            raise CatalogueError(
+                f"{prefix} entry 'decline' must be non-empty exactly for {list(DECLINE_PARAMS)}"
+            )
+        if bank.decline:
+            _check_probe_lines(
+                f"{prefix} entry 'decline'",
+                bank.decline,
+                frozenset({"instrument", "level", "size"}),
+                frozenset({"size"}),
+            )
+        _check_probe_text(f"{prefix} entry 'behaviour'", bank.behaviour)
+        expected = set(PROBE_ACTIONS[param])
+        missing = sorted(a.value for a in expected - set(bank.actions))
+        extra = sorted(a.value for a in set(bank.actions) - expected)
+        if missing:
+            raise CatalogueError(f"{prefix} entry 'actions' misses outcomes {missing}")
+        if extra:
+            raise CatalogueError(f"{prefix} entry 'actions' has extra outcomes {extra}")
+        texts = list(bank.actions.values())
+        if len(set(texts)) != len(texts):
+            raise CatalogueError(f"{prefix} entry 'actions' has duplicate texts")
+        for text in texts:
+            _check_probe_text(f"{prefix} entry 'actions'", text)
+
+    for group, pref_bank in probes.preferences.items():
+        prefix = f"probes: preference '{group.value}'"
+        _check_probe_lines(
+            f"{prefix} entry 'presence'",
+            pref_bank.presence,
+            frozenset({"value"}),
+            frozenset({"value"}),
+        )
+        _check_probe_lines(f"{prefix} entry 'mcq'", pref_bank.mcq)
+        _check_probe_lines(f"{prefix} entry 'in_situ'", pref_bank.in_situ, _INSTRUMENT_LEVEL)
+        _check_probe_lines(
+            f"{prefix} entry 'governance'",
+            pref_bank.governance,
+            frozenset({"old_value"}),
+            frozenset({"old_value"}),
+        )
+
+    _check_probe_lines("probes: entry 'routine'", probes.routine, _INSTRUMENT_LEVEL)
 
 
 def _param_forms(param: str) -> tuple[str, str]:

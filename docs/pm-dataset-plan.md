@@ -274,14 +274,14 @@ Generated from ground truth, never from dialogue. No probe asks for a numeric pa
 | Probe type | Form | Ground truth | Scoring |
 |---|---|---|---|
 | Trait presence | yes/no per trait. Positives are active traits; negatives are inactive biases, preferences the PM never expressed, and traits stated only by a colleague or client (the ownership case, tagged for reporting). Measures hubs grown without evidence | `active` at checkpoint, `ownership` on signals | deterministic: exact match on yes/no |
-| Trait MCQ | 4-way. For a bias: a situation from the PM's own universe, options are the actions the engine takes under the current value, the pre-update value, the stated-profile value, and a third party's value. For a preference: options are the current value, the pre-update value, a third party's value, and a value implied by one of the PM's biases | the action or value at the current trait value | deterministic: option letter |
+| Trait MCQ | 4-way. For a bias: a situation from the PM's own universe, options are the actions the engine takes under the current value, the pre-update value, and the stated-profile value, plus the engine's other actions. For a preference: options are the current value, the pre-update value, and a third party's value | the action or value at the current trait value | deterministic: option letter |
 | In-situ response | PM raises a live situation that touches one trait and asks the copilot to act or advise. Scored by the trait's `kind` and the rules: comply (answer honours a preference), counteract (advice accounts for a bias and names it), decline (the request breaches a `mandate`-sourced rule; refuses and gives the reason). Open-ended only, since that is the only form the deployed copilot produces | `kind`, `rules` | LLM judge against a rubric generated from the trait |
 | Routine question | PM asks a pure market or factual question (the silence set). Scored twice: format follows the PM's communication preferences, and no bias-derived content appears in the answer | communication preferences; silence set | format: deterministic (line count, first token, banned words); intrusion: LLM judge, any profile-derived content counts |
 | Governance | query whose premise presupposes the pre-update value of a bias or a preference; scored on premise resistance (Chao et al., 2026). Differs from the MCQ post-drift case in that the stale value is asserted by the user, not offered as an option | drift schedule | LLM judge: premise rejected or corrected |
 
 Every LLM-judged score (in-situ response, intrusion on routine questions, governance) is checked against a human-rated sample in the pilot, weighted toward the counteract and decline cells, and the judge-human agreement rate is reported next to the score. Every result is reported split by evidence type, derived at scoring time from the `mode` of the probe's supporting signals: explicit if all are `stated`, implicit if all are `revealed` or `contradiction`, mixed otherwise. That is a reporting slice, not a probe type and not a stored column.
 
-**How a trait MCQ is built.** The probe generator samples a situation that touches the trait (a position at a gain for disposition, a consensus flip for herding, a round level for anchoring), then runs the engine on that situation once per option source: current value, pre-update value, the value the stated profile implies, and a colleague's value. Each run yields an action, and the four actions are the options. If any two runs produce the same action the situation does not discriminate and is resampled. The copilot therefore never needs a number, only what this PM does now; the number is used once, offline, to manufacture options that are guaranteed to differ.
+**How a trait MCQ is built.** The probe generator builds a hypothetical situation that touches the trait (a position at a gain for disposition, a street view against the PM's own read for herding, a round level for anchoring), on the PM's universe at the checkpoint date. The action per option value is the engine's most likely outcome in closed form: the probability of the bias-typical outcome at or above 0.5 (for loss aversion, the most likely of add, hold and cut), over a horizon computed from the neutral and active medians for the two hazard biases. Sources that map to one action collapse, and free slots take the engine's other actions. An MCQ is emitted whenever the current action is defined. The copilot therefore never needs a number, only what this PM does now; the number is used once, offline, to manufacture options.
 
 The trait MCQ also gets an open-ended twin ("what will this PM do here?", judged against the same engine action), since Jiang et al. (2025a) found MCQ and generative forms disagree for some models. In-situ and routine-question probes are open-ended only. The harness passes the system under test nothing but the question, the options, and the context; `kind` is joined from `traits.jsonl` at scoring time.
 
@@ -344,9 +344,9 @@ Raw real-market data fetched by `fetch-market` (FRED yields, corporate bond yiel
 
 `sessions.jsonl` row: `session_id, pm_id, date, kind (decision | check_in | silence), trade_idea_ids, turns`. Seed comes from the PM, regime from the date joined to `market/regimes.jsonl`. Signals are not listed on the session; `signals.jsonl` carries `session_id`, so the join runs one way and the two files cannot disagree. `turns` is a list of `{role, text}` with `role` in `pm | advisor`; advisor turns are the ones the real copilot may later regenerate.
 
-`probes.jsonl` row: `probe_id, pm_id, checkpoint_date, checkpoint_label (week4 | week13 | pre_drift | post_drift | regime_shift | week52), probe_type, trait_id, form (mcq | open), question, option_a, option_b, option_c, option_d, answer, source_a, source_b, source_c, source_d, supporting_signal_ids, context_tokens`. Each `source_*` column names where that option came from: `current` for the correct option, and `pre_update`, `stated_profile`, `third_party`, `bias_implied`, or `none` for distractors.
+`probes.jsonl` row: `probe_id, pm_id, checkpoint_date, checkpoint_label (week4 | week13 | pre_drift | post_drift | regime_shift | week52), probe_type, trait_id, form (mcq | open), question, option_a, option_b, option_c, option_d, answer, source_a, source_b, source_c, source_d, supporting_signal_ids, context_chars`. Each `source_*` column names where that option came from: `current` for the correct option, and `pre_update`, `stated_profile`, `third_party`, or `none` for distractors.
 
-A probe's context is every session of that PM dated at or before `checkpoint_date`; it is derived by filter, not stored per probe, and so are the session count, the last session id, and the distance to the last supporting signal (for the positional, lost-in-the-middle analysis). `context_tokens` is the one derived column kept, because it depends on a tokenizer; the README names which.
+A probe's context is every session of that PM dated at or before `checkpoint_date`; it is derived by filter, not stored per probe, and so are the session count, the last session id, and the distance to the last supporting signal (for the positional, lost-in-the-middle analysis). `context_chars` is the one derived column, the length of the same rendering Gate 2 counts.
 
 Freeze the corpus before any memory system touches it. Record narrator and validator model versions in the README.
 
@@ -517,9 +517,9 @@ valence: confirm
 ownership: self
 ```
 
-`probes.jsonl` (post-drift trait MCQ; the correct option reflects the updated value 1.1, option B is the pre-update behaviour, option C is a colleague's stated rule)
+`probes.jsonl` (post-drift trait MCQ; the correct option reflects the updated value 1.1, option B is the pre-update behaviour, option C is one of the engine's other actions, with no source)
 ```yaml
-probe_id: p_pm017_031
+probe_id: p_pm017_0031
 pm_id: pm_017
 checkpoint_date: 2026-06-29
 checkpoint_label: post_drift
@@ -534,15 +534,15 @@ option_d: Add to the position because spread momentum is with it
 answer: A
 source_a: current
 source_b: pre_update
-source_c: third_party
+source_c: none
 source_d: none
 supporting_signal_ids: [s_0587, s_0601]
-context_tokens: 38400
+context_chars: 153600
 ```
 
-`probes.jsonl` (second row: routine question after the format preference was updated, open-ended, post-drift; format scored by the section 1.2 rubric against the current value, so a three-line answer with no named risk is wrong, and any bias-derived content is an intrusion)
+`probes.jsonl` (second row: routine question after the format preference was updated, open-ended, post-drift; the answer lists the PM's current communication values and an intrusion value, and a harness maps each listed value to a deterministic check on the reply, so a reply that is not one prose paragraph is wrong and any bias-derived content is an intrusion)
 ```yaml
-probe_id: p_pm017_044
+probe_id: p_pm017_0044
 pm_id: pm_017
 checkpoint_date: 2026-08-24
 checkpoint_label: post_drift
@@ -554,13 +554,13 @@ option_a:
 option_b:
 option_c:
 option_d:
-answer: "format rubric: number first; one short paragraph, not bullets; exactly one named risk; must not be three lines. intrusion: none"
+answer: "format: response_format=one prose paragraph; intrusion: none"
 source_a:
 source_b:
 source_c:
 source_d:
 supporting_signal_ids: [s_0388, s_0640]
-context_tokens: 52900
+context_chars: 211600
 ```
 
 `market/` (seed A, one row from each file)
@@ -719,9 +719,9 @@ erDiagram
         string question
         string options_a_to_d
         string answer
-        string sources_a_to_d "current, pre_update, stated_profile, third_party, bias_implied, none"
+        string sources_a_to_d "current, pre_update, stated_profile, third_party, none"
         list supporting_signal_ids FK
-        int context_tokens
+        int context_chars
     }
 ```
 
@@ -739,7 +739,7 @@ One Python package managed with uv, one CLI with one subcommand per stage, one `
 | 6 dialogue | `dialogue/` | yes | stage 5, market | `sessions.jsonl` |
 | 7 validate | `dialogue/validate/` | partly | stages 1-3, 5, 6, market | `validation` (hidden); rewrites `sessions.jsonl` and `dialogue_logs.jsonl` in place |
 | 8 gate2 | `gates/gate2/` | yes | stage 7 output, stages 1, 3, 5 | `gate2_traits`, `gate2_signals`, `gate2_pm`, `gate2_cells`; blocks on nine exact-test rows |
-| 9 probes | `probes/` | optional | stages 1, 3, 5, 6 | `probes.jsonl` |
+| 9 probes | `probes/` | no | stages 1, 3, 5, 6 | `probes.jsonl` |
 | 10 freeze | `freeze.py` | no | all | hashes, `README.md`, split manifest |
 
 **Stage 1, sample.** Pure numpy with a fixed seed. In the order of section 1.3: mandate, bias traits (copula draw, marginals, sparsity), preferences from the catalogue, rules from the rule catalogue with levels in the mandate's risk unit, self-description, drift dates within windows. The one text field, `self_description`, is composed from a template bank with two cells per bias param: phrasings that agree with the bias and phrasings that contradict it. For high disposition the agree cell holds "I take profits early" and the contradict cell "I let winners run". Stage 1 takes the PM's two strongest active biases and draws from the agree cells for a typical PM or the contradict cells for an anti-typical one, so the same ledger behaviour comes with an honest self-image in one case and a flattering one in the other. Rule and preference values are catalogue strings. No model runs in this stage. The template banks and the preference catalogue are drafted with a model once, edited by a human, and checked into the repo as YAML; they are authored artefacts, versioned with the code, never regenerated at run time. Every guessed parameter in sections 1.1 and 1.2 is a field on one config object, dumped into the README at freeze.
@@ -772,7 +772,7 @@ Verification is in two steps. First, opportunity counts: the engine writes its c
 
 **Stage 8, Gate 2.** For each PM, the strong model sees the full transcript, the mandate and the PM's rules, and is asked per bias parameter whether it is active and per candidate preference parameter whether it is held and at what value, citing the sessions each answer draws on. One row per bias parameter blocks: a one-sided Fisher exact test on the active-versus-inactive by present-versus-not table, pooled over every narrated PM and seed. Preferences block on one further row, pooled the same way: a Poisson-binomial test over every held PM-parameter pair, each against its own per-pair chance of one over that parameter's catalogue option count. Alpha is 0.05; a class under 2 PMs on either side is insufficient and is reported, never blocking. Every other row - by kind, by signal mode, by held-versus-not, by asset class, typicality and drift, and one per preference parameter - is report-only, alongside a second pass that classifies each stated signal as bias or preference from the session transcript, the mandate, the rules and the session's ledger rows. A failed row is acted on by editing the plan stage's mix weights and rerunning stages 5-8.
 
-**Stage 9, probes.** Deterministic for everything that carries an answer: situations sampled from the PM's universe, engine re-run per option source, answer key, distractor sources, checkpoints, context cutoff. A model may paraphrase question and option wording for variety, but the answer key is fixed before paraphrase and a round-trip check confirms the paraphrase still maps to the same option.
+**Stage 9, probes.** Deterministic throughout: checkpoints, context cutoff, hypothetical situations on the PM's universe, the engine's decision functions in closed form per option source, answer key and distractor sources. No model runs; question wording comes from an authored bank.
 
 **Stage 10, freeze.** Hash every file, write the README from the config object, model ids, validator pass rates, regeneration counts and dropped-session counts. Nothing downstream may write to `data/` after this.
 
@@ -788,7 +788,7 @@ Order of work follows the stage numbers, with the pilot run through stages 1-8 b
 - **Condition grammar limits.** Signposts must be machine-evaluable, so they are restricted to what the grammar can express. Qualitative signposts ("management credibility") cannot exist in this build. Accept the limit; note it in the README.
 - **Cost and resumability.** About 10,000 sessions at 2-8 turns with two agents, judges, and regeneration is on the order of 100,000 model calls. Without a cache, a manifest, and a budget cap a single failure mid-run is expensive. These three are part of stage 6, not later hardening.
 - **Non-reproducibility of model output.** Even at temperature 0 the same prompt does not always return the same text. Reproducibility is at the artefact level (frozen files and hashes), not the generation level. State this in the README; do not promise a rerun gives the same corpus.
-- **Where a model must not be used.** Idea generation, sizing, trigger evaluation, answer keys, distractor construction, checkpoint placement, and any score that has a deterministic form. The temptation is strongest for idea theses and probe wording; both stay template-first with optional paraphrase behind a round-trip check.
+- **Where a model must not be used.** Idea generation, sizing, trigger evaluation, answer keys, distractor construction, checkpoint placement, and any score that has a deterministic form. The temptation is strongest for idea theses and probe wording; both stay template-first.
 
 ## 10. Limitations
 
