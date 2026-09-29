@@ -6,6 +6,7 @@ A draft is a probe row without its id and context size; the stage numbers and wr
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 
 import numpy as np
 
@@ -143,6 +144,17 @@ def _presence(
     )
 
 
+def _old_value_ids(trait_id: str, signals: Sequence[Signal], changed: date) -> tuple[str, ...]:
+    """Own confirming signals of the old value: those before `changed`, plus the change itself.
+
+    The change is announced on the first own-confirm signal date on or after `changed`.
+    """
+    own = own_confirm_ids(trait_id, signals)
+    dates = {s.signal_id: s.date for s in signals if s.signal_id in own}
+    announced = min((d for d in dates.values() if d >= changed), default=None)
+    return tuple(i for i in own if dates[i] < changed or dates[i] == announced)
+
+
 def presence_drafts(
     pm: PmInputs,
     cp: Checkpoint,
@@ -191,7 +203,7 @@ def presence_drafts(
         update = latest_update(t.trait_id, pm.drift_events, cp.day)
         if update is not None:
             question = pref_question(t, entry, str(update.from_value))
-            ids = own_confirm_ids(t.trait_id, signals)
+            ids = _old_value_ids(t.trait_id, signals, update.date)
             drafts.append(_presence(t.trait_id, question, OptionSource.PRE_UPDATE, ids))
 
     seen: dict[str, set[str]] = {}

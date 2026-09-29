@@ -1,5 +1,6 @@
 import zlib
 from collections import Counter
+from datetime import timedelta
 
 import numpy as np
 import pytest
@@ -38,7 +39,7 @@ from pm_traitbench.probes.situations import MarketEnv
 from pm_traitbench.signals.assemble import session_id
 from pm_traitbench.tables.schema import ProbeRow, probe_id
 from tests.engine.fixtures import stage_config
-from tests.probes.fixtures import PM_A, drift, signal, third_party, trait
+from tests.probes.fixtures import PM_A, TIMELINE, drift, signal, third_party, trait
 
 CONFIG = stage_config()
 CATALOGUE = load_catalogue()
@@ -240,6 +241,27 @@ def test_updated_preference_gives_yes_on_new_and_no_on_old(corpus):
         (before, after),
     )
     assert old in no.question
+
+
+def test_old_value_row_cites_evidence_before_and_at_the_change_only(corpus):
+    entry = entry_of(PreferenceGroup.COMMUNICATION)
+    old, new = entry.values[0], entry.values[1]
+    tid = corpus.pref(entry.param, old)
+
+    def wednesday(week):
+        return TIMELINE.week_start(week) + timedelta(days=2)
+
+    corpus.drift_events.append(drift(PM_A, wednesday(20), DriftEventType.UPDATE, tid, old, new))
+    ids = {}
+    for week in (10, 21, 30):
+        day = wednesday(week)
+        s = signal(PM_A, session_id(PM_A, day, 0), day, tid, signal_id=f"sg_{week:03d}")
+        corpus.signals.append(s)
+        ids[week] = s.signal_id
+    cp = Checkpoint(CheckpointLabel.WEEK52, wednesday(35), 0, frozenset({CheckpointLabel.WEEK52}))
+    drafts, _ = presence(corpus, cp=cp)
+    (no,) = [d for d in of_trait(drafts, tid) if d.sources[0] == OptionSource.PRE_UPDATE]
+    assert no.supporting_signal_ids == (ids[10], ids[21])
 
 
 def test_third_party_preference_value_gives_no_and_skips_the_current_value(corpus):
