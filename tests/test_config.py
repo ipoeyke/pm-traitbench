@@ -28,7 +28,7 @@ from pm_traitbench.config import (
     load_config,
 )
 from pm_traitbench.distributions import BetaSpec, LogNormalSpec
-from pm_traitbench.enums import Effort, EventType, Regime, SessionKind
+from pm_traitbench.enums import Effort, EventType, Regime, SessionKind, Split
 from pm_traitbench.errors import ConfigError
 
 
@@ -165,6 +165,13 @@ def test_scalar_document_raises_config_error_naming_the_file(tmp_path: Path) -> 
 
 def test_load_config_none_equals_default() -> None:
     assert load_config(None) == Config()
+
+
+def test_pilot_config_differs_from_default_only_in_dialogue_filter() -> None:
+    path = Path(__file__).resolve().parents[1] / "configs" / "pilot.yaml"
+    config = load_config(path)
+    assert config.dialogue.pm_filter == PmFilter(split=Split.PILOT)
+    assert config.model_copy(update={"dialogue": DialogueConfig()}) == Config()
 
 
 def test_probability_outside_unit_interval_raises() -> None:

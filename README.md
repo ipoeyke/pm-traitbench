@@ -21,6 +21,16 @@ scripts/generate.sh --config configs/demo.yaml
 scripts/generate.sh --from dialogue --force   # resume at a stage, overwriting its tables
 ```
 
+`configs/pilot.yaml` keeps the default population but narrates only the pilot
+split, so the API-billed stages (`dialogue`, `validate`, `gate2`) run on pilot
+PMs alone. It changes no setting an earlier stage reads, so it can pick up
+tables built with the defaults:
+
+```sh
+scripts/generate.sh --config configs/pilot.yaml
+scripts/generate.sh --config configs/pilot.yaml --from plan   # after a default-config gate1
+```
+
 `--data-dir` sets the output directory; run `scripts/generate.sh --help` for
 every flag. The script stops at the first failing stage, including a failed gate. Each
 stage can also run on its own:
