@@ -261,7 +261,14 @@ def _run(
         )
 
     outcomes = asyncio.run(
-        run_bounded(frozen_units, validate, client, config.validation.max_concurrency)
+        run_bounded(
+            frozen_units,
+            validate,
+            client,
+            config.validation.max_concurrency,
+            label="validate",
+            unit="sessions",
+        )
     )
     raise_on_failure(
         tuple(unit.ctx.skeleton.session_id for unit in frozen_units),

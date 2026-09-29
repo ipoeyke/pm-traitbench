@@ -130,6 +130,10 @@ class CachedClient:
     def totals(self) -> UsageTotals:
         return self._totals
 
+    @property
+    def token_budget(self) -> int | None:
+        return self._token_budget
+
     def _path_for(self, key: str) -> Path:
         return self._cache_dir / key[:2] / f"{key}.json"
 

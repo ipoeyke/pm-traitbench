@@ -214,7 +214,14 @@ def _run(
         )
 
     results = asyncio.run(
-        run_bounded(combined_units, send_unit, client, config.gate2.max_concurrency)
+        run_bounded(
+            combined_units,
+            send_unit,
+            client,
+            config.gate2.max_concurrency,
+            label="gate2",
+            unit="units",
+        )
     )
     n_recovery = len(recovery_units)
     recovery_results = results[:n_recovery]

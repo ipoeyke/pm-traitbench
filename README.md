@@ -31,6 +31,9 @@ scripts/generate.sh --config configs/pilot.yaml
 scripts/generate.sh --config configs/pilot.yaml --from plan   # after a default-config gate1
 ```
 
+The API-billed stages print a progress line to stderr for each finished session
+or unit, with calls, fresh tokens spent and elapsed time.
+
 `--data-dir` sets the output directory; run `scripts/generate.sh --help` for
 every flag. The script stops at the first failing stage, including a failed gate. Each
 stage can also run on its own:
