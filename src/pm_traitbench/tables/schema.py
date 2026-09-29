@@ -1497,7 +1497,13 @@ class ProbeRow(BaseModel):
     supporting_signal_ids: tuple[str, ...] = Field(
         description="Signals in the corpus that evidence the answer, sorted and unique."
     )
-    context_chars: int = Field(ge=0, description="Characters of situation context in the question.")
+    context_chars: int = Field(
+        ge=0,
+        description=(
+            "Length of the rendered transcript of every surviving session at or before the "
+            "checkpoint, as Gate 2 counts it."
+        ),
+    )
 
     def _options(self) -> tuple[str | None, ...]:
         return (self.option_a, self.option_b, self.option_c, self.option_d)

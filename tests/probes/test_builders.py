@@ -9,6 +9,7 @@ from pm_traitbench.catalogues.models import PreferenceEntry, PreferenceGroup
 from pm_traitbench.config import BIAS_PARAMS
 from pm_traitbench.engine.adapters import adapter_for
 from pm_traitbench.enums import (
+    Action,
     AssetClass,
     CheckpointLabel,
     DriftEventType,
@@ -353,6 +354,22 @@ def test_updated_bias_mcq_carries_pre_update(corpus):
     (d,) = bias_mcqs(mcq(corpus)[0])
     assert Counter(d.sources)[OptionSource.PRE_UPDATE] == 1
     assert Counter(d.sources)[OptionSource.CURRENT] == 1
+
+
+def test_dormant_exit_deficiency_uses_neutral_value_for_no_add_answer(corpus):
+    no_add = corpus.rules[0].model_copy(
+        update={"rule_id": "r_90", "param": "no_add_before_trigger", "action": Action.NO_ADD}
+    )
+    corpus.rules = [*corpus.rules, no_add]
+    loss = corpus.bias(LOSS)
+    corpus.sig(loss)
+    exit_id = corpus.bias("exit_deficiency", value=0.9)
+    (d,) = bias_mcqs(mcq(corpus)[0])
+    actions = BANK.biases[LOSS].actions
+    assert d.options[LETTERS.index(d.answer)] == actions[0]
+    corpus.event(DriftEventType.DORMANT, exit_id, t=UPDATE_T)
+    (d,) = bias_mcqs(mcq(corpus)[0])
+    assert d.options[LETTERS.index(d.answer)] == actions[1]
 
 
 def test_each_mcq_is_followed_by_its_open_twin(corpus):

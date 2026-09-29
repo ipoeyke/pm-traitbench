@@ -20,14 +20,16 @@ from pm_traitbench.enums import AssetClass
 from pm_traitbench.errors import CatalogueError
 
 
-def _check_modified(tmp_path: Path, mutate: Callable[[dict[str, Any]], None]) -> None:
-    """Copy the shipped catalogue, mutate its probes YAML, then run the probe check."""
+def _check_modified(
+    tmp_path: Path, mutate: Callable[[dict[str, Any]], None], name: str = "probes.yaml"
+) -> None:
+    """Copy the shipped catalogue, mutate one YAML file, then run the probe check."""
     source = Path(str(resources.files("pm_traitbench.catalogues")))
     for path in source.glob("*.yaml"):
         shutil.copy(path, tmp_path / path.name)
-    data = yaml.safe_load((tmp_path / "probes.yaml").read_text())
+    data = yaml.safe_load((tmp_path / name).read_text())
     mutate(data)
-    (tmp_path / "probes.yaml").write_text(yaml.safe_dump(data, allow_unicode=True))
+    (tmp_path / name).write_text(yaml.safe_dump(data, allow_unicode=True))
     check_probes_catalogue(load_catalogue(tmp_path))
 
 
@@ -48,6 +50,16 @@ def test_pick_prefers_asset_class_lines_over_all() -> None:
 def test_missing_bias_key_raises(tmp_path: Path) -> None:
     with pytest.raises(CatalogueError, match="exit_deficiency"):
         _check_modified(tmp_path, lambda d: d["biases"].pop("exit_deficiency"))
+
+
+@pytest.mark.parametrize("n_values", [2, 5])
+def test_preference_with_off_range_value_count_raises(tmp_path: Path, n_values: int) -> None:
+    def mutate(d: dict[str, Any]) -> None:
+        entry = d["preferences"][0]
+        entry["values"] = [f"option {i}" for i in range(n_values)]
+
+    with pytest.raises(CatalogueError, match=r"need 3 or 4"):
+        _check_modified(tmp_path, mutate, "preferences.yaml")
 
 
 def test_preference_in_situ_value_slot_raises(tmp_path: Path) -> None:

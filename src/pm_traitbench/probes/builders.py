@@ -276,10 +276,16 @@ def mcq_drafts(
     drafts: list[Draft] = []
     skips: Skips = Counter()
     biases = dict(_biases(pm))
+    exit_trait = biases["exit_deficiency"]
+    # The engine reads the neutral value once the trait is dormant.
+    if bias_active_at(exit_trait, pm.drift_events, cp.day) or not exit_trait.active:
+        exit_deficiency = bias_value_at(exit_trait, pm.drift_events, cp.day)
+    else:
+        exit_deficiency = config.biases.params["exit_deficiency"].neutral.median_value()
     facts = PmFacts(
         no_add_rule=find_pm_rule(pm.pm_rules, "no_add_before_trigger") is not None,
         lambda_active=bias_active_at(biases["loss_aversion_lambda"], pm.drift_events, cp.day),
-        exit_deficiency=bias_value_at(biases["exit_deficiency"], pm.drift_events, cp.day),
+        exit_deficiency=exit_deficiency,
     )
     anti_typical = pm.persona.typicality == Typicality.ANTI_TYPICAL
 

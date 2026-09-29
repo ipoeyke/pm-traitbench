@@ -669,6 +669,11 @@ def check_probes_catalogue(catalogue: Catalogue) -> None:
     answer away.
     """
     probes = catalogue.probes
+    for entry in catalogue.preferences:
+        if len(entry.values) not in (3, 4):
+            raise CatalogueError(
+                f"probes: preference '{entry.param}' has {len(entry.values)} values, need 3 or 4"
+            )
     _check_key_set(
         "probes: biases keys", set(probes.biases), set(BIAS_PARAMS), "the bias parameter set"
     )
