@@ -160,6 +160,7 @@ def make_inputs(fixture_view):
             day_index=day_index,
             horizon_days=20,
             engine_counts={key: 0 for key in _OPPORTUNITY_KEYS},
+            no_add_before_trigger=False,
         )
         defaults.update(overrides)
         return PmInputs(**defaults)

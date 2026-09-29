@@ -867,6 +867,7 @@ def test_gate1_config_defaults() -> None:
         "conviction_size_miscalibration",
         "disposition_ratio",
         "anchoring_rho",
+        "loss_aversion_lambda",
     )
     assert config.report_only_params == ("herding_weight", "disposition_ratio", "anchoring_rho")
 

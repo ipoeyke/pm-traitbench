@@ -63,3 +63,29 @@ def test_no_rows_gives_none(make_inputs):
     result = loss_aversion.estimate(inputs, frozenset(inputs.view.dates), KNOBS)
     assert result.value is None
     assert result.n == 0
+
+
+def test_no_add_rule_excludes_untriggered_rows_from_the_estimate(make_inputs):
+    rows = (
+        position_day(trade_idea_id="ti_001", pnl_state=PnlState.LOSS, action=PositionAction.ADD),
+        position_day(trade_idea_id="ti_002", pnl_state=PnlState.LOSS, action=PositionAction.HOLD),
+        position_day(
+            trade_idea_id="ti_003",
+            pnl_state=PnlState.LOSS,
+            action=PositionAction.ADD,
+            triggers_fired=1,
+        ),
+        position_day(
+            trade_idea_id="ti_004",
+            pnl_state=PnlState.LOSS,
+            action=PositionAction.HOLD,
+            triggers_fired=1,
+        ),
+    )
+    inputs = make_inputs(position_days=rows, no_add_before_trigger=True)
+    days = frozenset(inputs.view.dates)
+    result = loss_aversion.estimate(inputs, days, KNOBS)
+    assert result.n == 2
+    assert result.value == 0.5
+    # The engine-matched opportunity set still counts every loss-side row.
+    assert len(loss_aversion.opportunities(inputs, days)) == 4

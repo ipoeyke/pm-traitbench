@@ -357,7 +357,7 @@ judge over the full horizon. One estimator per parameter:
 
 | Parameter | Statistic | Opportunity unit | Direction |
 | --- | --- | --- | --- |
-| `loss_aversion_lambda` | share of loss-side opportunities where the PM adds instead of cutting | loss-side, untriggered position-days | higher recovers more strongly |
+| `loss_aversion_lambda` | share of add-allowed loss-side opportunities where the PM adds | loss-side, untriggered position-days, less pre-trigger days under a `no_add_before_trigger` rule | higher recovers more strongly |
 | `disposition_ratio` | proportion-of-gains-realised over proportion-of-losses-realised (Odean 1998) | sell-day position-days | higher recovers more strongly |
 | `anchoring_rho` | share of anchor crossings the PM exits on that same day | anchor crossings before the last horizon date | higher recovers more strongly |
 | `extrapolation_theta` | share of entries chasing a trailing move already past one horizon-sd | entries | higher recovers more strongly |
@@ -405,10 +405,14 @@ count is limited by how many decisions one PM makes in a year, so a single
 PM's own estimate is too noisy to judge even though the pooled population
 carries a signal.
 `population_params` (default `herding_weight`, `conviction_size_miscalibration`,
-`disposition_ratio`, `anchoring_rho`) names the parameters judged this way;
-every other parameter keeps the per-PM rule. A cell with fewer than `min_pms`
-(default 5) neutral or active PMs is `insufficient` rather than judged,
-whichever rule applies. `floor_se` (default 2.0, standard deviations above or
+`disposition_ratio`, `anchoring_rho`, `loss_aversion_lambda`) names the
+parameters judged this way; every other parameter keeps the per-PM rule.
+Loss aversion is here because a PM holding `no_add_before_trigger` (about 60%
+of PMs) can add before a trigger fires only by breaching the rule, so those
+days carry no lambda signal and are left out of its estimate; most such PMs
+keep few add-allowed days, too few to order active PMs by lambda. A cell
+with fewer than `min_pms` (default 5) neutral or active PMs is `insufficient`
+rather than judged, whichever rule applies. `floor_se` (default 2.0, standard deviations above or
 below the neutral mean) and the `active_share_past_floor` it produces are
 reported for re-centring the marginals, not part of either pass rule.
 
@@ -426,7 +430,7 @@ report-only because the trend-built street view couples it to extrapolation,
 so a pass does not isolate it.
 
 Four parameters also carry an opportunity-count minimum (`n_min`): exit
-deficiency 7, loss aversion 16, herding 14, anchoring 29 - each the
+deficiency 7, loss aversion 20, herding 14, anchoring 29 - each the
 observation count at which a neutral PM's binomial standard error is a
 quarter of the gap between the neutral and active centres (herding's pair was
 derived for the conflict-follow rate, not the agreement statistic gate 1
@@ -435,8 +439,9 @@ estimates, and its minimum is applied to the latter as an approximation). The
 estimator's own opportunity count (`Estimate.n`) against `n_min`, rather than
 an engine counter. The anchoring opportunity is an anchor crossing; on the
 default run anchoring falls short of its minimum on every seed and asset
-class, and exit deficiency and herding both fall short on rates and credit
-for the real seed R1.
+class, exit deficiency and herding both fall short on rates and credit
+for the real seed R1, and loss aversion falls short on most seed and asset
+class cells, since its add-allowed days are few.
 
 Gate 1 writes two tables: `gate1_pm`, one row per PM/parameter/split keyed on
 `(pm_id, param, split)`, and `gate1_cells`, one row per seed group/asset
@@ -447,14 +452,18 @@ rank checks (`gap_ok`, `rank_ok`), and, for a population-tested parameter,
 the standard-error z (`pop_z`) and whether it cleared its minimum (`pop_ok`).
 
 Blocking rows are pooled over every direct asset class, synthetic seeds:
-exit deficiency, extrapolation, loss aversion and overconfidence use the
-per-PM rule; conviction uses the population rule. On the default root and on
-12 further root seeds (20260301-20260312) all five pass on every root, so
+exit deficiency, extrapolation and overconfidence use the per-PM rule;
+conviction and loss aversion use the population rule. On the default root
+and on 12 further root seeds (20260301-20260312) all five pass on every root, so
 Gate 1 exits 0. Over the 12 roots: per-PM neutral-sd-over-gap medians
 0.18-0.30 (max 0.41) and rank correlations 0.71-0.90; conviction population z
 median 7.7 (min 5.6). Those rank correlations are the combined (neutral and
 active together) measure; the default population's result under the
-active-only measure is not yet recorded.
+active-only measure is not yet recorded. Loss aversion moved to the
+population rule after its active-only rank correlation fell below 0.4 on 4
+of 9 roots (the default and 1-8); with the add-allowed estimator its pooled z
+is at least 4.9 on all 9 (active-only rank correlation median 0.53, below 0.4
+on 2).
 
 Report-only rows: herding passes pooled on 12 of 12 roots (z median 6.7, min
 5.5) but stays report-only for the coupling reason above; anchoring passes on
@@ -509,8 +518,8 @@ Limitations from the model:
 - Every split beyond `all` (by regime, and before/after a drift event) is
   report-only and never gates a verdict.
 - The population rule certifies a shift in the population, not that one PM's
-  value can be read back: conviction and the report-only parameters are
-  judged this way.
+  value can be read back: conviction, loss aversion and the report-only
+  parameters are judged this way.
 - A report-only parameter's cross-class row can fail or stay insufficient
   without blocking the pipeline, so a planted bias in `herding_weight`,
   `disposition_ratio` or `anchoring_rho` can ship unverified at the default

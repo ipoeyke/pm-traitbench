@@ -33,6 +33,7 @@ from pm_traitbench.tables.specs import (
     PERSONAS,
     POSITION_DAYS,
     RULE_EVENTS,
+    RULES,
     TRAITS,
 )
 from pm_traitbench.tables.store import DataStore
@@ -53,6 +54,7 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
     personas = store.read(PERSONAS)
     traits = store.read(TRAITS)
     drift_events = store.read(DRIFT_EVENTS)
+    rules = store.read(RULES)
     ideas = store.read(IDEAS)
     ledger = store.read(LEDGER)
     rule_events = store.read(RULE_EVENTS)
@@ -67,6 +69,7 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
         personas,
         traits,
         drift_events,
+        rules,
         ideas,
         ledger,
         rule_events,
@@ -112,7 +115,7 @@ GATE1_STAGE = Stage(
         "pool's cross-class row per non-report-only parameter, or on that row's absence"
     ),
     run=run,
-    reads=(PERSONAS, TRAITS, DRIFT_EVENTS, *ENGINE_TABLES, *MARKET_TABLES),
+    reads=(PERSONAS, TRAITS, RULES, DRIFT_EVENTS, *ENGINE_TABLES, *MARKET_TABLES),
     writes=GATE1_TABLES,
     verdict=raise_on_failures,
 )
