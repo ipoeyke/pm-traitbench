@@ -262,8 +262,8 @@ def parse_routine_answer(answer: str) -> tuple[tuple[str, str], ...]   # (param,
   - Units: `bp` present when `\bbps?\b` or `basis points?` matches (case-insensitive); percent present when `%` or `\bper ?cent\b` matches. `units_bp`: bp and not percent; `units_percent`: percent and not bp; `units_both`: both. Each returns `NOT_APPLICABLE` when neither is present, since a reply that quotes no move cannot break a rule about how moves are quoted.
   - Sentences: split on `(?<=[.!?])\s+`, count non-empty pieces; a decimal like `4.25` never splits because no whitespace follows the dot. `one_sentence`: count == 1; `two_to_three_sentences`: 2 <= count <= 3.
   - `short_page`: word count (`len(reply.split())`) <= `short_page_words`.
-  - `no_hedges`: none of `might`, `may`, `could`, `perhaps`, `possibly`, `likely`, `unlikely`, `uncertain` as whole words, case-insensitive.
-  - `confidence_level`: `\d+(\.\d+)?\s*%` anywhere, or `\b(high|medium|low)\s+(confidence|conviction)\b` case-insensitive.
+  - `no_hedges`: none of `might`, `could`, `perhaps`, `possibly`, `likely`, `unlikely`, `uncertain` as whole words case-insensitive, nor `may` as a whole lowercase word (capitalised "May" is usually the month).
+  - `confidence_level`: a confidence or conviction word adjacent to a level, case-insensitive: `\b(high|medium|low|\d+(\.\d+)?\s*%)\s+(confidence|conviction)\b` or `\b(confidence|conviction)(\s+level)?\s*(of|at|is|:)?\s*(high|medium|low|\d+(\.\d+)?\s*%)`. A bare percentage is a quoted move, not a confidence level.
 
 - [ ] **Step 1: Write failing tests** in `tests/harness/test_checks.py`
   - `test_packaged_map_covers_catalogue` - `load_check_map(catalogue)` (the `catalogue` fixture in `tests/conftest.py`) returns an entry for every value of the four params, and `("hedging_language", "flag uncertainty once, then commit to a view")` maps to `JUDGE`.

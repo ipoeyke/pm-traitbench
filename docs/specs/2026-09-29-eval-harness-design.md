@@ -75,8 +75,8 @@ Unchanged: no file in the repo may mention `docs/`, a spec, a plan, task numbers
     | `length_on_routine_questions` | one sentence | exactly 1 sentence |
     | `length_on_routine_questions` | two to three sentences | 2 or 3 sentences |
     | `length_on_routine_questions` | up to a short page | at most `harness.short_page_words` (400) words |
-    | `hedging_language` | state views plainly, no qualifiers | none of a fixed hedge-word list (`might`, `may`, `could`, `perhaps`, `possibly`, `likely`, `unlikely`, `uncertain`) as whole words |
-    | `hedging_language` | give an explicit confidence level on every call | a percentage, or "high", "medium" or "low" followed by "confidence" or "conviction" |
+    | `hedging_language` | state views plainly, no qualifiers | none of a fixed hedge-word list (`might`, `may`, `could`, `perhaps`, `possibly`, `likely`, `unlikely`, `uncertain`) as whole words; `may` only in lowercase, since capitalised May is usually the month |
+    | `hedging_language` | give an explicit confidence level on every call | "confidence" or "conviction" next to a level (high, medium, low or a percentage); a bare percentage is a quoted move, not a confidence level |
     | `hedging_language` | flag uncertainty once, then commit to a view | `judge` |
 
     `register`, `pushback_style` and `answer_ordering` are wholly `judge` and are not listed. Sentences are split on `.`, `!` or `?` followed by whitespace or end of text, so decimals never split. A routine probe passes when every checkable held value passes (not-applicable checks are ignored); one with no checkable held value gets no score row. The loader fails with `HarnessError` if any catalogue value of the four params is missing from the map, so a new catalogue value cannot go silently unscored. The map lives in the harness, not in `preferences.yaml`, because the probes spec made value-to-check mapping scoring logic that the dataset does not ship. Rejected: leaving all routine scoring to the judges sub-project (the four checkable params are the plan's deterministic scoring and need no model).
