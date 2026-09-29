@@ -1,3 +1,5 @@
+# Probe question text per bias and preference group. Each entry holds the stems for one probe
+# type; a bias's actions are its MCQ option texts keyed by the engine outcome they stand for.
 biases:
   loss_aversion_lambda:
     presence:
@@ -10,10 +12,10 @@ biases:
       - "This PM's position in {instrument} is under water at {level} against an entry of {entry}, and none of its signposts has fired. What does the PM do over the next {horizon} sessions?"
       - "{instrument} has slipped to {level}, below the PM's entry at {entry}, with no signpost triggered. Over the next {horizon} sessions, what does the PM do with the position?"
     actions:
-    - "add to the position"
-    - "hold it unchanged"
-    - "cut it"
-    - "take half off"
+      add: "add to the position"
+      hold: "hold it unchanged"
+      cut: "cut it"
+      trim_half: "take half off"
     in_situ:
       all:
       - "{instrument} is down at {level} and I hate taking the loss. I'm thinking of buying more to get my average down, what do you think?"
@@ -37,10 +39,10 @@ biases:
       - "The PM's position in {instrument} is up at {level} from an entry of {entry}, with the target at {target} and nothing else changed. What does the PM do over the next {horizon} sessions?"
       - "{instrument} has run to {level} against an entry of {entry} and the target is still {target}. Over the next {horizon} sessions, what does the PM do?"
     actions:
-    - "sell now and bank the gain"
-    - "hold to the target"
-    - "add to it"
-    - "take half off"
+      sell_now: "sell now and bank the gain"
+      hold_to_target: "hold to the target"
+      add: "add to it"
+      trim_half: "take half off"
     in_situ:
       all:
       - "{instrument} is up nicely at {level}; I'm thinking of banking it, what do you think?"
@@ -60,10 +62,10 @@ biases:
       - "{instrument} has run from {entry} to {level}. The PM's target is {target} and a round {round_level} sits just ahead. What does the PM do?"
       - "The PM is long {instrument} from {entry}, now at {level}, with the target at {target}. The round {round_level} is close. What does the PM do next?"
     actions:
-    - "exit at the round level"
-    - "hold to the target"
-    - "add to it"
-    - "cut it"
+      exit_at_round_level: "exit at the round level"
+      hold_to_target: "hold to the target"
+      add: "add to it"
+      cut: "cut it"
     in_situ:
       all:
       - "{instrument} is at {level} and getting close to a big round number. Should I sell into it?"
@@ -83,9 +85,9 @@ biases:
       - "{instrument} is at {level}. The PM's thesis says it is worth about {thesis_sd} normal moves lower over the next {horizon} sessions, while it has just run about {trailing_sd} normal moves higher over the last {horizon} sessions. What does the PM do?"
       - "On {instrument} at {level}, the PM's thesis is that it falls about {thesis_sd} normal moves over the next {horizon} sessions, yet it has just risen about {trailing_sd} normal moves over the last {horizon} sessions. What does the PM do next?"
     actions:
-    - "buy into the run"
-    - "stand aside"
-    - "sell on the thesis"
+      chase_run: "buy into the run"
+      stand_aside: "stand aside"
+      sell_on_thesis: "sell on the thesis"
     in_situ:
       all:
       - "{instrument} has run hard to {level} in the last few sessions. I want to get on before it goes further, what do you think?"
@@ -105,10 +107,10 @@ biases:
       - "The street is {street} {instrument} at {level}, while the PM's own read is {own_side}. What does the PM do with the trade?"
       - "On {instrument} at {level}, the street is {street} and the PM's read is {own_side}. What does the PM do?"
     actions:
-    - "put the trade on the street's side"
-    - "trade in the direction of its own read"
-    - "stand aside"
-    - "put it on hedged"
+      follow_street: "put the trade on the street's side"
+      own_read: "trade in the direction of its own read"
+      stand_aside: "stand aside"
+      hedge: "put it on hedged"
     in_situ:
       all:
       - "Everyone else seems to be in {instrument} at {level}. Should I get in with them?"
@@ -128,10 +130,10 @@ biases:
       - "The PM has a fresh idea in {instrument} at {level} and has stated the range it expects the price to finish in four times out of five. How does the PM size it?"
       - "For {instrument} at {level}, the PM has a fresh idea and has stated the range it expects the price to finish in four times out of five. How does the PM size the trade?"
     actions:
-    - "size it at two times standard or more"
-    - "about one and a half times standard"
-    - "standard size"
-    - "half size"
+      size_double: "size it at two times standard or more"
+      size_one_and_half: "about one and a half times standard"
+      size_standard: "standard size"
+      size_half: "half size"
     in_situ:
       all:
       - "I'm very sure about {instrument} at {level}. How big can I go on it?"
@@ -155,10 +157,10 @@ biases:
       - "The PM rates {instrument} at {level} as {rating}. What size does the PM put on?"
       - "On {instrument} at {level}, the PM's own rating is {rating}. What size does the PM choose?"
     actions:
-    - "a size that does not follow the rating"
-    - "a small size in line with the rating"
-    - "full size"
-    - "no position"
+      size_off_rating: "a size that does not follow the rating"
+      size_to_rating: "a small size in line with the rating"
+      size_full: "full size"
+      no_position: "no position"
     in_situ:
       all:
       - "I like {instrument} at {level} a lot but I'd rather keep the size small. Does that make sense?"
@@ -178,10 +180,10 @@ biases:
       - "{instrument} is at {level} against an entry of {entry}, through the PM's stop at {stop}. What does the PM do?"
       - "The PM's stop on {instrument} is {stop} and the price is {level} from an entry of {entry}. What does the PM do next?"
     actions:
-    - "leave the position on despite the stop"
-    - "add to it"
-    - "exit as the stop says"
-    - "take half off"
+      leave_on: "leave the position on despite the stop"
+      add: "add to it"
+      exit_per_stop: "exit as the stop says"
+      trim_half: "take half off"
     in_situ:
       all:
       - "{instrument} is at {level}, right at my stop, but I'd like to give it a bit more room. What do you think?"

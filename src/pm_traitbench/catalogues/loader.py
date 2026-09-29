@@ -30,7 +30,7 @@ from pm_traitbench.catalogues.models import (
     Voice,
 )
 from pm_traitbench.config import BIAS_PARAMS
-from pm_traitbench.enums import AssetClass, Kind, StanceEntry
+from pm_traitbench.enums import AssetClass, Kind, McqAction, StanceEntry
 from pm_traitbench.errors import CatalogueError
 
 _FILE_NAMES = (
@@ -593,16 +593,51 @@ def check_stances(catalogue: Catalogue) -> None:
             )
 
 
-# One text per engine outcome the MCQ distinguishes, in the order the probe stage indexes them.
-PROBE_ACTION_COUNTS: dict[str, int] = {
-    "loss_aversion_lambda": 4,
-    "disposition_ratio": 4,
-    "anchoring_rho": 4,
-    "extrapolation_theta": 3,
-    "herding_weight": 4,
-    "overconfidence_coverage": 4,
-    "conviction_size_miscalibration": 4,
-    "exit_deficiency": 4,
+# The engine outcomes each bias MCQ distinguishes; this order is the order options are
+# filled from when a source leaves a slot free.
+PROBE_ACTIONS: dict[str, tuple[McqAction, ...]] = {
+    "loss_aversion_lambda": (McqAction.ADD, McqAction.HOLD, McqAction.CUT, McqAction.TRIM_HALF),
+    "disposition_ratio": (
+        McqAction.SELL_NOW,
+        McqAction.HOLD_TO_TARGET,
+        McqAction.ADD,
+        McqAction.TRIM_HALF,
+    ),
+    "anchoring_rho": (
+        McqAction.EXIT_AT_ROUND_LEVEL,
+        McqAction.HOLD_TO_TARGET,
+        McqAction.ADD,
+        McqAction.CUT,
+    ),
+    "extrapolation_theta": (
+        McqAction.CHASE_RUN,
+        McqAction.STAND_ASIDE,
+        McqAction.SELL_ON_THESIS,
+    ),
+    "herding_weight": (
+        McqAction.FOLLOW_STREET,
+        McqAction.OWN_READ,
+        McqAction.STAND_ASIDE,
+        McqAction.HEDGE,
+    ),
+    "overconfidence_coverage": (
+        McqAction.SIZE_DOUBLE,
+        McqAction.SIZE_ONE_AND_HALF,
+        McqAction.SIZE_STANDARD,
+        McqAction.SIZE_HALF,
+    ),
+    "conviction_size_miscalibration": (
+        McqAction.SIZE_OFF_RATING,
+        McqAction.SIZE_TO_RATING,
+        McqAction.SIZE_FULL,
+        McqAction.NO_POSITION,
+    ),
+    "exit_deficiency": (
+        McqAction.LEAVE_ON,
+        McqAction.ADD,
+        McqAction.EXIT_PER_STOP,
+        McqAction.TRIM_HALF,
+    ),
 }
 # The only biases whose request can breach the one mandate rule, the position cap.
 DECLINE_PARAMS: tuple[str, ...] = ("loss_aversion_lambda", "overconfidence_coverage")
@@ -707,15 +742,18 @@ def check_probes_catalogue(catalogue: Catalogue) -> None:
                 frozenset({"size"}),
             )
         _check_probe_text(f"{prefix} entry 'behaviour'", bank.behaviour)
-        expected = PROBE_ACTION_COUNTS[param]
-        if len(bank.actions) != expected:
-            raise CatalogueError(
-                f"{prefix} entry 'actions' has {len(bank.actions)} entries, need {expected}"
-            )
-        if len(set(bank.actions)) != len(bank.actions):
-            raise CatalogueError(f"{prefix} entry 'actions' has duplicate entries")
-        for action in bank.actions:
-            _check_probe_text(f"{prefix} entry 'actions'", action)
+        expected = set(PROBE_ACTIONS[param])
+        missing = sorted(a.value for a in expected - set(bank.actions))
+        extra = sorted(a.value for a in set(bank.actions) - expected)
+        if missing:
+            raise CatalogueError(f"{prefix} entry 'actions' misses outcomes {missing}")
+        if extra:
+            raise CatalogueError(f"{prefix} entry 'actions' has extra outcomes {extra}")
+        texts = list(bank.actions.values())
+        if len(set(texts)) != len(texts):
+            raise CatalogueError(f"{prefix} entry 'actions' has duplicate texts")
+        for text in texts:
+            _check_probe_text(f"{prefix} entry 'actions'", text)
 
     for group, pref_bank in probes.preferences.items():
         prefix = f"probes: preference '{group.value}'"

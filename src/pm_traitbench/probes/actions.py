@@ -16,12 +16,19 @@ from pm_traitbench.engine.constants import (
     LOSS_CUT_HAZARD,
 )
 from pm_traitbench.engine.params import EffectiveParams
-from pm_traitbench.enums import OptionSource, PnlState
+from pm_traitbench.enums import McqAction, OptionSource, PnlState
 
 HAZARD_PARAMS: tuple[str, ...] = ("loss_aversion_lambda", "disposition_ratio")
 _VALUE_PARAMS = frozenset({"anchoring_rho", "exit_deficiency", "herding_weight"})
-_THRESHOLD_PARAMS = frozenset({"anchoring_rho", "herding_weight", "conviction_size_miscalibration"})
 LETTERS = "ABCD"
+# Loss-side outcomes in `loss_side_outcomes` order, which is also the argmax tie order.
+_LOSS_SIDE = (McqAction.ADD, McqAction.HOLD, McqAction.CUT)
+# Bias-typical and default outcome per threshold param.
+_THRESHOLD_ACTIONS: dict[str, tuple[McqAction, McqAction]] = {
+    "anchoring_rho": (McqAction.EXIT_AT_ROUND_LEVEL, McqAction.HOLD_TO_TARGET),
+    "herding_weight": (McqAction.FOLLOW_STREET, McqAction.OWN_READ),
+    "conviction_size_miscalibration": (McqAction.SIZE_OFF_RATING, McqAction.SIZE_TO_RATING),
+}
 
 
 @dataclass(frozen=True)
@@ -102,17 +109,17 @@ def horizons(config: Config) -> dict[str, int | None]:
     return result
 
 
-def action_index(
+def action_for(
     param: str,
     value: float,
     facts: PmFacts,
     horizons: Mapping[str, int | None],
     config: Config,
-) -> int:
-    """Index into the bank's actions of the engine's most likely action at `value`.
+) -> McqAction:
+    """The engine's most likely outcome at `value`.
 
-    Loss aversion takes the most likely of add (0), hold (1) and cut (2) over its horizon, ties
-    going to the lower index; disposition is binary on the sell probability.
+    Loss aversion takes the most likely of add, hold and cut over its horizon, ties going in
+    that order; disposition is binary on the sell probability.
     """
     if param in HAZARD_PARAMS:
         horizon = horizons[param]
@@ -120,15 +127,16 @@ def action_index(
             raise ValueError(f"no horizon separates active from neutral for '{param}'")
         if param == "loss_aversion_lambda":
             outcomes = loss_side_outcomes(value, facts, horizon)
-            return outcomes.index(max(outcomes))
+            return _LOSS_SIDE[outcomes.index(max(outcomes))]
         p = typical_probability(param, value, facts, horizon, config)
-        return 0 if p >= 0.5 else 1
-    if param in _THRESHOLD_PARAMS:
-        return 0 if typical_probability(param, value, facts, None, config) >= 0.5 else 1
+        return McqAction.SELL_NOW if p >= 0.5 else McqAction.HOLD_TO_TARGET
+    if param in _THRESHOLD_ACTIONS:
+        typical, default = _THRESHOLD_ACTIONS[param]
+        return typical if typical_probability(param, value, facts, None, config) >= 0.5 else default
     if param == "exit_deficiency":
         if value >= 0.5:
-            return 1 if facts.lambda_active else 0
-        return 2
+            return McqAction.ADD if facts.lambda_active else McqAction.LEAVE_ON
+        return McqAction.EXIT_PER_STOP
     if param == "extrapolation_theta":
         f = blend(
             config.probes.extrapolation_thesis_sd,
@@ -136,14 +144,14 @@ def action_index(
             _params(param, value),
         )
         if f >= ENTRY_THRESHOLD:
-            return 0
-        return 2 if f <= -ENTRY_THRESHOLD else 1
+            return McqAction.CHASE_RUN
+        return McqAction.SELL_ON_THESIS if f <= -ENTRY_THRESHOLD else McqAction.STAND_ASIDE
     if param == "overconfidence_coverage":
         factor = size_factor(_params(param, value))[0]
         lo, hi = config.probes.overconfidence_size_edges
         if factor >= hi:
-            return 0
-        return 1 if factor >= lo else 2
+            return McqAction.SIZE_DOUBLE
+        return McqAction.SIZE_ONE_AND_HALF if factor >= lo else McqAction.SIZE_STANDARD
     raise ValueError(f"unknown bias parameter '{param}'")
 
 
@@ -169,20 +177,25 @@ def _shuffled(
 
 
 def assemble_action_options(
-    actions: Sequence[str],
-    sourced: Sequence[tuple[OptionSource, int]],
+    outcomes: Sequence[McqAction],
+    texts: Mapping[McqAction, str],
+    sourced: Sequence[tuple[OptionSource, McqAction]],
     rng: np.random.Generator,
 ) -> OptionSet:
-    """Collapse sources sharing an action, fill unused actions with NONE, then shuffle."""
+    """Collapse sources sharing an outcome, fill unused outcomes with NONE, then shuffle.
+
+    Options keep `outcomes` order before the shuffle, so free slots fill in that order.
+    """
     if not sourced or sourced[0][0] != OptionSource.CURRENT:
         raise ValueError("the first sourced entry must be CURRENT")
-    by_index: dict[int, OptionSource] = {}
-    for source, idx in sourced:
-        by_index.setdefault(idx, source)
-    for idx in range(len(actions)):
-        by_index.setdefault(idx, OptionSource.NONE)
-    ordered = sorted(by_index)
-    return _shuffled([actions[i] for i in ordered], [by_index[i] for i in ordered], rng)
+    by_outcome: dict[McqAction, OptionSource] = {}
+    for source, outcome in sourced:
+        if outcome not in outcomes:
+            raise ValueError(f"outcome '{outcome}' is not among the options")
+        by_outcome.setdefault(outcome, source)
+    for outcome in outcomes:
+        by_outcome.setdefault(outcome, OptionSource.NONE)
+    return _shuffled([texts[o] for o in outcomes], [by_outcome[o] for o in outcomes], rng)
 
 
 def assemble_value_options(

@@ -9,7 +9,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pm_traitbench.enums import Action, AssetClass, Expression, Op, StanceEntry
+from pm_traitbench.enums import Action, AssetClass, Expression, McqAction, Op, StanceEntry
 from pm_traitbench.errors import CatalogueError, PlanError
 
 # The (asset class, expression) pairs an adapter can build an idea in; used to
@@ -281,20 +281,24 @@ class Stances(BaseModel):
 
 
 class BiasProbeLines(BaseModel):
-    """One bias parameter's probe question text, by the kind of question.
-
-    ``actions`` are the multiple-choice options in the order the probe stage indexes
-    them; ``decline`` is empty for biases whose request cannot breach the mandate.
-    """
+    """One bias parameter's probe question text, by the kind of question."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # Yes/no question describing the behaviour without naming it.
     presence: StanceLines
+    # Verb phrase completing "the PM's tendency to ...", used in the in-situ counteract answer.
     behaviour: str
+    # MCQ stem: a market situation with slots, ending in what the PM does next.
     mcq: StanceLines
-    actions: tuple[str, ...]
+    # Option text per engine outcome the MCQ distinguishes.
+    actions: dict[McqAction, str]
+    # A live request the bias bears on.
     in_situ: StanceLines
+    # A request for `{size}` of book above the mandate position cap; only for biases that can
+    # breach it.
     decline: StanceLines = {}
+    # A request that presupposes the stale state.
     governance: StanceLines
 
 
@@ -303,9 +307,13 @@ class PreferenceProbeLines(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # Yes/no question asking whether `{value}` is the PM's standing preference.
     presence: StanceLines
+    # MCQ stem: a slotless question whose options are the catalogue values.
     mcq: StanceLines
+    # A live request the preference bears on, never stating a preference value.
     in_situ: StanceLines
+    # A request that presupposes the stale state, the old value in `{old_value}`.
     governance: StanceLines
 
 

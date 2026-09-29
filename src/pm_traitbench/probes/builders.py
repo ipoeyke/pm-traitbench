@@ -10,7 +10,7 @@ from datetime import date
 
 import numpy as np
 
-from pm_traitbench.catalogues.loader import DECLINE_PARAMS, render_stance
+from pm_traitbench.catalogues.loader import DECLINE_PARAMS, PROBE_ACTIONS, render_stance
 from pm_traitbench.catalogues.models import (
     PreferenceEntry,
     PreferenceGroup,
@@ -23,6 +23,7 @@ from pm_traitbench.enums import (
     CheckpointLabel,
     DriftEventType,
     Kind,
+    McqAction,
     OptionSource,
     ProbeForm,
     ProbeSkip,
@@ -35,7 +36,7 @@ from pm_traitbench.probes.actions import (
     LETTERS,
     OptionSet,
     PmFacts,
-    action_index,
+    action_for,
     assemble_action_options,
     assemble_value_options,
 )
@@ -319,19 +320,19 @@ def mcq_drafts(
             skips[ProbeSkip.NO_SITUATION] += 1
             continue
 
-        def index(value: float, param: str = param) -> int:
-            return action_index(param, value, facts, horizons, config)
+        def outcome(value: float, param: str = param) -> McqAction:
+            return action_for(param, value, facts, horizons, config)
 
         lines = bank.biases[param]
-        sourced = [(OptionSource.CURRENT, index(bias_value_at(trait, pm.drift_events, cp.day)))]
+        sourced = [(OptionSource.CURRENT, outcome(bias_value_at(trait, pm.drift_events, cp.day)))]
         update = latest_update(trait.trait_id, pm.drift_events, cp.day)
         if update is not None:
-            sourced.append((OptionSource.PRE_UPDATE, index(float(update.from_value))))
+            sourced.append((OptionSource.PRE_UPDATE, outcome(float(update.from_value))))
         if anti_typical and param in pm.profile_params:
             neutral = config.biases.params[param].neutral.median_value()
-            sourced.append((OptionSource.STATED_PROFILE, index(neutral)))
+            sourced.append((OptionSource.STATED_PROFILE, outcome(neutral)))
         options = assemble_action_options(
-            lines.actions, sourced, rng_for("options", trait.trait_id)
+            PROBE_ACTIONS[param], lines.actions, sourced, rng_for("options", trait.trait_id)
         )
         question = _line(
             pm, rng_for, lines.mcq, ProbeType.TRAIT_MCQ, trait.trait_id, situation.slots

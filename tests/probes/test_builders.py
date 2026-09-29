@@ -15,6 +15,7 @@ from pm_traitbench.enums import (
     CheckpointLabel,
     DriftEventType,
     Kind,
+    McqAction,
     OptionSource,
     ProbeForm,
     ProbeSkip,
@@ -388,10 +389,10 @@ def test_dormant_exit_deficiency_uses_neutral_value_for_no_add_answer(corpus):
     exit_id = corpus.bias("exit_deficiency", value=0.9)
     (d,) = bias_mcqs(mcq(corpus)[0])
     actions = BANK.biases[LOSS].actions
-    assert d.options[LETTERS.index(d.answer)] == actions[0]
+    assert d.options[LETTERS.index(d.answer)] == actions[McqAction.ADD]
     corpus.event(DriftEventType.DORMANT, exit_id, t=UPDATE_T)
     (d,) = bias_mcqs(mcq(corpus)[0])
-    assert d.options[LETTERS.index(d.answer)] == actions[2]
+    assert d.options[LETTERS.index(d.answer)] == actions[McqAction.CUT]
 
 
 def test_exit_deficiency_add_reads_the_planted_loss_aversion_flag(corpus):
@@ -401,7 +402,7 @@ def test_exit_deficiency_add_reads_the_planted_loss_aversion_flag(corpus):
     corpus.event(DriftEventType.DORMANT, loss, t=UPDATE_T)
     (d,) = [m for m in bias_mcqs(mcq(corpus)[0]) if m.trait_id == exit_id]
     actions = BANK.biases["exit_deficiency"].actions
-    assert d.options[LETTERS.index(d.answer)] == actions[1]
+    assert d.options[LETTERS.index(d.answer)] == actions[McqAction.ADD]
 
 
 def test_each_mcq_is_followed_by_its_open_twin(corpus):

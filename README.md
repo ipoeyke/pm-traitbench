@@ -724,7 +724,7 @@ question states H. When the window is empty the bias emits no MCQ.
 
 **Collapse.** Sources that map to the same action collapse into one option,
 keeping the first of `current`, `pre_update`, `stated_profile`. Free slots
-take the engine's other actions from the bank in order, and options are
+take the bias's other engine outcomes in its fixed outcome order, and options are
 shuffled with the PM's keyed stream. An MCQ is emitted whenever the current
 action is defined. A PM holding the `no_add_before_trigger` rule can add
 before a trigger only after a breach drawn at its exit deficiency, so with a
@@ -733,10 +733,12 @@ when loss aversion is active.
 
 **Bank.** Question wording lives in the authored bank `probes.yaml`, loaded
 and checked with the other catalogues: per bias, presence, MCQ,
-in-situ, decline, governance and action lines; per preference group,
-presence, MCQ, in-situ and governance lines; routine lines per asset
-class. The loader checks slots and rejects a bias line that names the trait,
-since the question must not leak the label the corpus hides.
+in-situ, decline and governance lines, and MCQ option texts keyed by the
+engine outcome each stands for; per preference group, presence, MCQ, in-situ
+and governance lines; routine lines per asset class. The loader checks that
+each bias's option texts cover exactly its outcomes, checks slots, and rejects
+a bias line that names the trait, since the question must not leak the label
+the corpus hides.
 
 **Config.** `probes.post_drift_weeks` (4, design), `presence_never_held` (3,
 guess), `routine_per_checkpoint` (2, guess), `disposition_progress` (0.5,

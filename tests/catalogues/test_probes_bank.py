@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from pm_traitbench.catalogues.loader import (
-    PROBE_ACTION_COUNTS,
+    PROBE_ACTIONS,
     check_probes_catalogue,
     load_catalogue,
 )
@@ -37,8 +37,8 @@ def test_shipped_bank_passes_check() -> None:
     check_probes_catalogue(load_catalogue())
 
 
-def test_action_counts_cover_every_bias() -> None:
-    assert set(PROBE_ACTION_COUNTS) == set(BIAS_PARAMS)
+def test_probe_actions_cover_every_bias() -> None:
+    assert set(PROBE_ACTIONS) == set(BIAS_PARAMS)
 
 
 def test_pick_prefers_asset_class_lines_over_all() -> None:
@@ -88,11 +88,19 @@ def test_banned_word_in_presence_raises(tmp_path: Path) -> None:
         _check_modified(tmp_path, mutate)
 
 
-def test_wrong_action_count_raises(tmp_path: Path) -> None:
+def test_missing_action_outcome_raises(tmp_path: Path) -> None:
     def mutate(d: dict[str, Any]) -> None:
-        d["biases"]["loss_aversion_lambda"]["actions"].pop()
+        d["biases"]["loss_aversion_lambda"]["actions"].pop("trim_half")
 
-    with pytest.raises(CatalogueError, match="loss_aversion_lambda.*actions"):
+    with pytest.raises(CatalogueError, match="loss_aversion_lambda.*actions.*misses.*trim_half"):
+        _check_modified(tmp_path, mutate)
+
+
+def test_extra_action_outcome_raises(tmp_path: Path) -> None:
+    def mutate(d: dict[str, Any]) -> None:
+        d["biases"]["loss_aversion_lambda"]["actions"]["hedge"] = "put it on hedged"
+
+    with pytest.raises(CatalogueError, match="loss_aversion_lambda.*actions.*extra.*hedge"):
         _check_modified(tmp_path, mutate)
 
 
