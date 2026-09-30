@@ -30,6 +30,7 @@ _DIALOGUE_ROOT = _SRC_ROOT / "pm_traitbench" / "dialogue"
 _PIPELINE_PATH = _SRC_ROOT / "pm_traitbench" / "pipeline.py"
 _GATE2_ROOT = _SRC_ROOT / "pm_traitbench" / "gates" / "gate2"
 _BASELINES_PATH = _SRC_ROOT / "pm_traitbench" / "harness" / "baselines.py"
+_JUDGE_PATH = _SRC_ROOT / "pm_traitbench" / "harness" / "judge.py"
 
 
 def _package_for(path: Path) -> str:
@@ -111,8 +112,12 @@ def _violations_under(root: Path, forbidden: tuple[str, ...]) -> list[str]:
 def test_dialogue_package_is_imported_only_by_pipeline_gate2_plumbing_and_baselines():
     violations = []
     for path in sorted(_SRC_ROOT.rglob("*.py")):
-        if _DIALOGUE_ROOT in path.parents or path in (_PIPELINE_PATH, _BASELINES_PATH):
-            continue  # dialogue/ imports itself; pipeline.py and the model-backed baselines use it
+        if _DIALOGUE_ROOT in path.parents or path in (
+            _PIPELINE_PATH,
+            _BASELINES_PATH,
+            _JUDGE_PATH,
+        ):
+            continue  # dialogue/ imports itself; pipeline.py and the model-backed harness use it
         in_gate2 = _GATE2_ROOT in path.parents
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         package = _package_for(path)

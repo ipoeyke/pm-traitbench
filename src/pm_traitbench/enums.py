@@ -461,6 +461,18 @@ class Judge(StrEnum):
     FORMAT = "judge_format"
 
 
+class InSituCase(StrEnum):
+    COMPLY = "comply"
+    COUNTERACT = "counteract"
+    DECLINE = "decline"
+
+
+class GovernanceKind(StrEnum):
+    PREFERENCE = "preference"
+    UPDATE = "update"
+    DORMANT = "dormant"
+
+
 class FormatOutcome(StrEnum):
     PASS = "pass"
     FAIL = "fail"
