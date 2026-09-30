@@ -942,6 +942,20 @@ the open items with no judgement yet. After a full `eval judge` only
 `routine_question/intrusion` can be non-zero, equal to the routine questions
 whose PM had no active bias at the checkpoint.
 
+**Human sample.** After `eval judge`, `uv run pm-traitbench eval sample
+--run-name mine --data-dir data` writes `human_sample.csv` to the run
+directory, `judge.sample_size` rows drawn with a seed. The judges share the
+rows evenly and in-situ rows split 40/40/20 over counteract, decline and
+comply; a judge or case with too few items hands its share to the next.
+Replies that were empty are left out. The columns are `sample_id`, `judge`,
+`probe_id`, `pm_id`, `case`, `question`, `response`, `brief`, `human_correct`
+and `human_note`. Verdicts and rationales are withheld so raters stay blind.
+Fill `human_correct` with `yes` or `no` (blank means unrated) and rerun `eval
+score`: `summary.json` then holds `agreement` per judge with `n`, the
+agreement rate and Cohen's kappa. Kappa is reported because intrusion and
+governance verdicts are mostly one-sided, which makes raw agreement look high;
+it is null when chance agreement is total.
+
 **Config.** `harness.model` (the Gate 2 model, design) and `harness.effort`
 (high, design) set the baselines' model; `max_answer_tokens` (8000, design)
 bounds a reply including thinking. A baseline reply still unparsable after

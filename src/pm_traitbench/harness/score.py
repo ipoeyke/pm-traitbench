@@ -35,6 +35,7 @@ from pm_traitbench.harness.judge import (
     split_detail,
 )
 from pm_traitbench.harness.runner import check_scorable, probes_sha256, run_dir
+from pm_traitbench.harness.sample import SAMPLE_FILE, agreement, read_ratings
 from pm_traitbench.tables.schema import DriftEvent, JudgementRow, ProbeRow, ScoreRow, Trait
 from pm_traitbench.tables.specs import (
     DRIFT_EVENTS,
@@ -355,6 +356,10 @@ def score_run(config: Config, store: DataStore, run_name: str) -> dict[str, Any]
         traits=traits,
         drift_events=store.read(DRIFT_EVENTS),
         bank=load_catalogue().probes,
+    )
+    sample_path = rd / SAMPLE_FILE
+    summary["agreement"] = (
+        agreement(read_ratings(sample_path), judgements) if sample_path.exists() else {}
     )
     run_store.write(SCORES, scores)
     (rd / "summary.json").write_text(

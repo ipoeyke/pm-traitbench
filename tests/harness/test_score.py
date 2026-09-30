@@ -1,5 +1,6 @@
 """Tests for option-letter and format scoring, the summary and the score_run guards."""
 
+import csv
 import json
 from datetime import date
 
@@ -19,6 +20,7 @@ from pm_traitbench.errors import HarnessError
 from pm_traitbench.harness.checks import load_check_map
 from pm_traitbench.harness.judge import split_detail
 from pm_traitbench.harness.runner import RUN_METADATA, probes_sha256, run_dir, run_sut
+from pm_traitbench.harness.sample import SAMPLE_COLUMNS, SAMPLE_FILE
 from pm_traitbench.harness.score import (
     SCORE_METADATA,
     awaiting_counts,
@@ -521,3 +523,45 @@ def test_score_run_without_judgements_reports_awaiting(tmp_path) -> None:
 
     assert summary["awaiting_judge"]["trait_mcq/open"] == 1
     assert summary["awaiting_judge"]["routine_question/intrusion"] == 2
+
+
+def test_score_run_reports_agreement(tmp_path) -> None:
+    config = stage_config()
+    store = DataStore(tmp_path, config.output)
+    probes = _judged_corpus()
+    store.write(TRAITS, traits_for("pm_001"))
+    store.write(DRIFT_EVENTS, [])
+    store.write(SIGNALS, [])
+    run_store = write_run(tmp_path, config, store, probes, {p.probe_id: "B" for p in probes})
+    run_store.write(JUDGEMENTS, _full_judgements(probes))
+    situ = next(p for p in probes if p.probe_type == ProbeType.IN_SITU)
+    base = dict.fromkeys(SAMPLE_COLUMNS, "")
+    rated = base | {
+        "sample_id": "s_0001",
+        "judge": "judge_in_situ",
+        "probe_id": situ.probe_id,
+        "pm_id": situ.pm_id,
+        "human_correct": "yes",
+    }
+    unrated = base | {"sample_id": "s_0002", "judge": "judge_in_situ"}
+    with (run_dir(tmp_path, "r1") / SAMPLE_FILE).open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=SAMPLE_COLUMNS)
+        writer.writeheader()
+        writer.writerows([rated, unrated])
+
+    summary = score_run(config, store, "r1")
+
+    assert summary["agreement"]["judge_in_situ"]["n"] == 1
+    assert summary["agreement"]["judge_in_situ"]["agreement"] == 1.0
+
+
+def test_score_run_without_sample_has_empty_agreement(tmp_path) -> None:
+    config = stage_config()
+    store = DataStore(tmp_path, config.output)
+    probes = _judged_corpus()
+    store.write(TRAITS, traits_for("pm_001"))
+    store.write(DRIFT_EVENTS, [])
+    store.write(SIGNALS, [])
+    write_run(tmp_path, config, store, probes, {p.probe_id: "B" for p in probes})
+
+    assert score_run(config, store, "r1")["agreement"] == {}

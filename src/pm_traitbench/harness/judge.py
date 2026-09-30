@@ -530,6 +530,19 @@ async def _judge_items(
     return list(results)
 
 
+def load_judge_inputs(store: DataStore, run_store: DataStore) -> JudgeInputs:
+    """The inputs item selection reads, from the corpus and a run's responses."""
+    catalogue = load_catalogue()
+    return JudgeInputs(
+        probes=store.read(PROBES),
+        responses={r.probe_id: r.response for r in run_store.read(RESPONSES)},
+        traits=store.read(TRAITS),
+        drift_events=store.read(DRIFT_EVENTS),
+        bank=catalogue.probes,
+        check_map=load_check_map(catalogue),
+    )
+
+
 def judge_run(
     config: Config,
     store: DataStore,
@@ -548,15 +561,7 @@ def judge_run(
     check_scorable(store, run_store, run_name)
     _prepare_pass(config, run_store, force)
 
-    catalogue = load_catalogue()
-    inputs = JudgeInputs(
-        probes=store.read(PROBES),
-        responses={r.probe_id: r.response for r in run_store.read(RESPONSES)},
-        traits=store.read(TRAITS),
-        drift_events=store.read(DRIFT_EVENTS),
-        bank=catalogue.probes,
-        check_map=load_check_map(catalogue),
-    )
+    inputs = load_judge_inputs(store, run_store)
     selection = select_items(inputs)
 
     factory = client_factory or _default_client
