@@ -62,6 +62,7 @@ uv run pm-traitbench dialogue --config configs/demo.yaml --data-dir data
 uv run pm-traitbench validate --config configs/demo.yaml --data-dir data
 uv run pm-traitbench gate2 --config configs/demo.yaml --data-dir data
 uv run pm-traitbench probes --config configs/demo.yaml --data-dir data
+uv run pm-traitbench eval run --sut no-memory --data-dir data
 uv run pm-traitbench eval run --sut full-context --data-dir data
 uv run pm-traitbench eval score --run-name full-context --data-dir data
 ```
@@ -850,6 +851,7 @@ stale on purpose, so a system that stores the premise from the question would
 corrupt its own memory.
 
 ```sh
+uv run pm-traitbench eval run --sut no-memory --data-dir data
 uv run pm-traitbench eval run --sut full-context --data-dir data
 uv run pm-traitbench eval run --sut mypackage.adapter:factory --run-name mine --workers 4
 uv run pm-traitbench eval judge --run-name mine --data-dir data
