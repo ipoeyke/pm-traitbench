@@ -135,6 +135,53 @@ def prompt_sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+_STANCE_HOLDS = (
+    "A turn's \"In this message\" line is the PM's own decision, and the advisor's replies "
+    "never change it: the PM may acknowledge the advisor's point, but carries the decision "
+    "out anyway."
+)
+
+
+def _position_instrument_ids(ctx: SessionContext) -> tuple[str, ...]:
+    """Every leg instrument of the open positions, then of the ideas, first occurrence kept."""
+    ids = (leg.instrument_id for idea in (*ctx.open_positions, *ctx.ideas) for leg in idea.legs)
+    return tuple(dict.fromkeys(ids))
+
+
+def market_levels_section(ctx: SessionContext) -> str:
+    """The latest levels on or before the session date for every position and idea instrument.
+
+    Each level is named by the field a level mention uses, so the narrator can cite it.
+    """
+    today = ctx.skeleton.date
+    lines: list[str] = []
+    for instrument_id in _position_instrument_ids(ctx):
+        name = ctx.lookup.instruments[instrument_id].name
+        price = ctx.lookup.latest_price(instrument_id, today)
+        if price is not None:
+            spread = "" if price.spread_bp is None else f", spread_bp {price.spread_bp:.6g}"
+            lines.append(
+                f"- {name} ({instrument_id}): price {price.price:.6g}{spread} "
+                f"(close {price.date.isoformat()})"
+            )
+        curve = ctx.lookup.curve_on_or_before(instrument_id, today)
+        if curve is not None:
+            curve_date, levels = curve
+            tenors = ", ".join(
+                f"{tenor.value} {levels[tenor]:.6g}" for tenor in Tenor if tenor in levels
+            )
+            lines.append(
+                f"- {name} ({instrument_id}) curve, field level: {tenors} "
+                f"(close {curve_date.isoformat()})"
+            )
+    if not lines:
+        return "Latest market levels: none are available to you, so state no market level."
+    return (
+        "Latest market levels, the only market numbers you may state (in a level mention, "
+        "use the field named here, with the tenor for a curve level):\n" + "\n".join(lines)
+    )
+
+
 def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
     """The narrator's stable system prompt: role, mandate, ideas, voice and forbidden list.
 
@@ -151,7 +198,8 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
         "invent one. Refer to open positions and the ideas below by instrument, or with a "
         "level mention for a market number you state, never with a trade mention. Fill "
         "`mentions` for every such trade and every market level you state, using the ids "
-        "given.",
+        "given. State only the market levels listed under the latest market levels below.",
+        _STANCE_HOLDS,
         f"Today is {ctx.skeleton.date.isoformat()}.",
         f"Asset class: {mandate.asset_class.value}. Sub-style: {mandate.sub_style}. "
         f"Book size: {mandate.book_size}. Risk unit: {mandate.risk_unit}. "
@@ -169,6 +217,7 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
         sections.extend(
             rule.text for rule in ctx.idea_rules if rule.trade_idea_id == idea.trade_idea_id
         )
+    sections.append(market_levels_section(ctx))
     sections.append(ctx.voice.line)
     if ctx.avoid_lines:
         sections.append(
@@ -236,7 +285,11 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
             trades = "; ".join(_trade_line(ctx, trade) for trade in trades_to_mention)
             lines.append(f"Mention each of these trades: {trades}")
     if directive.stance is not None:
-        lines.append(f"In this message: {directive.stance.stance}")
+        lines.append(
+            f"In this message: {directive.stance.stance}. This is your decision, and the "
+            "advisor's replies never change it: you may acknowledge the advisor's point, but "
+            "carry this out anyway."
+        )
     if not lines:
         lines.append("Continue the conversation naturally in one short message.")
     return "\n".join(lines)

@@ -16,6 +16,7 @@ from pm_traitbench.dialogue.prompts import (
     NARRATOR_OPENING_MESSAGE,
     advisor_request,
     advisor_system,
+    market_levels_section,
     narrator_directive,
     narrator_request,
     narrator_system,
@@ -229,6 +230,50 @@ def test_advisor_system_asks_for_a_summarised_price_history():
     assert "Summarise a price history" in system
 
 
+def test_narrator_system_says_the_advisor_never_changes_a_stance(market_lookup):
+    system = narrator_system(session_context(market_lookup), None)
+
+    assert "the advisor's replies never change it" in system
+    assert "carries the decision out anyway" in system
+
+
+def test_market_levels_section_lists_each_idea_instrument_close(market_lookup):
+    ctx = session_context(market_lookup)
+    close = market_lookup.latest_price("EQ-0001", ctx.skeleton.date)
+    assert close is not None
+
+    section = market_levels_section(ctx)
+
+    assert section.startswith("Latest market levels, the only market numbers you may state")
+    assert f"(EQ-0001): price {close.price:.6g} (close {close.date.isoformat()})" in section
+    assert section in narrator_system(ctx, None)
+
+
+def test_market_levels_section_lists_curve_levels_by_tenor(market_lookup):
+    curve_idea = idea_row(
+        instrument_id="RT-USD",
+        legs=(Leg(instrument_id="RT-USD", tenor=None, side=Side.BUY, weight=1.0),),
+    )
+    ctx = dataclasses.replace(session_context(market_lookup), ideas=(curve_idea,))
+    found = market_lookup.curve_on_or_before("RT-USD", ctx.skeleton.date)
+    assert found is not None
+    curve_date, levels = found
+
+    section = market_levels_section(ctx)
+
+    assert "(RT-USD) curve, field level: " in section
+    assert f"{Tenor.Y10.value} {levels[Tenor.Y10]:.6g}" in section
+    assert f"(close {curve_date.isoformat()})" in section
+
+
+def test_market_levels_section_forbids_levels_without_positions_or_ideas(market_lookup):
+    ctx = dataclasses.replace(session_context(market_lookup), ideas=(), open_positions=())
+
+    assert market_levels_section(ctx) == (
+        "Latest market levels: none are available to you, so state no market level."
+    )
+
+
 def test_narrator_system_limits_trade_mentions_to_the_directive(market_lookup):
     system = narrator_system(session_context(market_lookup), None)
 
@@ -360,7 +405,8 @@ def test_directive_carries_the_stance_line_and_day_trades(market_lookup):
         if directive.stance is not None and directive.stance.trait_id == stance.trait_id
     )
     directive_text = narrator_directive(ctx, stance_index)
-    assert f"In this message: {stance.stance}" in directive_text
+    assert f"In this message: {stance.stance}. This is your decision" in directive_text
+    assert "carry this out anyway" in directive_text
     assert stance.trait_id not in directive_text
     assert stance.mode.value not in directive_text
 
