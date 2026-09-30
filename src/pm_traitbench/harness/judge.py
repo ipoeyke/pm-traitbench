@@ -1,14 +1,24 @@
 """LLM judges for open replies: what each is asked, against which brief, and the request."""
 
+import asyncio
 import hashlib
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
+from functools import partial
 from typing import Any
 
+from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.catalogues.models import ProbeBank
-from pm_traitbench.config import JudgeConfig
+from pm_traitbench.config import Config, JudgeConfig
+from pm_traitbench.dialogue.client import (
+    AnthropicClient,
+    CachedClient,
+    LlmClient,
+    last_text_json,
+    send_parsed,
+)
 from pm_traitbench.dialogue.prompts import base_request
 from pm_traitbench.enums import (
     CheckKind,
@@ -20,11 +30,16 @@ from pm_traitbench.enums import (
     ProbeForm,
     ProbeType,
 )
-from pm_traitbench.errors import HarnessError
-from pm_traitbench.harness.checks import CHECKED_PARAMS, parse_routine_answer
-from pm_traitbench.tables.schema import DriftEvent, ProbeRow, Trait
+from pm_traitbench.errors import DialogueBudgetError, HarnessError
+from pm_traitbench.harness.checks import CHECKED_PARAMS, load_check_map, parse_routine_answer
+from pm_traitbench.harness.runner import check_run_name, probes_sha256, run_dir
+from pm_traitbench.harness.score import check_scorable
+from pm_traitbench.tables.schema import DriftEvent, JudgementRow, ProbeRow, Trait
+from pm_traitbench.tables.specs import DRIFT_EVENTS, JUDGEMENTS, PROBES, RESPONSES, TRAITS
+from pm_traitbench.tables.store import DataStore
 from pm_traitbench.traits_truth import bias_active_at
 
+JUDGE_METADATA = "eval-judge"
 NO_CHOICE = "none"
 SKIP_NO_ACTIVE_BIAS = "no_active_bias"
 SKIP_NO_JUDGE_ONLY_VALUES = "no_judge_only_values"
@@ -351,3 +366,189 @@ def prompts_sha256() -> str:
         digest.update(text.encode("utf-8"))
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def parse_verdict(item: JudgeItem, response: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The reply's verdict object when it fits the item's schema, else None."""
+    payload = last_text_json(response)
+    if not isinstance(payload, dict) or not isinstance(payload.get("rationale"), str):
+        return None
+    match item.judge:
+        case Judge.OPEN:
+            valid = payload.get("choice") in (*item.letters, NO_CHOICE)
+        case Judge.IN_SITU | Judge.GOVERNANCE:
+            valid = all(isinstance(payload.get(name), bool) for name in item.fields)
+        case Judge.INTRUSION:
+            valid = isinstance(payload.get("intrudes"), bool) and isinstance(
+                payload.get("evidence"), str
+            )
+        case Judge.FORMAT:
+            values = payload.get("values")
+            valid = (
+                isinstance(values, dict)
+                and set(values) == set(item.fields)
+                and all(v in {o.value for o in FormatOutcome} for v in values.values())
+            )
+    return payload if valid else None
+
+
+def _flag(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def judgement_from_verdict(item: JudgeItem, verdict: Mapping[str, Any]) -> JudgementRow:
+    """The judgement row a parsed verdict gives: correctness, detail and rationale."""
+    match item.judge:
+        case Judge.OPEN:
+            correct = verdict["choice"] == item.answer_letter
+            detail = f"choice={verdict['choice']}"
+        case Judge.IN_SITU | Judge.GOVERNANCE:
+            flags = [verdict[name] for name in item.fields]
+            correct = all(flags) if item.judge == Judge.IN_SITU else any(flags)
+            detail = "; ".join(f"{n}={_flag(f)}" for n, f in zip(item.fields, flags, strict=True))
+        case Judge.INTRUSION:
+            correct = not verdict["intrudes"]
+            detail = f"intrudes={_flag(verdict['intrudes'])}; evidence={verdict['evidence']}"
+        case Judge.FORMAT:
+            outcomes = [verdict["values"][name] for name in item.fields]
+            correct = FormatOutcome.FAIL not in outcomes
+            detail = "; ".join(f"{n}: {o}" for n, o in zip(item.fields, outcomes, strict=True))
+    return JudgementRow(
+        probe_id=item.probe.probe_id,
+        pm_id=item.probe.pm_id,
+        judge=item.judge,
+        correct=correct,
+        detail=detail,
+        rationale=verdict["rationale"],
+    )
+
+
+def empty_judgement(item: JudgeItem) -> JudgementRow:
+    """The wrong judgement of an empty reply, which is never sent to a judge."""
+    return JudgementRow(
+        probe_id=item.probe.probe_id,
+        pm_id=item.probe.pm_id,
+        judge=item.judge,
+        correct=False,
+        detail="empty_reply",
+        rationale="",
+    )
+
+
+def judge_scope(run_name: str, item: JudgeItem) -> str:
+    """The cache scope of one (probe, judge) call in a run."""
+    return f"judge:{run_name}:{item.probe.probe_id}:{item.judge}"
+
+
+@dataclass(frozen=True)
+class JudgeResult:
+    """The judgements a pass wrote, the probes it skipped by reason, and the run's store."""
+
+    judgements: tuple[JudgementRow, ...]
+    skipped: dict[str, int]
+    run_store: DataStore
+
+
+def _default_client(config: Config) -> LlmClient:
+    return AnthropicClient(config.judge.max_concurrency, config.dialogue.api_max_retries)
+
+
+def _prepare_pass(config: Config, run_store: DataStore, force: bool) -> None:
+    """Clear a previous pass on `force`, else refuse to mix judgements of different settings."""
+    metadata_path = run_store.data_dir / "run_metadata" / f"{JUDGE_METADATA}.json"
+    if force:
+        run_store.path(JUDGEMENTS).unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
+        return
+    previous = run_store.read_run_metadata(JUDGE_METADATA)
+    if previous is None:
+        return
+    same_config = previous["config"]["judge"] == config.judge.model_dump(mode="json")
+    if not same_config or previous.get("prompts_sha256") != prompts_sha256():
+        raise HarnessError(
+            "judgements exist from other judge settings or prompts; "
+            "rerun with --force to replace it"
+        )
+
+
+async def _judge_items(
+    client: CachedClient, config: Config, run_name: str, items: Sequence[JudgeItem]
+) -> list[JudgementRow]:
+    async def one(item: JudgeItem) -> JudgementRow:
+        if item.response.strip() == "":
+            return empty_judgement(item)
+        verdict, _ = await send_parsed(
+            client,
+            build_request(item, config.judge),
+            partial(parse_verdict, item),
+            scope=judge_scope(run_name, item),
+            max_retries=config.dialogue.max_retries,
+            error_type=HarnessError,
+            label="judge",
+            reason="reply is not a verdict object",
+        )
+        return judgement_from_verdict(item, verdict)
+
+    try:
+        return list(await asyncio.gather(*(one(item) for item in items)))
+    finally:
+        await client.aclose()
+
+
+def judge_run(
+    config: Config,
+    store: DataStore,
+    run_name: str,
+    *,
+    force: bool = False,
+    client_factory: Callable[[Config], LlmClient] | None = None,
+) -> JudgeResult:
+    """Grade a finished run's open replies with the judges and write its judgements table.
+
+    Finished calls are cached under the run, so a rerun after a spent budget continues.
+    """
+    check_run_name(run_name)
+    rd = run_dir(store.data_dir, run_name)
+    run_store = DataStore(rd, config.output)
+    check_scorable(store, run_store, run_name)
+    _prepare_pass(config, run_store, force)
+
+    catalogue = load_catalogue()
+    inputs = JudgeInputs(
+        probes=store.read(PROBES),
+        responses={r.probe_id: r.response for r in run_store.read(RESPONSES)},
+        traits=store.read(TRAITS),
+        drift_events=store.read(DRIFT_EVENTS),
+        bank=catalogue.probes,
+        check_map=load_check_map(catalogue),
+    )
+    selection = select_items(inputs)
+
+    factory = client_factory or _default_client
+    client = CachedClient(lambda: factory(config), rd / "cache", config.judge.token_budget)
+    try:
+        with asyncio.Runner() as runner:
+            rows = runner.run(_judge_items(client, config, run_name, selection.items))
+    except DialogueBudgetError as exc:
+        raise HarnessError(
+            "judge token budget spent; finished items are cached, rerun to continue"
+        ) from exc
+    rows.sort(key=lambda r: (r.pm_id, r.probe_id, r.judge))
+
+    run_store.write(JUDGEMENTS, rows)
+    counts = {judge.value: 0 for judge in Judge}
+    for item in selection.items:
+        counts[item.judge.value] += 1
+    run_store.write_run_metadata(
+        JUDGE_METADATA,
+        config,
+        {
+            "run_name": run_name,
+            "probes_sha256": probes_sha256(store),
+            "prompts_sha256": prompts_sha256(),
+            "counts": counts,
+            "skipped": selection.skipped,
+            "usage": client.totals.as_metadata(),
+        },
+    )
+    return JudgeResult(tuple(rows), selection.skipped, run_store)

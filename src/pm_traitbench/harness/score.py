@@ -230,7 +230,7 @@ def _count(probes: Sequence[ProbeRow], probe_type: ProbeType, form: ProbeForm) -
     return sum(p.probe_type == probe_type and p.form == form for p in probes)
 
 
-def _check_run(store: DataStore, run_store: DataStore, run_name: str) -> None:
+def check_scorable(store: DataStore, run_store: DataStore, run_name: str) -> None:
     meta = run_store.read_run_metadata(RUN_METADATA)
     if meta is None:
         raise HarnessError(f"run '{run_name}' has no run metadata; run the evaluation first")
@@ -250,7 +250,7 @@ def score_run(config: Config, store: DataStore, run_name: str) -> dict[str, Any]
     """Score a finished run's responses, write scores and summary.json, and return the summary."""
     rd = run_dir(store.data_dir, run_name)
     run_store = DataStore(rd, config.output)
-    _check_run(store, run_store, run_name)
+    check_scorable(store, run_store, run_name)
 
     responses = {r.probe_id: r.response for r in run_store.read(RESPONSES)}
     probes = store.read(PROBES)

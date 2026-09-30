@@ -1,12 +1,19 @@
 """Shared judge test fixtures: probe rows, traits and canned verdict replies."""
 
 import json
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date
+from pathlib import Path
+from typing import Any
 
 from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.catalogues.models import ProbeBank
+from pm_traitbench.config import Config
 from pm_traitbench.enums import DriftEventType, Judge, Kind, ProbeForm, ProbeType
-from pm_traitbench.tables.schema import DriftEvent, ProbeRow, Trait
+from pm_traitbench.harness.runner import RUN_METADATA, probes_sha256, run_dir
+from pm_traitbench.tables.schema import DriftEvent, ProbeRow, ResponseRow, Trait
+from pm_traitbench.tables.specs import PROBES, RESPONSES
+from pm_traitbench.tables.store import DataStore
 from tests.dialogue.fixtures import fake_message
 from tests.harness.fixtures import probe_row
 from tests.probes.fixtures import drift, trait
@@ -132,3 +139,78 @@ def verdict_reply(judge: Judge, **fields: object) -> dict:
     """A fake model message whose text is a verdict JSON object."""
     payload = {"rationale": "r", **fields}
     return fake_message([{"type": "text", "text": json.dumps(payload)}])
+
+
+def write_run(
+    tmp_path: Path,
+    config: Config,
+    store: DataStore,
+    probes: Sequence[ProbeRow],
+    responses: Mapping[str, str],
+    **meta: Any,
+) -> DataStore:
+    """Write `probes` to the corpus and a finished run "r1" answering them; the run's store.
+
+    `meta` overrides the run metadata, for runs that failed or are unfinished.
+    """
+    store.write(PROBES, list(probes))
+    run_store = DataStore(run_dir(tmp_path, "r1"), config.output)
+    run_store.write_run_metadata(
+        RUN_METADATA,
+        config,
+        {
+            "run_name": "r1",
+            "status": "finished",
+            "probes_sha256": probes_sha256(store),
+            "pms_failed": [],
+            "sut": "fake",
+            **meta,
+        },
+    )
+    rows = [
+        ResponseRow(
+            probe_id=p.probe_id, pm_id=p.pm_id, response=responses[p.probe_id], latency_ms=0
+        )
+        for p in probes
+    ]
+    run_store.write(RESPONSES, rows)
+    return run_store
+
+
+def _default_verdict(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """The verdict a correct reply earns: the current option A, and no intrusion."""
+    verdict: dict[str, Any] = {}
+    for name, prop in schema["properties"].items():
+        if name == "rationale":
+            verdict[name] = "r"
+        elif name == "choice":
+            verdict[name] = "A"
+        elif name == "intrudes":
+            verdict[name] = False
+        elif prop["type"] == "boolean":
+            verdict[name] = True
+        elif prop["type"] == "object":
+            verdict[name] = dict.fromkeys(prop["properties"], "pass")
+        else:
+            verdict[name] = ""
+    return verdict
+
+
+def responder_for(
+    canned: Mapping[tuple[str, str], dict[str, Any]] | None = None,
+) -> Callable[[Mapping[str, Any]], dict]:
+    """A responder replying with `canned` verdicts, else an all-correct verdict.
+
+    Keys are (question substring, brief substring) pairs matched against the user text.
+    """
+    canned = canned or {}
+
+    def respond(request: Mapping[str, Any]) -> dict:
+        user = request["messages"][0]["content"]
+        for (question, brief), verdict in canned.items():
+            if question in user and brief in user:
+                return fake_message([{"type": "text", "text": json.dumps(verdict)}])
+        schema = request["output_config"]["format"]["schema"]
+        return fake_message([{"type": "text", "text": json.dumps(_default_verdict(schema))}])
+
+    return respond
