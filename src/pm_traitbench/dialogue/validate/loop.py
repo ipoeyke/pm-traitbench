@@ -18,16 +18,23 @@ from pm_traitbench.dialogue.validate.judge import (
     map_label,
     parse_forbidden,
     parse_leak,
+    parse_stance,
     send_judged,
+    stance_request,
     transcript_text,
 )
-from pm_traitbench.dialogue.validate.ledger import check_trades, count_level_warnings
+from pm_traitbench.dialogue.validate.ledger import (
+    check_pm_levels,
+    check_trades,
+    count_level_warnings,
+)
 from pm_traitbench.enums import REVEALING_MODES, TurnRole, ValidationStatus
+from pm_traitbench.errors import ValidateError
 from pm_traitbench.tables.schema import DialogueLog, LedgerRow, Session, ValidationRow
 
 # The check layers that can reject a session; each has `<layer>_reasons` on `LayerResult`
 # and `<layer>_ok` on `ValidationRow`.
-LAYERS = ("ledger", "grep", "leak", "forbidden")
+LAYERS = ("ledger", "level", "grep", "leak", "forbidden", "stance")
 FEEDBACK_HEADER = "A validator rejected the previous version of this session"
 
 
@@ -36,10 +43,12 @@ class LayerResult:
     """One attempt's outcome across every check layer."""
 
     ledger_reasons: tuple[str, ...]
+    level_reasons: tuple[str, ...]
     grep_reasons: tuple[str, ...]
     leak_judged: bool
     leak_reasons: tuple[str, ...]
     forbidden_reasons: tuple[str, ...]
+    stance_reasons: tuple[str, ...]
     level_warnings: int
     warnings: tuple[str, ...]
     rejected_replies: int
@@ -64,6 +73,26 @@ def revealed_params(ctx: SessionContext, trait_param_by_id: Mapping[str, str]) -
     )
 
 
+async def _unjudged() -> tuple[None, int]:
+    return None, 0
+
+
+def stanced_pm_turns(ctx: SessionContext, log: DialogueLog) -> tuple[tuple[int, str, str], ...]:
+    """Each PM turn that carried a stance, as its 1-based PM turn number, text and stance line."""
+    pm_turns = [turn for turn in log.turns if turn.role == TurnRole.PM]
+    directives = ctx.turn_plan.pm_directives
+    if len(pm_turns) != len(directives):
+        raise ValidateError(
+            f"{session_prefix(ctx.skeleton.session_id)}log has {len(pm_turns)} PM turns "
+            f"but the turn plan has {len(directives)}"
+        )
+    return tuple(
+        (number, turn.text, directive.stance.stance)
+        for number, (turn, directive) in enumerate(zip(pm_turns, directives, strict=True), 1)
+        if directive.stance is not None
+    )
+
+
 async def validate_once(
     ctx: SessionContext,
     log: DialogueLog,
@@ -80,10 +109,11 @@ async def validate_once(
     max_retries = config.dialogue.max_retries
 
     ledger_reasons = check_trades(log, ctx.skeleton, ledger, config.validation.size_tolerance)
-    grep_reasons = check_grep(log, grep_params)
-    level_warnings = count_level_warnings(
+    level_reasons = check_pm_levels(
         log, ctx.skeleton, ctx.lookup, config.validation.level_tolerance
     )
+    grep_reasons = check_grep(log, grep_params)
+    level_warnings = count_level_warnings(log, config.validation.level_tolerance)
 
     revealed = revealed_params(ctx, trait_param_by_id)
     leak_judged = bool(revealed)
@@ -95,20 +125,40 @@ async def validate_once(
         session_id,
         max_retries,
     )
-    if leak_judged:
-        leak_send = send_judged(
+    leak_send = (
+        send_judged(
             client,
             leak_request(log, config.validation, transcript),
             parse_leak,
             session_id,
             max_retries,
         )
-        (verdict, leak_rejected), (violations, forbidden_rejected) = await asyncio.gather(
-            leak_send, forbidden_send
+        if leak_judged
+        else _unjudged()
+    )
+    stanced = stanced_pm_turns(ctx, log)
+    stance_sends = (
+        send_judged(
+            client,
+            stance_request(text, stance, config.validation),
+            parse_stance,
+            session_id,
+            max_retries,
         )
-    else:
-        verdict, leak_rejected = None, 0
-        violations, forbidden_rejected = await forbidden_send
+        for _, text, stance in stanced
+    )
+    (
+        (verdict, leak_rejected),
+        (violations, forbidden_rejected),
+        *stance_results,
+    ) = await asyncio.gather(leak_send, forbidden_send, *stance_sends)
+
+    stance_reasons = tuple(
+        f'stance not carried out in PM turn {number}: "{stance}": {stance_verdict.reason}'
+        for (number, _, stance), (stance_verdict, _) in zip(stanced, stance_results, strict=True)
+        if not stance_verdict.carried_out
+    )
+    stance_rejected = sum(rejected for _, rejected in stance_results)
 
     # A judge finding counts only with its evidence: the quote must appear in a PM turn,
     # so a verdict invented from the topic rather than the text cannot fail a session.
@@ -136,13 +186,15 @@ async def validate_once(
 
     return LayerResult(
         ledger_reasons=ledger_reasons,
+        level_reasons=level_reasons,
         grep_reasons=grep_reasons,
         leak_judged=leak_judged,
         leak_reasons=leak_reasons,
         forbidden_reasons=tuple(forbidden_reasons),
+        stance_reasons=stance_reasons,
         level_warnings=level_warnings,
         warnings=tuple(warnings),
-        rejected_replies=leak_rejected + forbidden_rejected,
+        rejected_replies=leak_rejected + forbidden_rejected + stance_rejected,
     )
 
 

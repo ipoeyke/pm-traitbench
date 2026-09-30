@@ -80,8 +80,9 @@ Both tables and its run metadata land on disk either way. The `plan` stage
 plants trait signals on dated sessions and writes `signals` and `skeletons`,
 never blocking on a shortfall. The `dialogue` stage narrates every planted
 session and writes `sessions` and the hidden `dialogue_logs`. The `validate`
-stage checks every narrated session against the ledger, the leakage rule and
-the forbidden set, regenerating or dropping a session that keeps failing,
+stage checks every narrated session against the ledger, the PM's market
+levels, the leakage rule, the forbidden set and whether each stanced PM turn
+carries its stance out, regenerating or dropping a session that keeps failing,
 and writes the hidden `validation` table while rewriting `sessions` and
 `dialogue_logs` in place. The `gate2` stage asks one strong model, per PM,
 which traits the validated dialogue shows and writes `gate2_traits`,

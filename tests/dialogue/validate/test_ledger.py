@@ -2,7 +2,11 @@
 
 from datetime import timedelta
 
-from pm_traitbench.dialogue.validate.ledger import check_trades, count_level_warnings
+from pm_traitbench.dialogue.validate.ledger import (
+    check_pm_levels,
+    check_trades,
+    count_level_warnings,
+)
 from pm_traitbench.enums import AdvisorTool, Side, Tenor
 from pm_traitbench.tables.schema import ToolCall, canonical_json
 from tests.dialogue.validate.fixtures import (
@@ -176,11 +180,11 @@ def test_advisor_level_confirmed_by_tool_result_value(market_lookup):
     log = _log(
         skeleton, pm_turn("what's the price?"), advisor_turn("about 101.4", (confirmed,), (call,))
     )
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 0
+    assert count_level_warnings(log, level_tolerance=0.01) == 0
 
     off = level_mention("EQ-0001", "price", 110)
     log = _log(skeleton, pm_turn("what's the price?"), advisor_turn("110", (off,), (call,)))
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 1
+    assert count_level_warnings(log, level_tolerance=0.01) == 1
 
 
 def test_advisor_level_ignores_error_tool_results(market_lookup):
@@ -196,7 +200,7 @@ def test_advisor_level_ignores_error_tool_results(market_lookup):
         skeleton, pm_turn("what's the price?"), advisor_turn("no data", (mention,), (error_call,))
     )
 
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 1
+    assert count_level_warnings(log, level_tolerance=0.01) == 1
 
 
 def test_advisor_level_ignores_bools_in_the_number_walk(market_lookup):
@@ -210,7 +214,7 @@ def test_advisor_level_ignores_bools_in_the_number_walk(market_lookup):
     mention = level_mention("EQ-0001", "price", 1.0)
     log = _log(skeleton, pm_turn("what's the price?"), advisor_turn("no data", (mention,), (call,)))
 
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 1
+    assert count_level_warnings(log, level_tolerance=0.01) == 1
 
 
 def test_advisor_level_finds_values_nested_in_curve_levels_and_history_points(market_lookup):
@@ -254,7 +258,7 @@ def test_advisor_level_finds_values_nested_in_curve_levels_and_history_points(ma
         ),
     )
 
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 0
+    assert count_level_warnings(log, level_tolerance=0.01) == 0
 
 
 def test_pm_level_confirmed_against_market_price(market_lookup, fixture_market):
@@ -264,16 +268,16 @@ def test_pm_level_confirmed_against_market_price(market_lookup, fixture_market):
     skeleton = skeleton_of(PM_ID, DATE, ())
     log = _log(skeleton, pm_turn("mark", mentions=(mention,)), advisor_turn("ok"))
 
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 0
+    assert check_pm_levels(log, skeleton, market_lookup, level_tolerance=0.01) == ()
 
 
-def test_pm_level_unknown_field_is_a_warning(market_lookup, fixture_market):
+def test_pm_level_unknown_field_is_a_failure(market_lookup, fixture_market):
     instrument = sorted(fixture_market["instruments"], key=lambda i: i.instrument_id)[0]
     mention = level_mention(instrument.instrument_id, "bogus_field", 123.0)
     skeleton = skeleton_of(PM_ID, DATE, ())
     log = _log(skeleton, pm_turn("mark", mentions=(mention,)), advisor_turn("ok"))
 
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 1
+    assert len(check_pm_levels(log, skeleton, market_lookup, level_tolerance=0.01)) == 1
 
 
 def test_pm_level_confirmed_against_curve_tenor(market_lookup):
@@ -282,15 +286,15 @@ def test_pm_level_confirmed_against_curve_tenor(market_lookup):
     skeleton = skeleton_of(PM_ID, DATE, ())
     log = _log(skeleton, pm_turn("curve", mentions=(mention,)), advisor_turn("ok"))
 
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 0
+    assert check_pm_levels(log, skeleton, market_lookup, level_tolerance=0.01) == ()
 
 
-def test_pm_level_with_no_tenor_is_a_warning(market_lookup):
+def test_pm_level_with_no_tenor_is_a_failure(market_lookup):
     mention = level_mention("RT-USD", "level", 3.8)
     skeleton = skeleton_of(PM_ID, DATE, ())
     log = _log(skeleton, pm_turn("curve", mentions=(mention,)), advisor_turn("ok"))
 
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 1
+    assert len(check_pm_levels(log, skeleton, market_lookup, level_tolerance=0.01)) == 1
 
 
 def test_pm_level_confirmed_against_spread_bp(market_lookup):
@@ -299,7 +303,7 @@ def test_pm_level_confirmed_against_spread_bp(market_lookup):
     skeleton = skeleton_of(PM_ID, DATE, ())
     log = _log(skeleton, pm_turn("spread", mentions=(mention,)), advisor_turn("ok"))
 
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 0
+    assert check_pm_levels(log, skeleton, market_lookup, level_tolerance=0.01) == ()
 
 
 def test_pm_level_confirmed_against_street_score(market_lookup):
@@ -308,12 +312,38 @@ def test_pm_level_confirmed_against_street_score(market_lookup):
     skeleton = skeleton_of(PM_ID, DATE, ())
     log = _log(skeleton, pm_turn("consensus", mentions=(mention,)), advisor_turn("ok"))
 
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 0
+    assert check_pm_levels(log, skeleton, market_lookup, level_tolerance=0.01) == ()
 
 
-def test_pm_level_missing_market_row_is_a_warning(market_lookup):
+def test_pm_level_missing_market_row_is_a_failure(market_lookup):
     mention = level_mention("EQ-9999", "price", 100.0)
     skeleton = skeleton_of(PM_ID, DATE, ())
     log = _log(skeleton, pm_turn("mark", mentions=(mention,)), advisor_turn("ok"))
 
-    assert count_level_warnings(log, skeleton, market_lookup, level_tolerance=0.01) == 1
+    assert len(check_pm_levels(log, skeleton, market_lookup, level_tolerance=0.01)) == 1
+
+
+def test_pm_level_failure_names_the_mention(market_lookup):
+    mention = level_mention("RT-USD", "level", 9.99, tenor=Tenor.Y5)
+    skeleton = skeleton_of(PM_ID, DATE, ())
+    log = _log(skeleton, pm_turn("curve", mentions=(mention,)), advisor_turn("ok"))
+
+    assert check_pm_levels(log, skeleton, market_lookup, level_tolerance=0.01) == (
+        f"level not in market data: RT-USD {Tenor.Y5.value} level 9.99",
+    )
+
+
+def test_advisor_level_is_never_a_pm_level_failure(market_lookup):
+    mention = level_mention("EQ-9999", "price", 100.0)
+    skeleton = skeleton_of(PM_ID, DATE, ())
+    log = _log(skeleton, pm_turn("mark"), advisor_turn("ok", (mention,)))
+
+    assert check_pm_levels(log, skeleton, market_lookup, level_tolerance=0.01) == ()
+
+
+def test_pm_level_is_never_an_advisor_warning():
+    mention = level_mention("EQ-9999", "price", 100.0)
+    skeleton = skeleton_of(PM_ID, DATE, ())
+    log = _log(skeleton, pm_turn("mark", mentions=(mention,)), advisor_turn("ok"))
+
+    assert count_level_warnings(log, level_tolerance=0.01) == 0
