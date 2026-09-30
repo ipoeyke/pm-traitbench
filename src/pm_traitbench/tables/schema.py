@@ -1173,12 +1173,16 @@ class ValidationRow(BaseModel):
     ledger_ok: bool = Field(
         description="Whether the session's mentions are consistent with the ledger."
     )
+    level_ok: bool = Field(
+        description="Whether every PM level mention matches the market data on the session date."
+    )
     grep_ok: bool = Field(description="Whether the session passed the deterministic grep checks.")
     leak_judged: bool = Field(description="Whether a judge assessed the session for a trait leak.")
     leak_ok: bool = Field(description="Whether the session passed the leak check.")
     forbidden_ok: bool = Field(description="Whether the session avoided its rendered avoid lines.")
+    stance_ok: bool = Field(description="Whether every stanced PM turn carried its stance out.")
     level_warnings: int = Field(
-        ge=0, description="Number of level-mention tolerance warnings raised."
+        ge=0, description="Number of advisor level mentions no tool result confirmed."
     )
     reasons: tuple[str, ...] = Field(description="Free-text reasons the attempt did not pass.")
     judge_model: str = Field(min_length=1, description="Model that judged the attempt.")
@@ -1191,7 +1195,14 @@ class ValidationRow(BaseModel):
 
     @model_validator(mode="after")
     def _check_status(self) -> "ValidationRow":
-        all_ok = self.ledger_ok and self.grep_ok and self.leak_ok and self.forbidden_ok
+        all_ok = (
+            self.ledger_ok
+            and self.level_ok
+            and self.grep_ok
+            and self.leak_ok
+            and self.forbidden_ok
+            and self.stance_ok
+        )
         if (self.status == ValidationStatus.PASS) != all_ok:
             raise ValueError("status must be 'pass' exactly when every check passes")
         return self

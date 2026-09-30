@@ -14,12 +14,13 @@ from pm_traitbench.dialogue.context import PmTables, build_contexts
 from pm_traitbench.dialogue.prompts import (
     ADVISOR_TURN_SCHEMA,
     NARRATOR_OPENING_MESSAGE,
-    TURN_SCHEMA,
     advisor_request,
     advisor_system,
+    market_levels_section,
     narrator_directive,
     narrator_request,
     narrator_system,
+    narrator_turn_schema,
     read_advisor_prompt,
 )
 from pm_traitbench.dialogue.session import parse_turn
@@ -46,7 +47,7 @@ def test_narrator_request_has_only_the_allowed_keys(market_lookup):
     ctx = session_context(market_lookup)
     messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
 
-    request = narrator_request(ctx, messages, _CONFIG.dialogue, None)
+    request = narrator_request(ctx, 0, messages, _CONFIG.dialogue, None)
 
     assert set(request) == {
         "model",
@@ -60,7 +61,7 @@ def test_narrator_request_has_only_the_allowed_keys(market_lookup):
     assert request["max_tokens"] == _CONFIG.dialogue.max_output_tokens
     assert request["output_config"] == {
         "effort": _CONFIG.dialogue.effort.value,
-        "format": {"type": "json_schema", "schema": TURN_SCHEMA},
+        "format": {"type": "json_schema", "schema": narrator_turn_schema([])},
     }
     assert request["cache_control"] == {"type": "ephemeral"}
 
@@ -87,8 +88,8 @@ def test_two_builds_from_equal_inputs_give_the_same_request_key(market_lookup):
 
     ctx_1 = session_context(market_lookup)
     ctx_2 = session_context(market_lookup)
-    request_1 = narrator_request(ctx_1, messages, _CONFIG.dialogue, None)
-    request_2 = narrator_request(ctx_2, list(messages), _CONFIG.dialogue, None)
+    request_1 = narrator_request(ctx_1, 0, messages, _CONFIG.dialogue, None)
+    request_2 = narrator_request(ctx_2, 0, list(messages), _CONFIG.dialogue, None)
 
     assert request_1 == request_2
     scope = ctx_1.skeleton.session_id
@@ -96,7 +97,8 @@ def test_two_builds_from_equal_inputs_give_the_same_request_key(market_lookup):
 
 
 def test_turn_schema_mention_enums_come_from_the_enum_classes():
-    trade_schema, level_schema = TURN_SCHEMA["properties"]["mentions"]["items"]["anyOf"]
+    schema = narrator_turn_schema(["ti_001"])
+    trade_schema, level_schema = schema["properties"]["mentions"]["items"]["anyOf"]
 
     assert trade_schema["properties"]["kind"] == {"const": "trade"}
     assert level_schema["properties"]["kind"] == {"const": "level"}
@@ -109,6 +111,7 @@ def test_turn_schema_mention_enums_come_from_the_enum_classes():
     assert trade_schema["properties"]["value"] == {"type": "null"}
     assert level_schema["properties"]["field"] == {"type": "string"}
     assert level_schema["properties"]["value"] == {"type": "number"}
+    assert trade_schema["properties"]["trade_idea_id"] == {"enum": ["ti_001"]}
     for mention_schema in (trade_schema, level_schema):
         assert mention_schema["additionalProperties"] is False
         assert set(mention_schema["required"]) == set(mention_schema["properties"])
@@ -165,16 +168,36 @@ def test_advisor_turn_schema_offers_only_level_mentions():
 
     assert "anyOf" not in mentions_items
     assert mentions_items["properties"]["kind"] == {"const": "level"}
-    assert mentions_items == TURN_SCHEMA["properties"]["mentions"]["items"]["anyOf"][1]
+    narrator_items = narrator_turn_schema(["ti_001"])["properties"]["mentions"]["items"]
+    assert mentions_items == narrator_items["anyOf"][1]
 
 
-def test_narrator_turn_schema_still_offers_both_mention_kinds():
-    mentions_items = TURN_SCHEMA["properties"]["mentions"]["items"]
+def test_narrator_turn_schema_offers_both_mention_kinds_when_trades_are_listed():
+    mentions_items = narrator_turn_schema(["ti_001"])["properties"]["mentions"]["items"]
 
     assert {branch["properties"]["kind"]["const"] for branch in mentions_items["anyOf"]} == {
         "trade",
         "level",
     }
+
+
+def test_narrator_turn_schema_drops_the_trade_branch_without_listed_trades():
+    assert narrator_turn_schema([]) == ADVISOR_TURN_SCHEMA
+
+
+def test_narrator_request_limits_trade_ids_to_turn_zero_listed_trades(market_lookup):
+    trades = tuple(
+        ledger_row(trade_idea_id=idea_id, date=DEFAULT_DATE) for idea_id in ("ti_002", "ti_001")
+    )
+    ctx = session_context(market_lookup, day_trades=trades)
+    messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
+
+    first = narrator_request(ctx, 0, messages, _CONFIG.dialogue, None)
+    later = narrator_request(ctx, 1, messages, _CONFIG.dialogue, None)
+
+    schema = first["output_config"]["format"]["schema"]
+    assert schema == narrator_turn_schema(["ti_001", "ti_002"])
+    assert later["output_config"]["format"]["schema"] == narrator_turn_schema([])
 
 
 def test_advisor_request_uses_the_advisor_only_turn_schema():
@@ -199,6 +222,64 @@ def test_advisor_system_appends_the_mentions_instruction_before_the_date():
     assert "mentions" in system
     assert system.index("AUTHORED PROMPT TEXT") < system.rindex("mentions")
     assert system.rindex("mentions") < system.index(f"Today is {DEFAULT_DATE.isoformat()}")
+
+
+def test_advisor_system_asks_for_a_summarised_price_history():
+    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE)
+
+    assert "Summarise a price history" in system
+
+
+def test_narrator_system_says_the_advisor_never_changes_a_stance(market_lookup):
+    system = narrator_system(session_context(market_lookup), None)
+
+    assert "the advisor's replies never change it" in system
+    assert "carries the decision out anyway" in system
+    assert "the PM states only that preference and adds no other request" in system
+
+
+def test_market_levels_section_lists_each_idea_instrument_close(market_lookup):
+    ctx = session_context(market_lookup)
+    close = market_lookup.latest_price("EQ-0001", ctx.skeleton.date)
+    assert close is not None
+
+    section = market_levels_section(ctx)
+
+    assert section.startswith("Latest market levels, the only market numbers you may state")
+    assert f"(EQ-0001): price {close.price:.6g} (close {close.date.isoformat()})" in section
+    assert section in narrator_system(ctx, None)
+
+
+def test_market_levels_section_lists_curve_levels_by_tenor(market_lookup):
+    curve_idea = idea_row(
+        instrument_id="RT-USD",
+        legs=(Leg(instrument_id="RT-USD", tenor=None, side=Side.BUY, weight=1.0),),
+    )
+    ctx = dataclasses.replace(session_context(market_lookup), ideas=(curve_idea,))
+    found = market_lookup.curve_on_or_before("RT-USD", ctx.skeleton.date)
+    assert found is not None
+    curve_date, levels = found
+
+    section = market_levels_section(ctx)
+
+    assert "(RT-USD) curve, field level: " in section
+    assert f"{Tenor.Y10.value} {levels[Tenor.Y10]:.6g}" in section
+    assert f"(close {curve_date.isoformat()})" in section
+
+
+def test_market_levels_section_forbids_levels_without_positions_or_ideas(market_lookup):
+    ctx = dataclasses.replace(session_context(market_lookup), ideas=(), open_positions=())
+
+    assert market_levels_section(ctx) == (
+        "Latest market levels: none are available to you, so state no market level."
+    )
+
+
+def test_narrator_system_limits_trade_mentions_to_the_directive(market_lookup):
+    system = narrator_system(session_context(market_lookup), None)
+
+    assert 'trade a turn\'s "Mention each of these trades" directive lists' in system
+    assert "never with a trade mention" in system
 
 
 def test_narrator_system_contains_voice_rules_and_avoid_lines(market_lookup):
@@ -288,7 +369,7 @@ def test_narrator_request_never_leaks_trait_or_bias_information(market_lookup):
     messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
     for i in range(len(ctx.turn_plan.pm_directives)):
         messages.append({"role": "system", "content": narrator_directive(ctx, i)})
-    request = narrator_request(ctx, messages, _CONFIG.dialogue, None)
+    request = narrator_request(ctx, 0, messages, _CONFIG.dialogue, None)
     serialized_raw = json.dumps(request)
 
     # The scan is only meaningful if real content flowed through.
@@ -325,7 +406,9 @@ def test_directive_carries_the_stance_line_and_day_trades(market_lookup):
         if directive.stance is not None and directive.stance.trait_id == stance.trait_id
     )
     directive_text = narrator_directive(ctx, stance_index)
-    assert f"In this message: {stance.stance}" in directive_text
+    assert f"In this message: {stance.stance}. This is your decision" in directive_text
+    assert "carry this out anyway" in directive_text
+    assert "state only that one and ask nothing else" in directive_text
     assert stance.trait_id not in directive_text
     assert stance.mode.value not in directive_text
 
@@ -365,9 +448,9 @@ def test_feedback_changes_the_narrator_request_key(market_lookup):
     ctx = session_context(market_lookup)
     messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
 
-    base = narrator_request(ctx, messages, _CONFIG.dialogue, None)
+    base = narrator_request(ctx, 0, messages, _CONFIG.dialogue, None)
     changed = narrator_request(
-        ctx, messages, _CONFIG.dialogue, "Keep this PM's trades tighter to the skeleton."
+        ctx, 0, messages, _CONFIG.dialogue, "Keep this PM's trades tighter to the skeleton."
     )
 
     assert base["system"] != changed["system"]
@@ -409,8 +492,8 @@ def test_two_same_date_check_ins_of_one_pm_get_distinct_cache_keys(market_lookup
 
     ctx_a, ctx_b = build_contexts(pm, voice, market_lookup, catalogue, Config())
     messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
-    body_a = narrator_request(ctx_a, messages, _CONFIG.dialogue, None)
-    body_b = narrator_request(ctx_b, messages, _CONFIG.dialogue, None)
+    body_a = narrator_request(ctx_a, 0, messages, _CONFIG.dialogue, None)
+    body_b = narrator_request(ctx_b, 0, messages, _CONFIG.dialogue, None)
 
     assert body_a == body_b
     assert request_key(body_a, ctx_a.skeleton.session_id) != request_key(

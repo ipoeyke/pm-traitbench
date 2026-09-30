@@ -16,6 +16,7 @@ from pm_traitbench.config import DEFAULT_MODEL
 from pm_traitbench.dialogue.client import CachedClient
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.tools import MarketLookup
+from pm_traitbench.dialogue.turns import OPENING_BY_KIND, PmDirective, TurnPlan
 from pm_traitbench.dialogue.usage import ZERO_USAGE
 from pm_traitbench.enums import (
     MentionKind,
@@ -123,6 +124,16 @@ def forbidden_reply(violations: list[tuple[int, str]]) -> dict:
     return fake_message([{"type": "text", "text": payload}])
 
 
+def stance_reply(carried_out: bool, reason: str = "") -> dict:
+    """A `fake_message` body whose single text block is a stance verdict JSON object."""
+    payload = json.dumps({"carried_out": carried_out, "reason": reason})
+    return fake_message([{"type": "text", "text": payload}])
+
+
+def _carried_out(_request: Mapping[str, Any]) -> dict:
+    return stance_reply(True, "carried out")
+
+
 def _schema_title(request: Mapping[str, Any]) -> str | None:
     """The request's output schema title, or `None` for a request whose schema carries none."""
     return request.get("output_config", {}).get("format", {}).get("schema", {}).get("title")
@@ -138,6 +149,11 @@ def is_forbidden_request(request: Mapping[str, Any]) -> bool:
     return _schema_title(request) == "forbidden_verdict"
 
 
+def is_stance_request(request: Mapping[str, Any]) -> bool:
+    """True when `request` is a stance judge request, by its schema's title."""
+    return _schema_title(request) == "stance_verdict"
+
+
 def validate_context(
     lookup: MarketLookup,
     *,
@@ -145,10 +161,26 @@ def validate_context(
     avoid_lines: tuple[str, ...] = (),
     day_trades: tuple[LedgerRow, ...] = (),
     kind: SessionKind = SessionKind.DECISION,
+    pm_turns: int = 1,
 ) -> SessionContext:
-    """A `SessionContext` for the validate stage, with its own avoid lines."""
+    """A `SessionContext` for the validate stage, with its own avoid lines.
+
+    Its turn plan has `pm_turns` PM turns, the i-th carrying `stances[i]` if any, so it
+    lines up with a test log of that many PM turns.
+    """
     ctx = session_context(lookup, kind=kind, stances=stances, day_trades=day_trades)
-    return dataclasses.replace(ctx, avoid_lines=avoid_lines)
+    if len(stances) > pm_turns:
+        raise ValueError("each stance needs its own PM turn")
+    directives = tuple(
+        PmDirective(
+            stance=ctx.skeleton.stances[i] if i < len(ctx.skeleton.stances) else None,
+            trades=ctx.day_trades if i == 0 else (),
+            opening=OPENING_BY_KIND[kind] if i == 0 else None,
+        )
+        for i in range(pm_turns)
+    )
+    plan = TurnPlan(n_turns=2 * pm_turns, pm_directives=directives, violation_advisor_index=None)
+    return dataclasses.replace(ctx, avoid_lines=avoid_lines, turn_plan=plan)
 
 
 def stance(trait_id: str, mode: SignalMode, entry: StanceEntry, text: str) -> Stance:
@@ -160,6 +192,7 @@ def routing_responder(
     narrator: Callable[[dict], dict],
     leak: Callable[[dict], dict],
     forbidden: Callable[[dict], dict],
+    stance: Callable[[dict], dict] = _carried_out,
 ) -> Callable[[Mapping[str, Any]], dict]:
     """A `FakeClient` responder routing judge, advisor and narrator requests to their scripts."""
 
@@ -168,6 +201,8 @@ def routing_responder(
             return leak(request)
         if is_forbidden_request(request):
             return forbidden(request)
+        if is_stance_request(request):
+            return stance(request)
         if "tools" in request:
             return default_responder(request)
         return narrator(request)
@@ -180,9 +215,13 @@ def scripted_client(
     narrator_reply: Callable[[dict], dict],
     leak: Callable[[dict], dict],
     forbidden: Callable[[dict], dict],
+    stance: Callable[[dict], dict] = _carried_out,
 ) -> CachedClient:
-    """A `CachedClient` over a `FakeClient` that routes each request to its own script."""
-    fake = FakeClient(routing_responder(narrator_reply, leak, forbidden))
+    """A `CachedClient` over a `FakeClient` that routes each request to its own script.
+
+    The stance judge finds every stance carried out unless `stance` says otherwise.
+    """
+    fake = FakeClient(routing_responder(narrator_reply, leak, forbidden, stance))
     return CachedClient(lambda: fake, tmp_path, token_budget=None)
 
 

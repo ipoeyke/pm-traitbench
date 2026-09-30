@@ -221,6 +221,9 @@ def _run(
             config.gate2.max_concurrency,
             label="gate2",
             unit="units",
+            unit_name=lambda u: (
+                f"pm {u.pm_id}" if isinstance(u, RecoveryUnit) else f"session {u.session_id}"
+            ),
         )
     )
     n_recovery = len(recovery_units)

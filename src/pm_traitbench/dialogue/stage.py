@@ -174,11 +174,13 @@ async def run_bounded[I, T](
     *,
     label: str,
     unit: str,
+    unit_name: Callable[[I], str],
 ) -> list[T | BaseException]:
     """Run `worker` over `items` with at most `max_concurrency` in flight, then close `client`.
 
     Results come back in `items` order, with a failure returned in place, not raised.
-    A progress line named `label` and counting `unit`s prints as each finishes.
+    A progress line named `label` and counting `unit`s prints as each finishes, led for a
+    failure by a line naming the item by `unit_name` (e.g. `session s_001`) and its reason.
     """
     pending = tuple(items)
     progress = Progress(label, unit, len(pending), client.totals, client.token_budget)
@@ -190,10 +192,10 @@ async def run_bounded[I, T](
         async with semaphore:
             try:
                 result = await worker(item)
-            except BaseException:
-                progress.finish(failed=True)
+            except BaseException as error:
+                progress.finish(unit_name(item), error)
                 raise
-            progress.finish(failed=False)
+            progress.finish(unit_name(item))
             return result
 
     progress.start(max_concurrency)
@@ -295,6 +297,7 @@ def _run(
             config.dialogue.max_concurrency,
             label="dialogue",
             unit="sessions",
+            unit_name=lambda ctx: f"session {ctx.skeleton.session_id}",
         )
     )
     raise_on_failure(tuple(ctx.skeleton.session_id for ctx in frozen_contexts), results, client)

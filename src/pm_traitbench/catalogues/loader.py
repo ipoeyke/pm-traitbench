@@ -83,6 +83,24 @@ BANNED_STANCE_WORDS: tuple[str, ...] = (
     "exit deficiency",
     "bias",
 )
+# Phrases that name a bias outright in a transcript. Narrower than BANNED_STANCE_WORDS,
+# which guards authored catalogue text: desk talk like "long bias" must pass a transcript.
+TRANSCRIPT_BANNED_PHRASES: tuple[str, ...] = (
+    "loss aversion",
+    "loss averse",
+    "disposition effect",
+    "anchoring bias",
+    "anchoring effect",
+    "extrapolation bias",
+    "herding",
+    "herd mentality",
+    "overconfiden",
+    "miscalibrat",
+    "exit deficiency",
+    "cognitive bias",
+    "behavioral bias",
+    "behavioural bias",
+)
 # Keys are the engine's per-bias action flags, so the line drawn always matches the
 # specific action logged that day, not just the trait behind it.
 REVEALED_PATTERNS: dict[str, tuple[str, ...]] = {
@@ -796,6 +814,19 @@ def matched_params(text: str, params: Iterable[str]) -> tuple[str, ...]:
     )
 
 
+def banned_phrases_in(text: str) -> tuple[str, ...]:
+    """Every `TRANSCRIPT_BANNED_PHRASES` entry starting at a word boundary, case-insensitive.
+
+    Only the start is anchored, so a stem like "overconfiden" still matches its inflections.
+    """
+    lowered = text.lower()
+    return tuple(
+        phrase
+        for phrase in TRANSCRIPT_BANNED_PHRASES
+        if re.search(rf"\b{re.escape(phrase)}", lowered)
+    )
+
+
 def banned_words_in(text: str) -> tuple[str, ...]:
     """Every `BANNED_STANCE_WORDS` entry found in text as a case-insensitive substring."""
     lowered = text.lower()
@@ -812,7 +843,8 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
 
     A voice must not be so specific it becomes a near-unique PM fingerprint, and
     every avoid line must cover exactly the bias and preference params a skeleton
-    can name as forbidden for a PM who does not have that trait.
+    can name as forbidden for a PM who does not have that trait. Every avoid overlap
+    must name known params, never itself and never twice.
     """
     if len(catalogue.voices) < 6:
         raise CatalogueError(f"voices: need at least 6 voices, got {len(catalogue.voices)}")
@@ -849,6 +881,17 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
     for param, line in {**catalogue.avoid.biases, **catalogue.avoid.preferences}.items():
         if not line.strip():
             raise CatalogueError(f"avoid: param '{param}' has an empty line")
+    known = {*catalogue.avoid.biases, *catalogue.avoid.preferences}
+    for param, overlapped in catalogue.avoid.overlaps.items():
+        if param not in known:
+            raise CatalogueError(f"avoid: overlaps key '{param}' is not a known param")
+        for other in overlapped:
+            if other not in known:
+                raise CatalogueError(f"avoid: overlaps of '{param}' names unknown param '{other}'")
+            if other == param:
+                raise CatalogueError(f"avoid: param '{param}' overlaps itself")
+        if len(set(overlapped)) != len(overlapped):
+            raise CatalogueError(f"avoid: overlaps of '{param}' repeats a param")
 
 
 def check_validate_catalogue(catalogue: Catalogue) -> None:

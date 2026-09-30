@@ -35,7 +35,9 @@ from tests.dialogue.validate.fixtures import (
     forbidden_reply,
     is_forbidden_request,
     is_leak_request,
+    is_stance_request,
     leak_reply,
+    stance_reply,
 )
 from tests.gates.gate2.fixtures import truthful_responder
 
@@ -318,6 +320,8 @@ def _judge_clean_responder(request: dict) -> dict:
         return leak_reply(False, None)
     if is_forbidden_request(request):
         return forbidden_reply([])
+    if is_stance_request(request):
+        return stance_reply(True, "carried out")
     return default_responder(request)
 
 

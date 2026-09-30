@@ -15,16 +15,19 @@ from pm_traitbench.dialogue.validate.loop import (
     validate_once,
 )
 from pm_traitbench.enums import SignalMode, StanceEntry, TurnRole, ValidationStatus
+from pm_traitbench.errors import ValidateError
 from pm_traitbench.tables.schema import Session, Turn
 from tests.dialogue.fixtures import SESSION_ID, fake_message, turn_text, with_section
 from tests.dialogue.validate.fixtures import (
     advisor_turn,
     forbidden_reply,
     leak_reply,
+    level_mention,
     log_of,
     pm_turn,
     scripted_client,
     stance,
+    stance_reply,
     trade_mention,
     validate_context,
 )
@@ -182,6 +185,7 @@ def test_explicit_label_naming_a_stated_traits_param_passes(market_lookup, tmp_p
             stance("t_01", SignalMode.STATED, StanceEntry.STATED, "line a"),
             stance("t_02", SignalMode.REVEALED, StanceEntry.REVEALED, "line b"),
         ),
+        pm_turns=2,
     )
     client = scripted_client(
         tmp_path,
@@ -189,10 +193,16 @@ def test_explicit_label_naming_a_stated_traits_param_passes(market_lookup, tmp_p
         lambda _r: leak_reply(True, "loss aversion", "average down again"),
         _clean_forbidden,
     )
+    log = log_of(
+        SESSION_ID,
+        "pm_001",
+        [pm_turn("all clear"), advisor_turn("noted"), pm_turn("still clear"), advisor_turn("ok")],
+    )
 
     result = _once(
         ctx,
         client,
+        log=log,
         trait_param_by_id={"t_01": "loss_aversion_lambda", "t_02": "disposition_ratio"},
     )
 
@@ -399,3 +409,70 @@ def test_feedback_text_format():
         "- reason two\n"
         "Fix these and keep everything else as instructed."
     )
+
+
+def test_stance_judge_sees_only_the_pm_turn_and_its_stance_line(market_lookup, tmp_path):
+    line = "hold EQ-0001 through the drawdown"
+    ctx = validate_context(
+        market_lookup,
+        stances=(stance("t_01", SignalMode.STATED, StanceEntry.STATED, line),),
+        pm_turns=2,
+    )
+    log = log_of(
+        SESSION_ID,
+        "pm_001",
+        [
+            pm_turn("holding it"),
+            advisor_turn("consider cutting"),
+            pm_turn("fine"),
+            advisor_turn("ok"),
+        ],
+    )
+    seen: list[dict] = []
+
+    def judge(request):
+        seen.append(request)
+        return stance_reply(False, "the PM cut the position")
+
+    client = scripted_client(tmp_path, _raise, _raise, _clean_forbidden, stance=judge)
+    result = _once(ctx, client, log=log)
+
+    assert len(seen) == 1
+    assert seen[0]["messages"][0]["content"] == f"Instruction: {line}\n\nPM message: holding it"
+    assert result.stance_reasons == (
+        f'stance not carried out in PM turn 1: "{line}": the PM cut the position',
+    )
+    assert result.passed is False
+
+
+def test_stance_judge_is_not_called_without_stances(market_lookup, tmp_path):
+    ctx = validate_context(market_lookup)
+    client = scripted_client(tmp_path, _raise, _raise, _clean_forbidden, stance=_raise)
+
+    assert _once(ctx, client).stance_reasons == ()
+
+
+def test_stance_check_rejects_a_log_that_does_not_match_the_turn_plan(market_lookup, tmp_path):
+    ctx = validate_context(market_lookup, pm_turns=2)
+    client = scripted_client(tmp_path, _raise, _raise, _clean_forbidden)
+
+    with pytest.raises(ValidateError, match="log has 1 PM turns but the turn plan has 2"):
+        _once(ctx, client)
+
+
+def test_pm_level_mismatch_fails_the_session(market_lookup, tmp_path):
+    ctx = validate_context(market_lookup)
+    log = log_of(
+        SESSION_ID,
+        "pm_001",
+        [
+            pm_turn("marked at 999", mentions=(level_mention("EQ-0001", "price", 999.0),)),
+            advisor_turn("noted"),
+        ],
+    )
+    client = scripted_client(tmp_path, _raise, _raise, _clean_forbidden)
+
+    result = _once(ctx, client, log=log)
+
+    assert result.level_reasons == ("level not in market data: EQ-0001 - price 999.0",)
+    assert result.passed is False

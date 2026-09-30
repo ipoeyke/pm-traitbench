@@ -71,7 +71,7 @@ def parse_turn(response: Mapping[str, Any]) -> TurnOutput | None:
 
     None when `stop_reason` is not `end_turn`, no text block exists, the text
     is blank, or the JSON or its mentions fail validation. A blank `text`
-    would otherwise pass `TURN_SCHEMA` (which sets no `minLength`) and later
+    would otherwise pass the turn schema (which sets no `minLength`) and later
     fail `Turn`'s own `min_length=1` after the reply is already cached, so it
     is rejected here instead.
     """
@@ -186,7 +186,7 @@ async def narrate_session(
 
     for i in range(n_pm):
         narrator_messages.append({"role": "system", "content": narrator_directive(ctx, i)})
-        pm_request = narrator_request(ctx, narrator_messages, config, feedback)
+        pm_request = narrator_request(ctx, i, narrator_messages, config, feedback)
         pm_reply, pm_accepted, pm_rejected = await _send_accepted(
             client, pm_request, config, session_id, allow_tool_use=False
         )

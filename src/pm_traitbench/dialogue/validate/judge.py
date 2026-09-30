@@ -1,9 +1,10 @@
-"""The leakage and forbidden-trait judges of the validate stage: request builders, reply
-parsers and the leak label to bias param mapper.
+"""The leakage, forbidden-trait and stance judges of the validate stage: request builders,
+reply parsers and the leak label to bias param mapper.
 
-Each judge sees only transcript text and, for the forbidden judge, the
-session's rendered avoid lines - never a trait id, bias param, trait value,
-stance line, signal mode or the PM's persona.
+The leak and forbidden judges see only transcript text and, for the forbidden
+judge, the session's rendered avoid lines - never a trait id, bias param, trait
+value, stance line, signal mode or the PM's persona. The stance judge sees one
+PM turn and the stance line it was told to carry out, and checks adherence only.
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -39,6 +40,16 @@ FORBIDDEN_SYSTEM = (
     "or taking one decision that their own rules allow. Give that quote for each reported item."
 )
 
+# Separate from the leak and forbidden judges, which must never see a stance line.
+STANCE_SYSTEM = (
+    "Here is one message a portfolio manager (PM) wrote to their advisor and the instruction "
+    "that message was written to carry out. Decide whether the message carries the instruction "
+    "out. Different wording, a paraphrase, or first acknowledging a point the advisor made all "
+    "still count, as long as the message ends up doing what the instruction says. It fails "
+    "only when it drops, reverses or waters down the instruction, for example by giving in to "
+    "the advisor's pushback. Give a one-sentence reason."
+)
+
 LEAK_SCHEMA: dict[str, Any] = {
     "type": "object",
     "title": "leak_verdict",
@@ -69,6 +80,18 @@ FORBIDDEN_SCHEMA: dict[str, Any] = {
         }
     },
     "required": ["violations"],
+    "additionalProperties": False,
+}
+
+
+STANCE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "title": "stance_verdict",
+    "properties": {
+        "carried_out": {"type": "boolean"},
+        "reason": {"type": "string"},
+    },
+    "required": ["carried_out", "reason"],
     "additionalProperties": False,
 }
 
@@ -116,6 +139,12 @@ def forbidden_request(
     return _judge_request(FORBIDDEN_SYSTEM, content, FORBIDDEN_SCHEMA, config)
 
 
+def stance_request(pm_text: str, stance: str, config: ValidateConfig) -> dict[str, Any]:
+    """The stance judge's request body for one PM turn and the stance line it carried."""
+    content = f"Instruction: {stance}\n\nPM message: {pm_text}"
+    return _judge_request(STANCE_SYSTEM, content, STANCE_SCHEMA, config)
+
+
 class LeakVerdict(BaseModel):
     """One leakage judge verdict: whether the PM named a tendency, its label and quote."""
 
@@ -124,6 +153,15 @@ class LeakVerdict(BaseModel):
     explicit: bool
     label: str | None
     quote: str
+
+
+class StanceVerdict(BaseModel):
+    """One stance judge verdict: whether the PM turn carried its stance out, and why."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
+
+    carried_out: bool
+    reason: str
 
 
 class Violation(BaseModel):
@@ -146,6 +184,14 @@ def parse_leak(response: Mapping[str, Any]) -> LeakVerdict | None:
     """The leak verdict from a judge reply's last text block, validated against `LEAK_SCHEMA`."""
     try:
         return LeakVerdict.model_validate(last_text_json(response))
+    except ValidationError:
+        return None
+
+
+def parse_stance(response: Mapping[str, Any]) -> StanceVerdict | None:
+    """The stance verdict from a judge reply's last text block, validated against its schema."""
+    try:
+        return StanceVerdict.model_validate(last_text_json(response))
     except ValidationError:
         return None
 

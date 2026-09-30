@@ -2,9 +2,10 @@
 ledger and the market.
 
 Trade mismatches are failures, since stage 6 must not narrate a trade that
-was never placed or leave a placed one unmentioned. Level mismatches are
-warnings only, never failures, since the advisor may derive a figure no
-tool call returned.
+was never placed or leave a placed one unmentioned. A PM level mismatch is
+a failure too, since the narrator is given every level it may state; an
+advisor level mismatch is a warning only, since the advisor may derive a
+figure no tool call returned.
 """
 
 import json
@@ -130,21 +131,40 @@ def _confirmed_by_market(
     return _agree(mention.value, reference, level_tolerance)
 
 
-def count_level_warnings(
+def _level_reason(mention: Mention) -> str:
+    tenor = mention.tenor.value if mention.tenor is not None else "-"
+    return (
+        f"level not in market data: {mention.instrument_id} {tenor} {mention.field} {mention.value}"
+    )
+
+
+def check_pm_levels(
     log: DialogueLog, skeleton: Skeleton, lookup: MarketLookup, level_tolerance: float
-) -> int:
-    """Number of level mentions that are not confirmed by a tool result or the market."""
+) -> tuple[str, ...]:
+    """Failure reasons for PM level mentions the session date's market data does not confirm."""
+    reasons: set[str] = set()
+    for turn in log.turns:
+        if turn.role != TurnRole.PM:
+            continue
+        for mention in turn.mentions:
+            if mention.kind == MentionKind.LEVEL and not _confirmed_by_market(
+                mention, skeleton.date, lookup, level_tolerance
+            ):
+                reasons.add(_level_reason(mention))
+    return tuple(sorted(reasons))
+
+
+def count_level_warnings(log: DialogueLog, level_tolerance: float) -> int:
+    """Number of advisor level mentions that no number in that turn's tool results confirms."""
     warnings = 0
     for turn in log.turns:
+        if turn.role != TurnRole.ADVISOR:
+            continue
         levels = [mention for mention in turn.mentions if mention.kind == MentionKind.LEVEL]
         if not levels:
             continue
-        numbers = _tool_result_numbers(turn) if turn.role == TurnRole.ADVISOR else ()
+        numbers = _tool_result_numbers(turn)
         for mention in levels:
-            if turn.role == TurnRole.ADVISOR:
-                confirmed = any(_agree(mention.value, n, level_tolerance) for n in numbers)
-            else:
-                confirmed = _confirmed_by_market(mention, skeleton.date, lookup, level_tolerance)
-            if not confirmed:
+            if not any(_agree(mention.value, n, level_tolerance) for n in numbers):
                 warnings += 1
     return warnings

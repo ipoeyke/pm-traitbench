@@ -13,10 +13,12 @@ def _row(**overrides: object) -> ValidationRow:
         "attempt": 1,
         "status": ValidationStatus.PASS,
         "ledger_ok": True,
+        "level_ok": True,
         "grep_ok": True,
         "leak_judged": True,
         "leak_ok": True,
         "forbidden_ok": True,
+        "stance_ok": True,
         "level_warnings": 0,
         "reasons": (),
         "judge_model": "claude-opus-5-5",
@@ -27,8 +29,9 @@ def _row(**overrides: object) -> ValidationRow:
 
 def test_pass_row_requires_all_layers_ok_and_no_reasons() -> None:
     assert _row().status == ValidationStatus.PASS
-    with pytest.raises(ValidationError):
-        _row(grep_ok=False)
+    for layer in ("ledger", "level", "grep", "leak", "forbidden", "stance"):
+        with pytest.raises(ValidationError):
+            _row(**{f"{layer}_ok": False})
     with pytest.raises(ValidationError):
         _row(reasons=("some reason",))
 

@@ -38,21 +38,6 @@ _TENOR_ENUM: list[str | None] = [tenor.value for tenor in Tenor] + [None]
 _SIDE_ENUM: list[str] = [side.value for side in Side]
 _NULL = {"type": "null"}
 
-_TRADE_MENTION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "kind": {"const": "trade"},
-        "instrument_id": {"type": "string"},
-        "trade_idea_id": {"type": "string"},
-        "tenor": {"enum": _TENOR_ENUM},
-        "side": {"enum": _SIDE_ENUM},
-        "size": {"type": "number"},
-        "field": _NULL,
-        "value": _NULL,
-    },
-    "required": _MENTION_REQUIRED_KEYS,
-    "additionalProperties": False,
-}
 _LEVEL_MENTION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -68,34 +53,59 @@ _LEVEL_MENTION_SCHEMA: dict[str, Any] = {
     "required": _MENTION_REQUIRED_KEYS,
     "additionalProperties": False,
 }
-TURN_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "text": {"type": "string"},
-        "mentions": {
-            "type": "array",
-            "items": {"anyOf": [_TRADE_MENTION_SCHEMA, _LEVEL_MENTION_SCHEMA]},
+
+
+def _trade_mention_schema(trade_idea_ids: Sequence[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "kind": {"const": "trade"},
+            "instrument_id": {"type": "string"},
+            # Structured output then rejects any id outside the turn's listed trades.
+            "trade_idea_id": {"enum": list(trade_idea_ids)},
+            "tenor": {"enum": _TENOR_ENUM},
+            "side": {"enum": _SIDE_ENUM},
+            "size": {"type": "number"},
+            "field": _NULL,
+            "value": _NULL,
         },
-    },
-    "required": ["text", "mentions"],
-    "additionalProperties": False,
-}
-ADVISOR_TURN_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "text": {"type": "string"},
-        # The advisor never sees a trade idea id, so it never offers the trade branch.
-        "mentions": {"type": "array", "items": _LEVEL_MENTION_SCHEMA},
-    },
-    "required": ["text", "mentions"],
-    "additionalProperties": False,
-}
+        "required": _MENTION_REQUIRED_KEYS,
+        "additionalProperties": False,
+    }
+
+
+def _turn_schema(mention_schema: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "mentions": {"type": "array", "items": mention_schema},
+        },
+        "required": ["text", "mentions"],
+        "additionalProperties": False,
+    }
+
+
+def narrator_turn_schema(trade_idea_ids: Sequence[str]) -> dict[str, Any]:
+    """A PM turn's reply schema, offering the trade branch only when the turn lists trades.
+
+    Its `trade_idea_id` is an enum of exactly those ids, so neither an invented id nor
+    a trade mention on a turn without listed trades can be generated.
+    """
+    if not trade_idea_ids:
+        return _turn_schema(_LEVEL_MENTION_SCHEMA)
+    return _turn_schema({"anyOf": [_trade_mention_schema(trade_idea_ids), _LEVEL_MENTION_SCHEMA]})
+
+
+# The advisor never sees a trade idea id, so it never offers the trade branch.
+ADVISOR_TURN_SCHEMA: dict[str, Any] = _turn_schema(_LEVEL_MENTION_SCHEMA)
 
 _ADVISOR_MENTIONS_INSTRUCTION = (
     "Return your reply as `text` and `mentions`. For every market number you state, add "
     'a mention with kind "level", using the instrument_id and field name a tool '
     'returned (a curve point\'s field is "level"), the tenor a tool gave or null, and '
-    "the value you stated."
+    "the value you stated. Summarise a price history (its latest level, range and trend) "
+    "rather than listing every close."
 )
 
 
@@ -125,6 +135,55 @@ def prompt_sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+_STANCE_HOLDS = (
+    "A turn's \"In this message\" line is the PM's own decision, and the advisor's replies "
+    "never change it: the PM may acknowledge the advisor's point, but carries the decision "
+    "out anyway. When that line has the PM state a preference, the PM states only that "
+    "preference and adds no other request about how the advisor should answer, such as its "
+    "length, order, format, units or how hard it pushes back."
+)
+
+
+def _position_instrument_ids(ctx: SessionContext) -> tuple[str, ...]:
+    """Every leg instrument of the open positions, then of the ideas, first occurrence kept."""
+    ids = (leg.instrument_id for idea in (*ctx.open_positions, *ctx.ideas) for leg in idea.legs)
+    return tuple(dict.fromkeys(ids))
+
+
+def market_levels_section(ctx: SessionContext) -> str:
+    """The latest levels on or before the session date for every position and idea instrument.
+
+    Each level is named by the field a level mention uses, so the narrator can cite it.
+    """
+    today = ctx.skeleton.date
+    lines: list[str] = []
+    for instrument_id in _position_instrument_ids(ctx):
+        name = ctx.lookup.instruments[instrument_id].name
+        price = ctx.lookup.latest_price(instrument_id, today)
+        if price is not None:
+            spread = "" if price.spread_bp is None else f", spread_bp {price.spread_bp:.6g}"
+            lines.append(
+                f"- {name} ({instrument_id}): price {price.price:.6g}{spread} "
+                f"(close {price.date.isoformat()})"
+            )
+        curve = ctx.lookup.curve_on_or_before(instrument_id, today)
+        if curve is not None:
+            curve_date, levels = curve
+            tenors = ", ".join(
+                f"{tenor.value} {levels[tenor]:.6g}" for tenor in Tenor if tenor in levels
+            )
+            lines.append(
+                f"- {name} ({instrument_id}) curve, field level: {tenors} "
+                f"(close {curve_date.isoformat()})"
+            )
+    if not lines:
+        return "Latest market levels: none are available to you, so state no market level."
+    return (
+        "Latest market levels, the only market numbers you may state (in a level mention, "
+        "use the field named here, with the tenor for a curve level):\n" + "\n".join(lines)
+    )
+
+
 def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
     """The narrator's stable system prompt: role, mandate, ideas, voice and forbidden list.
 
@@ -136,9 +195,13 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
     sections = [
         "Write only the PM's side of a conversation with their investment copilot, in "
         "first person, in the voice below. Never name a psychological trait, tendency or "
-        "preference. Mention a trade only when a turn's directive lists it, and never "
-        "invent one. Fill `mentions` for every trade and every market level you state, "
-        "using the ids given.",
+        "preference. Add a trade mention only for a trade a turn's \"Mention each of these "
+        'trades" directive lists, using its ti_ id and size exactly as given, and never '
+        "invent one. Refer to open positions and the ideas below by instrument, or with a "
+        "level mention for a market number you state, never with a trade mention. Fill "
+        "`mentions` for every such trade and every market level you state, using the ids "
+        "given. State only the market levels listed under the latest market levels below.",
+        _STANCE_HOLDS,
         f"Today is {ctx.skeleton.date.isoformat()}.",
         f"Asset class: {mandate.asset_class.value}. Sub-style: {mandate.sub_style}. "
         f"Book size: {mandate.book_size}. Risk unit: {mandate.risk_unit}. "
@@ -156,6 +219,7 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
         sections.extend(
             rule.text for rule in ctx.idea_rules if rule.trade_idea_id == idea.trade_idea_id
         )
+    sections.append(market_levels_section(ctx))
     sections.append(ctx.voice.line)
     if ctx.avoid_lines:
         sections.append(
@@ -202,6 +266,14 @@ def opening_line(ctx: SessionContext, opening: Opening) -> str:
     )
 
 
+def listed_trades(ctx: SessionContext, pm_index: int) -> tuple[LedgerRow, ...]:
+    """The trades a PM turn's directive tells it to mention: turn 0's day trades, else none."""
+    directive = ctx.turn_plan.pm_directives[pm_index]
+    if pm_index == 0 and directive.opening is not None:
+        return directive.trades
+    return ()
+
+
 def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
     """One PM turn's mid-conversation directive text.
 
@@ -211,11 +283,16 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
     lines: list[str] = []
     if pm_index == 0 and directive.opening is not None:
         lines.append(opening_line(ctx, directive.opening))
-        if directive.trades:
-            trades = "; ".join(_trade_line(ctx, trade) for trade in directive.trades)
+        if trades_to_mention := listed_trades(ctx, pm_index):
+            trades = "; ".join(_trade_line(ctx, trade) for trade in trades_to_mention)
             lines.append(f"Mention each of these trades: {trades}")
     if directive.stance is not None:
-        lines.append(f"In this message: {directive.stance.stance}")
+        lines.append(
+            f"In this message: {directive.stance.stance}. This is your decision, and the "
+            "advisor's replies never change it: you may acknowledge the advisor's point, but "
+            "carry this out anyway. If it states a preference, state only that one and ask "
+            "nothing else about how the advisor should answer."
+        )
     if not lines:
         lines.append("Continue the conversation naturally in one short message.")
     return "\n".join(lines)
@@ -253,15 +330,18 @@ def base_request(
 
 def narrator_request(
     ctx: SessionContext,
+    pm_index: int,
     messages: Sequence[Mapping[str, Any]],
     config: DialogueConfig,
     feedback: str | None,
 ) -> dict[str, Any]:
-    """The narrator's Messages API request body.
+    """The narrator's Messages API request body for PM turn `pm_index`.
 
     Only `model`, `max_tokens`, `system`, `messages`, `output_config` and
-    `cache_control`; never `thinking` or a sampling param.
+    `cache_control`; never `thinking` or a sampling param. Its schema is
+    `narrator_turn_schema` over the turn's listed trades.
     """
+    trade_idea_ids = sorted({trade.trade_idea_id for trade in listed_trades(ctx, pm_index)})
     return {
         **base_request(
             config.narrator_model,
@@ -269,7 +349,7 @@ def narrator_request(
             config.effort,
             narrator_system(ctx, feedback),
             messages,
-            TURN_SCHEMA,
+            narrator_turn_schema(trade_idea_ids),
         ),
         "cache_control": {"type": "ephemeral"},
     }
@@ -286,7 +366,7 @@ def advisor_request(
 
     The narrator's keys plus `tools`, and `tool_choice` only when tools are
     disabled; never `thinking` or a sampling param. Its schema is
-    `ADVISOR_TURN_SCHEMA`, not `TURN_SCHEMA`, since the advisor never sees a
+    `ADVISOR_TURN_SCHEMA`, not a narrator schema, since the advisor never sees a
     trade idea id and so can never fill a trade mention.
     """
     request = {
