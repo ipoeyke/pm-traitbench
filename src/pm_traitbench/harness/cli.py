@@ -58,7 +58,9 @@ def add_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     judge = eval_sub.add_parser("judge", help="grade a finished run's open replies with the judges")
     add_common_args(judge)
     judge.add_argument("--run-name", required=True, metavar="NAME", help="the run to judge")
-    judge.add_argument("--force", action="store_true", help="discard cached judge calls first")
+    judge.add_argument(
+        "--force", action="store_true", help="discard existing judgements and judge again"
+    )
 
     sample = eval_sub.add_parser("sample", help="export a blind sample for human rating")
     add_common_args(sample)

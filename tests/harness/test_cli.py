@@ -132,11 +132,12 @@ def test_eval_judge_sample_score_end_to_end(
     assert _eval(corpus, "run", "--sut", ECHO, "--run-name", "echo") == 0
 
     assert _eval(corpus, "judge", "--run-name", "echo") == 0
-    assert "judged" in capsys.readouterr().out
+    judge_out = capsys.readouterr().out
     config = load_config(corpus / CONFIG_NAME)
     store = DataStore(corpus, config.output)
     run_store = DataStore(run_dir(corpus, "echo"), config.output)
     expected = len(select_items(load_judge_inputs(store, run_store)).items)
+    assert re.search(rf"judged {expected} items \(.*\), skipped \d+", judge_out)
     assert expected > 0
     assert len(run_store.read(JUDGEMENTS)) == expected
 
@@ -155,7 +156,10 @@ def test_eval_judge_sample_score_end_to_end(
     capsys.readouterr()
 
     assert _eval(corpus, "score", "--run-name", "echo") == 0
-    assert "agreement judge_" in capsys.readouterr().out
+    score_out = capsys.readouterr().out
+    assert re.search(
+        r"agreement judge_\w+: n=\d+ rate=\d\.\d{3} kappa=(\d\.\d{3}|-|-?\d\.\d{3})", score_out
+    )
     summary = json.loads((run_dir(corpus, "echo") / "summary.json").read_text(encoding="utf-8"))
     assert set(summary["agreement"]) == {row["judge"] for row in rows}
     for key, value in summary["awaiting_judge"].items():
@@ -173,7 +177,7 @@ def test_eval_sample_before_judge_exit_1(corpus: Path, capsys) -> None:
 
 def test_eval_judge_bad_run_name_exit_1(corpus: Path, capsys) -> None:
     assert _eval(corpus, "judge", "--run-name", "Bad Name") == 1
-    assert "error:" in capsys.readouterr().err
+    assert "run name 'Bad Name' must match" in capsys.readouterr().err
 
 
 def test_eval_sample_rejects_zero_size(corpus: Path, capsys) -> None:

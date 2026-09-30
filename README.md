@@ -102,13 +102,14 @@ which traits the validated dialogue shows and writes `gate2_traits`,
 `gate2_signals`, `gate2_pm` and `gate2_cells`; it exits 1 when a blocking
 row fails - one one-sided Fisher exact test per bias parameter and one
 pooled Poisson-binomial test over every held preference, at `gate2.alpha`.
-A blocking row below `gate2.min_class` PMs either side is `insufficient`
-and reported but never blocks. The `probes` stage writes `probes`, one row per question with ground truth at
-each checkpoint of a PM's schedule, calling no model; `answer`, the option
-sources and the supporting signal ids are hidden columns. Pass `--force` to
-overwrite a table that already exists. The `eval` commands are not a stage:
-they replay the corpus into a system under test and score its answers; see
-Evaluation. Run `uv run pm-traitbench --help` for the full command list.
+A blocking row below `gate2.min_class` PMs either side is `insufficient` and
+reported but never blocks. The `probes` stage writes `probes`, one row per
+question with ground truth at each checkpoint of a PM's schedule, calling no
+model; `answer`, the option sources and the supporting signal ids are hidden
+columns. Pass `--force` to overwrite a table that already exists. The `eval`
+commands are not a stage: they replay the corpus into a system under test and
+score its answers; see Evaluation. Run `uv run pm-traitbench --help` for the
+full command list.
 
 `fetch-market` only needs to run first when the config references a real
 market seed, as the default and demo configs both do for their pilot seed;
