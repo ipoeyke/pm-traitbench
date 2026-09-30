@@ -3,7 +3,14 @@
 import pytest
 
 from pm_traitbench.dialogue.client import UsageTotals
-from pm_traitbench.dialogue.progress import Progress, format_count, format_elapsed, format_line
+from pm_traitbench.dialogue.progress import (
+    Progress,
+    format_count,
+    format_elapsed,
+    format_failure,
+    format_line,
+)
+from pm_traitbench.errors import DialogueError, Gate2Error
 
 
 @pytest.mark.parametrize(
@@ -62,12 +69,30 @@ def test_progress_prints_start_line_then_one_line_per_finish(
     progress.start(8)
     now[0] = 121.0
     totals.calls = 3
-    progress.finish(failed=False)
+    progress.finish("pm pm_001")
     now[0] = 130.0
-    progress.finish(failed=True)
+    progress.finish("session s_001", Gate2Error("session s_001: reply was not JSON"))
 
     assert capsys.readouterr().err.splitlines() == [
         "[gate2] 2 units, concurrency 8",
         "[gate2] 1/2 units (0 failed) | 3 calls, 0 cached | 0 in, 0 out tokens | 0m21s",
+        "[gate2] session s_001 failed: reply was not JSON",
         "[gate2] 2/2 units (1 failed) | 3 calls, 0 cached | 0 in, 0 out tokens | 0m30s",
     ]
+
+
+def test_format_failure_keeps_a_bare_project_reason() -> None:
+    line = format_failure("dialogue", "session s_001", DialogueError("RateLimitError (status 429)"))
+
+    assert line == "[dialogue] session s_001 failed: RateLimitError (status 429)"
+
+
+def test_format_failure_leads_a_foreign_error_with_its_type() -> None:
+    assert (
+        format_failure("dialogue", "session s_001", KeyError("ticker"))
+        == "[dialogue] session s_001 failed: KeyError: 'ticker'"
+    )
+    assert (
+        format_failure("dialogue", "session s_001", RuntimeError())
+        == "[dialogue] session s_001 failed: RuntimeError"
+    )

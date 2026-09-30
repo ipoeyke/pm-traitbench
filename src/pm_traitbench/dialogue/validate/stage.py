@@ -268,6 +268,7 @@ def _run(
             config.validation.max_concurrency,
             label="validate",
             unit="sessions",
+            unit_name=lambda unit: f"session {unit.ctx.skeleton.session_id}",
         )
     )
     raise_on_failure(

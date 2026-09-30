@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 
 from pm_traitbench.dialogue.client import UsageTotals
+from pm_traitbench.errors import PmTraitbenchError
 
 _SECONDS_PER_HOUR = 3600
 _MINUTES_PER_HOUR = 60
@@ -56,6 +57,21 @@ def format_line(
     )
 
 
+def format_failure(label: str, unit_name: str, error: BaseException) -> str:
+    """One failure line naming the unit and its reason, stripped of a repeated unit prefix.
+
+    An error outside the project's own hierarchy is led by its type, since its message
+    alone (a bare `KeyError`'s key, say) rarely says what went wrong.
+    """
+    message = str(error)
+    prefix = f"{unit_name}: "
+    if message.startswith(prefix):
+        message = message[len(prefix) :]
+    if not isinstance(error, PmTraitbenchError):
+        message = f"{type(error).__name__}: {message}" if message else type(error).__name__
+    return f"[{label}] {unit_name} failed: {message}"
+
+
 class Progress:
     """Prints a start line, then one line per finished unit, flushed to stderr."""
 
@@ -83,11 +99,12 @@ class Progress:
         self._started = self._clock()
         self._print(f"[{self._label}] {self._total} {self._unit}, concurrency {max_concurrency}")
 
-    def finish(self, failed: bool) -> None:
-        """Count one finished unit and print its line."""
+    def finish(self, unit_name: str, error: BaseException | None = None) -> None:
+        """Count one finished unit and print its line, led by a failure line if it raised."""
         self._done += 1
-        if failed:
+        if error is not None:
             self._failed += 1
+            self._print(format_failure(self._label, unit_name, error))
         self._print(
             format_line(
                 self._label,

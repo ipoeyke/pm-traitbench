@@ -421,7 +421,15 @@ def test_run_bounded_prints_progress_and_keeps_failures_in_place(
         return item
 
     results = asyncio.run(
-        run_bounded([0, 1, 2], worker, client, 2, label="dialogue", unit="sessions")
+        run_bounded(
+            [0, 1, 2],
+            worker,
+            client,
+            2,
+            label="dialogue",
+            unit="sessions",
+            unit_name=lambda item: f"session s_{item}",
+        )
     )
 
     assert results[0] == 0
@@ -429,5 +437,6 @@ def test_run_bounded_prints_progress_and_keeps_failures_in_place(
     assert results[2] == 2
     lines = capsys.readouterr().err.splitlines()
     assert lines[0] == "[dialogue] 3 sessions, concurrency 2"
-    assert len(lines) == 4
+    assert len(lines) == 5
+    assert "[dialogue] session s_1 failed: boom" in lines
     assert lines[-1].startswith("[dialogue] 3/3 sessions (1 failed) | 0 calls, 0 cached")
