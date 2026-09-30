@@ -31,6 +31,8 @@ SAMPLE_COLUMNS = (
     "human_correct",
     "human_note",
 )
+# Counteract and decline are where a judge is most likely wrong (the reply must both recognise
+# a tendency or rule breach and act on it), so the human check leans toward them.
 IN_SITU_WEIGHTS = {InSituCase.COUNTERACT: 0.4, InSituCase.DECLINE: 0.4, InSituCase.COMPLY: 0.2}
 _EMPTY_REPLY = "empty_reply"
 _YES_NO = {"yes": True, "no": False}

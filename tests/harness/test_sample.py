@@ -1,6 +1,7 @@
 """Tests for the blind human sample and judge-human agreement."""
 
 import csv
+from collections import Counter
 from datetime import date
 
 import pytest
@@ -130,8 +131,11 @@ def test_draw_sample_blind_and_deterministic() -> None:
     assert all(r["human_correct"] == "" and r["human_note"] == "" for r in first)
     assert all(r["probe_id"] != empty_id for r in first)
     assert {r["judge"] for r in first} == {"judge_in_situ", "judge_governance"}
-    situ = [r for r in first if r["judge"] == "in_situ"]
-    assert {r["case"] for r in situ} <= {"comply", "counteract", "decline"}
+    # 8 over 5 judges is 2,2,2,1,1; open, intrusion and format are empty, so their 4 go to
+    # in_situ and governance (4 each). In-situ 4 splits 0.4/0.4/0.2: round(1.6)=2 counteract,
+    # 2 decline, and comply takes the remainder 0.
+    situ = [r["case"] for r in first if r["judge"] == Judge.IN_SITU.value]
+    assert Counter(situ) == {"counteract": 2, "decline": 2}
     assert all(r["brief"].startswith("brief") and r["question"] for r in first)
 
 
