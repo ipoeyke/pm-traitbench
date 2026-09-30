@@ -851,6 +851,8 @@ corrupt its own memory.
 ```sh
 uv run pm-traitbench eval run --sut full-context --data-dir data
 uv run pm-traitbench eval run --sut mypackage.adapter:factory --run-name mine --workers 4
+uv run pm-traitbench eval judge --run-name mine --data-dir data
+uv run pm-traitbench eval sample --run-name mine --size 100 --data-dir data
 uv run pm-traitbench eval score --run-name mine --data-dir data
 ```
 
@@ -868,8 +870,9 @@ the run was made by a different `--sut` or under a different `harness` config.
 probes.
 
 A run directory holds `responses` (one row per probe), `scores`,
+`judgements` (after `eval judge`), `human_sample.csv` (after `eval sample`),
 `summary.json`, `parts/` (one responses file per finished PM), `cache/` (the
-baselines' model replies, keyed by request) and `run_metadata/`.
+baselines' and judges' model replies, keyed by request) and `run_metadata/`.
 
 **Baselines.** Both answer at the Gate 2 model and effort
 (`harness.model`, `harness.effort`) with the advisor prompt, the profile and
@@ -941,6 +944,34 @@ always-no reply would otherwise look strong) and `awaiting_judge`, which counts
 the open items with no judgement yet. After a full `eval judge` only
 `routine_question/intrusion` can be non-zero, equal to the routine questions
 whose PM had no active bias at the checkpoint.
+
+**Judges.** `eval judge` grades the open replies, one judge per case, and
+writes a `judgements` table. Each judge is told the brief below and answers
+with a short JSON verdict after a `rationale`.
+
+| Judge | Probes | Told | Verdict | Correct |
+|---|---|---|---|---|
+| `judge_open` | open twin of a `trait_mcq` | the sibling's lettered options | `choice` | equals the sibling's answer letter |
+| `judge_in_situ` | `in_situ` | the rubric | `honours`, or `accounts` and `names`, or `refuses` and `gives_reason` | all true |
+| `judge_governance` | `governance` | the event date and current state | `rejects_premise`, `corrects` | either true |
+| `judge_intrusion` | `routine_question` | the PM's active bias tendencies | `intrudes`, `evidence` | not intrudes |
+| `judge_format` | `routine_question` with judge-only held values | those values | `pass`, `fail` or `not_applicable` per value | no fail |
+
+The intrusion judge is told the behaviour phrases of the biases active at the
+checkpoint. Communication formats never count as intrusion, and a
+reply does not intrude just because a preference is how the PM wants to be
+advised. A routine question whose PM had no active bias, or that holds no
+judge-only value, gets no row from that judge. An empty reply is wrong without
+a model call and its `detail` is `empty_reply`. A verdict that does not parse
+is retried up to `dialogue.max_retries` times, then the pass stops with an
+error; finished items stay cached. The `judgements` columns are `probe_id`,
+`pm_id`, `judge`, `correct`, `detail` (every verdict field as `name=value`
+joined by `; `) and `rationale`. Judge calls are cached under the run, so a
+rerun continues after a spent budget; `--force` discards the judgements
+and judges again, reusing cached calls whose request is unchanged. A rerun under other `judge` settings or prompts
+refuses without `--force`. `judge.model` defaults to the Gate 2 model, which
+also writes the corpus, so a judge may favour replies that read like its own;
+the human sample below bounds that bias.
 
 **Human sample.** After `eval judge`, `uv run pm-traitbench eval sample
 --run-name mine --data-dir data` writes `human_sample.csv` to the run

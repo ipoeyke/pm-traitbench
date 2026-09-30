@@ -1,12 +1,15 @@
 """The `eval` command group: replay the corpus into a system under test and score it."""
 
 import argparse
+import csv
 import sys
+from collections import Counter
 from typing import Any
 
 from pm_traitbench.cli_args import add_common_args
 from pm_traitbench.config import load_config
 from pm_traitbench.harness.baselines import BASELINES, baseline_factory
+from pm_traitbench.harness.judge import judge_run
 from pm_traitbench.harness.runner import (
     check_run_name,
     default_run_name,
@@ -14,13 +17,14 @@ from pm_traitbench.harness.runner import (
     run_dir,
     run_sut,
 )
+from pm_traitbench.harness.sample import write_sample
 from pm_traitbench.harness.score import score_run
 from pm_traitbench.tables.store import DataStore
 
 _COLUMNS = ("probe_type", "form", "scorer", "n", "accuracy", "chance", "parse_errors")
 
 
-def _workers(text: str) -> int:
+def _positive_int(text: str) -> int:
     try:
         value = int(text)
     except ValueError:
@@ -31,7 +35,7 @@ def _workers(text: str) -> int:
 
 
 def add_eval_parser(subparsers: argparse._SubParsersAction) -> None:
-    """Register `eval` with its `run` and `score` subcommands."""
+    """Register `eval` with its `run`, `judge`, `sample` and `score` subcommands."""
     eval_parser = subparsers.add_parser(
         "eval", help="replay the corpus into a system under test and score its answers"
     )
@@ -48,8 +52,20 @@ def add_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     run.add_argument(
         "--run-name", default=None, metavar="NAME", help="output name (default: from --sut)"
     )
-    run.add_argument("--workers", type=_workers, default=1, metavar="N", help="parallel PMs")
+    run.add_argument("--workers", type=_positive_int, default=1, metavar="N", help="parallel PMs")
     run.add_argument("--force", action="store_true", help="discard an existing run first")
+
+    judge = eval_sub.add_parser("judge", help="grade a finished run's open replies with the judges")
+    add_common_args(judge)
+    judge.add_argument("--run-name", required=True, metavar="NAME", help="the run to judge")
+    judge.add_argument("--force", action="store_true", help="discard cached judge calls first")
+
+    sample = eval_sub.add_parser("sample", help="export a blind sample for human rating")
+    add_common_args(sample)
+    sample.add_argument("--run-name", required=True, metavar="NAME", help="the judged run")
+    sample.add_argument(
+        "--size", type=_positive_int, default=None, metavar="N", help="rows (default: config)"
+    )
 
     score = eval_sub.add_parser("score", help="score a finished run")
     add_common_args(score)
@@ -78,6 +94,24 @@ def run_eval(args: argparse.Namespace) -> int:
         print(_table(summary["by_type"]))
         awaiting = ", ".join(f"{k} {v}" for k, v in summary["awaiting_judge"].items())
         print(f"awaiting judge: {awaiting}")
+        for judge, stats in sorted(summary["agreement"].items()):
+            kappa = "-" if stats["kappa"] is None else f"{stats['kappa']:.3f}"
+            print(f"agreement {judge}: n={stats['n']} rate={stats['agreement']:.3f} kappa={kappa}")
+        return 0
+    if args.eval_command == "judge":
+        judged = judge_run(config, store, check_run_name(args.run_name), force=args.force)
+        counts = Counter(str(row.judge) for row in judged.judgements)
+        by_judge = ", ".join(f"{name}: {n}" for name, n in sorted(counts.items()))
+        print(
+            f"judged {len(judged.judgements)} items ({by_judge}), "
+            f"skipped {sum(judged.skipped.values())}"
+        )
+        return 0
+    if args.eval_command == "sample":
+        path = write_sample(config, store, check_run_name(args.run_name), args.size)
+        with path.open(newline="", encoding="utf-8") as f:
+            count = sum(1 for _ in csv.DictReader(f))
+        print(f"wrote {count} rows to {path}")
         return 0
 
     run_name = check_run_name(args.run_name or default_run_name(args.sut))
