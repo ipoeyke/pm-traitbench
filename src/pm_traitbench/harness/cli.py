@@ -65,6 +65,7 @@ def add_eval_parser(subparsers: argparse._SubParsersAction) -> None:
     sample = eval_sub.add_parser("sample", help="export a blind sample for human rating")
     add_common_args(sample)
     sample.add_argument("--run-name", required=True, metavar="NAME", help="the judged run")
+    sample.add_argument("--force", action="store_true", help="replace an existing sample file")
     sample.add_argument(
         "--size", type=_positive_int, default=None, metavar="N", help="rows (default: config)"
     )
@@ -110,7 +111,9 @@ def run_eval(args: argparse.Namespace) -> int:
         )
         return 0
     if args.eval_command == "sample":
-        path = write_sample(config, store, check_run_name(args.run_name), args.size)
+        path = write_sample(
+            config, store, check_run_name(args.run_name), args.size, force=args.force
+        )
         with path.open(newline="", encoding="utf-8") as f:
             count = sum(1 for _ in csv.DictReader(f))
         print(f"wrote {count} rows to {path}")

@@ -45,6 +45,7 @@ from pm_traitbench.traits_truth import bias_active_at
 
 JUDGE_METADATA = "eval-judge"
 NO_CHOICE = "none"
+EMPTY_REPLY = "empty_reply"
 SKIP_NO_ACTIVE_BIAS = "no_active_bias"
 SKIP_NO_JUDGE_ONLY_VALUES = "no_judge_only_values"
 
@@ -460,7 +461,7 @@ def empty_judgement(item: JudgeItem) -> JudgementRow:
         pm_id=item.probe.pm_id,
         judge=item.judge,
         correct=False,
-        detail="empty_reply",
+        detail=EMPTY_REPLY,
         rationale="",
     )
 

@@ -931,7 +931,7 @@ The checks are:
 usually the month. `confidence_level` needs the confidence or conviction word
 because a bare percentage is a quoted move. The bp unit matches glued forms
 such as `12bp`. The `register`, `pushback_style`, `answer_ordering` and "flag
-uncertainty once" values have no deterministic check and wait for judges.
+uncertainty once" values have no deterministic check and are graded by `judge_format`.
 
 `summary.json` holds `by_type` (per probe type, form and scorer: `n`,
 `correct`, `accuracy`, `chance` for option-letter rows and null for judge
@@ -981,7 +981,9 @@ rows evenly and in-situ rows split 40/40/20 over counteract, decline and
 comply; a judge or case with too few items hands its share to the next.
 Replies that were empty are left out. The columns are `sample_id`, `judge`,
 `probe_id`, `pm_id`, `case`, `question`, `response`, `brief`, `human_correct`
-and `human_note`. Verdicts and rationales are withheld so raters stay blind.
+and `human_note`. Verdicts and rationales are withheld so raters stay blind. `eval sample`
+refuses to overwrite an existing sample without `--force`, because a rerun
+would discard entered ratings.
 Fill `human_correct` with `yes` or `no` (blank means unrated) and rerun `eval
 score`: `summary.json` then holds `agreement` per judge with `n`, the
 agreement rate and Cohen's kappa. Kappa is reported because intrusion and

@@ -28,6 +28,7 @@ from pm_traitbench.harness.checks import (
     run_check,
 )
 from pm_traitbench.harness.judge import (
+    EMPTY_REPLY,
     JudgeInputs,
     governance_kind,
     in_situ_case,
@@ -111,7 +112,7 @@ def score_format(
     if not held:
         return None
     if not response.strip():
-        return _format_row(row, False, "empty_reply")
+        return _format_row(row, False, EMPTY_REPLY)
     outcomes = [
         (f"{param}={value}", run_check(check_map[(param, value)], response, short_page_words))
         for param, value in held
@@ -144,7 +145,7 @@ _AWAITING_KEYS: dict[Judge, str] = {
 def judgement_score(row: JudgementRow) -> ScoreRow | None:
     """The score row of a judgement, or None when a format judge found nothing to check."""
     detail = None
-    if row.detail == "empty_reply":
+    if row.detail == EMPTY_REPLY:
         detail = row.detail
     elif row.judge == Judge.FORMAT:
         outcomes = split_detail(row.detail, row.judge)

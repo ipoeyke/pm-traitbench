@@ -179,6 +179,35 @@ def test_write_sample_writes_blind_csv(tmp_path) -> None:
     assert "secret rationale" not in path.read_text(encoding="utf-8")
 
 
+def test_write_sample_refuses_overwrite_without_force(tmp_path) -> None:
+    config = stage_config()
+    store = DataStore(tmp_path, config.output)
+    mcq, twin = open_pair("pm_001", 1, DAY, answer="A")
+    store.write(TRAITS, traits_for("pm_001"))
+    store.write(DRIFT_EVENTS, [])
+    run_store = write_run(
+        tmp_path, config, store, [mcq, twin], {mcq.probe_id: "r", twin.probe_id: "r"}
+    )
+    run_store.write(JUDGEMENTS, [_jrow(twin, Judge.OPEN, True, "choice=B")])
+    path = write_sample(config, store, "r1", size=1)
+    path.write_text("rated", encoding="utf-8")
+
+    with pytest.raises(HarnessError, match="--force"):
+        write_sample(config, store, "r1", size=1)
+    assert path.read_text(encoding="utf-8") == "rated"
+
+    write_sample(config, store, "r1", size=1, force=True)
+    assert path.read_text(encoding="utf-8") != "rated"
+
+
+def test_read_ratings_accepts_utf8_bom(tmp_path) -> None:
+    path = tmp_path / "s.csv"
+    _write_csv(path, [_rated("s_0001", "yes")])
+    path.write_text("\ufeff" + path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    assert [r.sample_id for r in read_ratings(path)] == ["s_0001"]
+
+
 def _write_csv(path, rows) -> None:
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=SAMPLE_COLUMNS)

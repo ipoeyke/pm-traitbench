@@ -175,6 +175,21 @@ def test_eval_sample_before_judge_exit_1(corpus: Path, capsys) -> None:
     assert "eval judge" in capsys.readouterr().err
 
 
+def test_eval_sample_refuses_overwrite_without_force(
+    corpus: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    _inject_judge_client(monkeypatch)
+    _add_open_cases(corpus)
+    assert _eval(corpus, "run", "--sut", ECHO, "--run-name", "echo") == 0
+    assert _eval(corpus, "judge", "--run-name", "echo") == 0
+    assert _eval(corpus, "sample", "--run-name", "echo", "--size", "2") == 0
+    capsys.readouterr()
+
+    assert _eval(corpus, "sample", "--run-name", "echo", "--size", "2") == 1
+    assert "--force" in capsys.readouterr().err
+    assert _eval(corpus, "sample", "--run-name", "echo", "--size", "2", "--force") == 0
+
+
 def test_eval_judge_bad_run_name_exit_1(corpus: Path, capsys) -> None:
     assert _eval(corpus, "judge", "--run-name", "Bad Name") == 1
     assert "run name 'Bad Name' must match" in capsys.readouterr().err

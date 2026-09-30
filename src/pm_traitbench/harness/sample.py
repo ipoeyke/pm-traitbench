@@ -11,7 +11,7 @@ import numpy as np
 from pm_traitbench.config import Config
 from pm_traitbench.enums import InSituCase, Judge
 from pm_traitbench.errors import HarnessError
-from pm_traitbench.harness.judge import JudgeItem, load_judge_inputs, select_items
+from pm_traitbench.harness.judge import EMPTY_REPLY, JudgeItem, load_judge_inputs, select_items
 from pm_traitbench.harness.runner import check_run_name, check_scorable, run_dir
 from pm_traitbench.rng import stream
 from pm_traitbench.tables.schema import JudgementRow
@@ -34,7 +34,6 @@ SAMPLE_COLUMNS = (
 # Counteract and decline are where a judge is most likely wrong (the reply must both recognise
 # a tendency or rule breach and act on it), so the human check leans toward them.
 IN_SITU_WEIGHTS = {InSituCase.COUNTERACT: 0.4, InSituCase.DECLINE: 0.4, InSituCase.COMPLY: 0.2}
-_EMPTY_REPLY = "empty_reply"
 _YES_NO = {"yes": True, "no": False}
 
 
@@ -84,7 +83,7 @@ def draw_sample(
 
     Items whose reply was empty are never drawn, as they need no rater.
     """
-    empty = {(j.pm_id, j.probe_id, j.judge) for j in judgements if j.detail == _EMPTY_REPLY}
+    empty = {(j.pm_id, j.probe_id, j.judge) for j in judgements if j.detail == EMPTY_REPLY}
     eligible = [i for i in items if (i.probe.pm_id, i.probe.probe_id, i.judge) not in empty]
     by_judge: dict[Judge, list[JudgeItem]] = {judge: [] for judge in Judge}
     for item in eligible:
@@ -119,7 +118,14 @@ def draw_sample(
     ]
 
 
-def write_sample(config: Config, store: DataStore, run_name: str, size: int | None = None) -> Path:
+def write_sample(
+    config: Config,
+    store: DataStore,
+    run_name: str,
+    size: int | None = None,
+    *,
+    force: bool = False,
+) -> Path:
     """Write the run's blind human sample CSV and return its path."""
     check_run_name(run_name)
     rd = run_dir(store.data_dir, run_name)
@@ -136,6 +142,8 @@ def write_sample(config: Config, store: DataStore, run_name: str, size: int | No
         rng,
     )
     path = rd / SAMPLE_FILE
+    if path.exists() and not force:
+        raise HarnessError(f"{path.name} exists; --force replaces it and discards entered ratings")
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=SAMPLE_COLUMNS)
         writer.writeheader()
@@ -156,7 +164,8 @@ class Rating:
 
 def read_ratings(path: Path) -> list[Rating]:
     """The rated rows of a sample CSV; rows with a blank `human_correct` are skipped."""
-    with path.open(newline="", encoding="utf-8") as f:
+    # utf-8-sig: spreadsheets saving "CSV UTF-8" prepend a byte-order mark.
+    with path.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         missing = [c for c in SAMPLE_COLUMNS if c not in (reader.fieldnames or ())]
         if missing:

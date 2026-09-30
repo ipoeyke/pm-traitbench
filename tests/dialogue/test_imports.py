@@ -109,7 +109,7 @@ def _violations_under(root: Path, forbidden: tuple[str, ...]) -> list[str]:
     return violations
 
 
-def test_dialogue_package_is_imported_only_by_pipeline_gate2_plumbing_and_baselines():
+def test_dialogue_package_is_imported_only_by_pipeline_gate2_plumbing_and_harness():
     violations = []
     for path in sorted(_SRC_ROOT.rglob("*.py")):
         if _DIALOGUE_ROOT in path.parents or path in (

@@ -230,6 +230,7 @@ def run_sut(
 
 
 def check_scorable(store: DataStore, run_store: DataStore, run_name: str) -> None:
+    """Guards a run must pass before its responses are scored, judged or sampled."""
     meta = run_store.read_run_metadata(RUN_METADATA)
     if meta is None:
         raise HarnessError(f"run '{run_name}' has no run metadata; run the evaluation first")
