@@ -149,7 +149,7 @@ __all__ = [
 _PM_ID_PATTERN = r"^pm_\d{3,}$"
 _TRAIT_ID_PATTERN = r"^t_\d{2,}$"
 _RULE_ID_PATTERN = r"^r_\d{2,}$"
-_IDEA_ID_PATTERN = r"^ti_\d{3,}$"
+IDEA_ID_PATTERN = r"^ti_\d{3,}$"
 _BIAS_FLAG_PATTERN = r"^[a-z_]+:[a-z_]+(;[a-z_]+:[a-z_]+)*$"
 
 
@@ -500,7 +500,7 @@ class Idea(BaseModel):
         pattern=_PM_ID_PATTERN, description="Identifier of the PM who owns the idea."
     )
     trade_idea_id: str = Field(
-        pattern=_IDEA_ID_PATTERN, description="Unique identifier for the trade idea."
+        pattern=IDEA_ID_PATTERN, description="Unique identifier for the trade idea."
     )
     instrument_id: str = Field(description="Primary instrument the idea trades.")
     expression: Expression = Field(description="Structural form of the idea.")
@@ -580,7 +580,7 @@ class LedgerRow(BaseModel):
     )
     date: datetime.date = Field(description="Date the order was placed.")
     trade_idea_id: str = Field(
-        pattern=_IDEA_ID_PATTERN, description="Trade idea the order belongs to."
+        pattern=IDEA_ID_PATTERN, description="Trade idea the order belongs to."
     )
     instrument_id: str = Field(description="Instrument traded by the order.")
     tenor: Tenor | None = Field(
@@ -613,7 +613,7 @@ class RuleEvent(BaseModel):
     )
     rule_id: str = Field(pattern=_RULE_ID_PATTERN, description="Rule that fired.")
     trade_idea_id: str = Field(
-        pattern=_IDEA_ID_PATTERN, description="Trade idea the rule fired against."
+        pattern=IDEA_ID_PATTERN, description="Trade idea the rule fired against."
     )
     date_fired: datetime.date = Field(description="Date the rule's condition was met.")
     response: RuleResponse = Field(description="How the PM responded to the rule firing.")
@@ -636,7 +636,7 @@ class PositionDay(BaseModel):
     )
     date: datetime.date = Field(description="Date of this position snapshot.")
     trade_idea_id: str = Field(
-        pattern=_IDEA_ID_PATTERN, description="Trade idea this snapshot belongs to."
+        pattern=IDEA_ID_PATTERN, description="Trade idea this snapshot belongs to."
     )
     pnl_unit: float = Field(description="Mark-to-market P&L in the mandate's risk unit.")
     pnl_z: float = Field(description="Mark-to-market P&L expressed as a z-score.")
@@ -777,7 +777,7 @@ class Gate1CellRow(BaseModel):
 
 _SIGNAL_ID_PATTERN = r"^sg_\d{3,}$"
 _SESSION_ID_PATTERN = r"^s_pm\d{3,}_\d{4}-\d{2}-\d{2}_[a-z]$"
-_IDEA_ID_RE = re.compile(_IDEA_ID_PATTERN)
+_IDEA_ID_RE = re.compile(IDEA_ID_PATTERN)
 
 
 def _session_pm_prefix(pm_id: str) -> str:
@@ -793,7 +793,7 @@ def _check_idea_id_tuple(trade_idea_ids: tuple[str, ...]) -> None:
     for trade_idea_id in trade_idea_ids:
         if not _IDEA_ID_RE.fullmatch(trade_idea_id):
             raise ValueError(
-                f"trade_idea_ids must match {_IDEA_ID_PATTERN!r}, got '{trade_idea_id}'"
+                f"trade_idea_ids must match {IDEA_ID_PATTERN!r}, got '{trade_idea_id}'"
             )
     if list(trade_idea_ids) != sorted(set(trade_idea_ids)):
         raise ValueError("trade_idea_ids must be sorted and unique")
@@ -820,7 +820,7 @@ class Signal(BaseModel):
     trait_id: str = Field(pattern=_TRAIT_ID_PATTERN, description="Trait the signal expresses.")
     mode: SignalMode = Field(description="How the signal expresses its trait.")
     trade_idea_id: str | None = Field(
-        pattern=_IDEA_ID_PATTERN,
+        pattern=IDEA_ID_PATTERN,
         description="Trade idea the signal points at; required for a contradiction.",
     )
     valence: Valence = Field(description="Whether the signal confirms or retracts its trait.")
@@ -1012,7 +1012,7 @@ class Mention(BaseModel):
     kind: MentionKind = Field(description="Whether the mention is a trade or a market level.")
     instrument_id: str = Field(description="Instrument the mention refers to.")
     trade_idea_id: str | None = Field(
-        pattern=_IDEA_ID_PATTERN, description="Trade idea mentioned; set only for a trade mention."
+        pattern=IDEA_ID_PATTERN, description="Trade idea mentioned; set only for a trade mention."
     )
     tenor: Tenor | None = Field(description="Tenor mentioned, if any.")
     side: Side | None = Field(description="Side mentioned; set only for a trade mention.")

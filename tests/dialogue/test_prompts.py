@@ -109,6 +109,10 @@ def test_turn_schema_mention_enums_come_from_the_enum_classes():
     assert trade_schema["properties"]["value"] == {"type": "null"}
     assert level_schema["properties"]["field"] == {"type": "string"}
     assert level_schema["properties"]["value"] == {"type": "number"}
+    assert trade_schema["properties"]["trade_idea_id"] == {
+        "type": "string",
+        "pattern": r"^ti_\d{3,}$",
+    }
     for mention_schema in (trade_schema, level_schema):
         assert mention_schema["additionalProperties"] is False
         assert set(mention_schema["required"]) == set(mention_schema["properties"])
@@ -199,6 +203,19 @@ def test_advisor_system_appends_the_mentions_instruction_before_the_date():
     assert "mentions" in system
     assert system.index("AUTHORED PROMPT TEXT") < system.rindex("mentions")
     assert system.rindex("mentions") < system.index(f"Today is {DEFAULT_DATE.isoformat()}")
+
+
+def test_advisor_system_asks_for_a_summarised_price_history():
+    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE)
+
+    assert "Summarise a price history" in system
+
+
+def test_narrator_system_limits_trade_mentions_to_the_directive(market_lookup):
+    system = narrator_system(session_context(market_lookup), None)
+
+    assert 'trade a turn\'s "Mention each of these trades" directive lists' in system
+    assert "never with a trade mention" in system
 
 
 def test_narrator_system_contains_voice_rules_and_avoid_lines(market_lookup):

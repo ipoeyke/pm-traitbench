@@ -20,7 +20,7 @@ from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS
 from pm_traitbench.dialogue.turns import Opening
 from pm_traitbench.enums import Effort, Side, Tenor
 from pm_traitbench.errors import DialogueError
-from pm_traitbench.tables.schema import LedgerRow
+from pm_traitbench.tables.schema import IDEA_ID_PATTERN, LedgerRow
 
 NARRATOR_OPENING_MESSAGE = "The advisor is ready for your first message."
 
@@ -43,7 +43,8 @@ _TRADE_MENTION_SCHEMA: dict[str, Any] = {
     "properties": {
         "kind": {"const": "trade"},
         "instrument_id": {"type": "string"},
-        "trade_idea_id": {"type": "string"},
+        # Structured output then rejects an invented id before `Mention` has to.
+        "trade_idea_id": {"type": "string", "pattern": IDEA_ID_PATTERN},
         "tenor": {"enum": _TENOR_ENUM},
         "side": {"enum": _SIDE_ENUM},
         "size": {"type": "number"},
@@ -95,7 +96,8 @@ _ADVISOR_MENTIONS_INSTRUCTION = (
     "Return your reply as `text` and `mentions`. For every market number you state, add "
     'a mention with kind "level", using the instrument_id and field name a tool '
     'returned (a curve point\'s field is "level"), the tenor a tool gave or null, and '
-    "the value you stated."
+    "the value you stated. Summarise a price history (its latest level, range and trend) "
+    "rather than listing every close."
 )
 
 
@@ -136,9 +138,12 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
     sections = [
         "Write only the PM's side of a conversation with their investment copilot, in "
         "first person, in the voice below. Never name a psychological trait, tendency or "
-        "preference. Mention a trade only when a turn's directive lists it, and never "
-        "invent one. Fill `mentions` for every trade and every market level you state, "
-        "using the ids given.",
+        "preference. Add a trade mention only for a trade a turn's \"Mention each of these "
+        'trades" directive lists, using its ti_ id and size exactly as given, and never '
+        "invent one. Refer to open positions and the ideas below by instrument, or with a "
+        "level mention for a market number you state, never with a trade mention. Fill "
+        "`mentions` for every such trade and every market level you state, using the ids "
+        "given.",
         f"Today is {ctx.skeleton.date.isoformat()}.",
         f"Asset class: {mandate.asset_class.value}. Sub-style: {mandate.sub_style}. "
         f"Book size: {mandate.book_size}. Risk unit: {mandate.risk_unit}. "
