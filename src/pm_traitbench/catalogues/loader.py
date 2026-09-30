@@ -812,7 +812,8 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
 
     A voice must not be so specific it becomes a near-unique PM fingerprint, and
     every avoid line must cover exactly the bias and preference params a skeleton
-    can name as forbidden for a PM who does not have that trait.
+    can name as forbidden for a PM who does not have that trait. Every avoid overlap
+    must name known params, never itself and never twice.
     """
     if len(catalogue.voices) < 6:
         raise CatalogueError(f"voices: need at least 6 voices, got {len(catalogue.voices)}")
@@ -849,6 +850,17 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
     for param, line in {**catalogue.avoid.biases, **catalogue.avoid.preferences}.items():
         if not line.strip():
             raise CatalogueError(f"avoid: param '{param}' has an empty line")
+    known = {*catalogue.avoid.biases, *catalogue.avoid.preferences}
+    for param, overlapped in catalogue.avoid.overlaps.items():
+        if param not in known:
+            raise CatalogueError(f"avoid: overlaps key '{param}' is not a known param")
+        for other in overlapped:
+            if other not in known:
+                raise CatalogueError(f"avoid: overlaps of '{param}' names unknown param '{other}'")
+            if other == param:
+                raise CatalogueError(f"avoid: param '{param}' overlaps itself")
+        if len(set(overlapped)) != len(overlapped):
+            raise CatalogueError(f"avoid: overlaps of '{param}' repeats a param")
 
 
 def check_validate_catalogue(catalogue: Catalogue) -> None:

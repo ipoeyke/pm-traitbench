@@ -7,6 +7,7 @@ never surfaces a trait the plan never signalled, or breaches a preference the
 PM has not been given.
 """
 
+from collections.abc import Mapping, Sequence
 from datetime import date
 
 import numpy as np
@@ -48,6 +49,30 @@ def forbidden_sets(
         )
     )
     return inactive_trait_ids, unheld_params
+
+
+def session_forbidden(
+    forbidden_trait_ids: tuple[str, ...],
+    forbidden_pref_params: tuple[str, ...],
+    stances: Sequence[Stance],
+    traits_by_id: Mapping[str, Trait],
+    catalogue: Catalogue,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The PM's forbidden sets minus every param a stance of the session overlaps.
+
+    Such an avoid line would forbid the behaviour the stance tells the PM to show. A
+    third-party stance is about someone else, so it never drops a line.
+    """
+    dropped = {
+        overlapped
+        for stance in stances
+        if stance.entry != StanceEntry.THIRD_PARTY
+        for overlapped in catalogue.avoid.overlaps.get(traits_by_id[stance.trait_id].param, ())
+    }
+    return (
+        tuple(t for t in forbidden_trait_ids if traits_by_id[t].param not in dropped),
+        tuple(p for p in forbidden_pref_params if p not in dropped),
+    )
 
 
 def format_level(x: float) -> str:
@@ -234,6 +259,9 @@ def render_skeletons(
             line = _draw_line(lines, rng)
             advisor_violation = render_stance(line, {"value": violation_value})
 
+        session_trait_ids, session_pref_params = session_forbidden(
+            forbidden_trait_ids, forbidden_pref_params, stances, traits_by_id, catalogue
+        )
         skeletons.append(
             Skeleton(
                 session_id=session.session_id,
@@ -243,8 +271,8 @@ def render_skeletons(
                 trade_idea_ids=session.trade_idea_ids,
                 stances=tuple(stances),
                 advisor_violation=advisor_violation,
-                forbidden_trait_ids=forbidden_trait_ids,
-                forbidden_pref_params=forbidden_pref_params,
+                forbidden_trait_ids=session_trait_ids,
+                forbidden_pref_params=session_pref_params,
             )
         )
     return skeletons

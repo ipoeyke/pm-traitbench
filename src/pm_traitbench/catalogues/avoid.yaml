@@ -41,3 +41,34 @@ preferences:
   pair_vs_outright: do not specify a pair trade, an outright position, or a basket for the trade
   fx_hedge_expression: do not specify forwards, options or futures for hedging fx exposure
   credit_index_vs_single_name: do not specify a credit index, single-name bonds or credit default swaps for the trade
+
+# Stance param -> forbidden params whose avoid line the stance's own behaviour can trip.
+# A session with a stance on the key leaves these lines out of its forbidden list.
+overlaps:
+  loss_aversion_lambda: [disposition_ratio, exit_deficiency]
+  disposition_ratio: [loss_aversion_lambda, anchoring_rho]
+  anchoring_rho: [disposition_ratio]
+  herding_weight: [conviction_size_miscalibration, positioning_context, peer_comparison]
+  overconfidence_coverage: [conviction_size_miscalibration]
+  conviction_size_miscalibration: [overconfidence_coverage]
+  exit_deficiency: [disposition_ratio, loss_aversion_lambda]
+  response_format: [length_on_routine_questions]
+  length_on_routine_questions: [response_format]
+  answer_ordering: [response_format]
+  register: [hedging_language]
+  hedging_language: [register]
+  positioning_context: [peer_comparison]
+  peer_comparison: [positioning_context]
+  source_attribution: [calendar_citation, inventory_data_mention]
+  calendar_citation: [source_attribution, earnings_week_heads_up, refi_window_reminder, roll_reminder]
+  earnings_week_heads_up: [calendar_citation]
+  refi_window_reminder: [calendar_citation]
+  roll_reminder: [calendar_citation]
+  pre_mortem_before_sizing: [scenario_framing, overconfidence_coverage]
+  weekly_exposure_recap: [end_of_day_summary, rebalance_recap]
+  end_of_day_summary: [weekly_exposure_recap]
+  rebalance_recap: [weekly_exposure_recap]
+  hedge_instrument: [futures_vs_etf, fx_hedge_expression]
+  futures_vs_etf: [hedge_instrument]
+  fx_hedge_expression: [hedge_instrument, futures_vs_etf]
+  pair_vs_outright: [hedge_instrument]

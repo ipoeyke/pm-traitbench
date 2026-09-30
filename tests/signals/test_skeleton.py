@@ -17,8 +17,13 @@ from pm_traitbench.signals.assemble import Assembly, PlacedSignal, PlannedSessio
 from pm_traitbench.signals.assemble import session_id as make_session_id
 from pm_traitbench.signals.carriers import Carrier, carrier_pools
 from pm_traitbench.signals.quotas import DateWindow, PlannedSignal, plan_quotas
-from pm_traitbench.signals.skeleton import forbidden_sets, format_level, render_skeletons
-from pm_traitbench.tables.schema import Skeleton
+from pm_traitbench.signals.skeleton import (
+    forbidden_sets,
+    format_level,
+    render_skeletons,
+    session_forbidden,
+)
+from pm_traitbench.tables.schema import Skeleton, Stance
 from tests.signals.fixtures import (
     TRADING_DAYS,
     bias_trait,
@@ -125,6 +130,61 @@ def test_forbidden_sets_appear_on_every_skeleton_even_with_a_third_party_stance(
     third_party_skeleton = skeletons[0]
     assert third_party_skeleton.stances[0].trait_id == inactive_trait_id
     assert inactive_trait_id in third_party_skeleton.forbidden_trait_ids
+
+
+def _overlap_stance(trait_id: str, entry: StanceEntry) -> Stance:
+    return Stance(
+        signal_id="sg_001", trait_id=trait_id, mode=SignalMode.REVEALED, entry=entry, stance="x"
+    )
+
+
+def test_session_forbidden_drops_the_params_a_stance_overlaps() -> None:
+    loss_aversion = bias_trait("loss_aversion_lambda", active=True, trait_id="t_01")
+    disposition = bias_trait("disposition_ratio", active=False, trait_id="t_02")
+    herding = bias_trait("herding_weight", active=False, trait_id="t_03")
+    traits_by_id = {t.trait_id: t for t in (loss_aversion, disposition, herding)}
+
+    trait_ids, pref_params = session_forbidden(
+        ("t_02", "t_03"),
+        ("pushback_style",),
+        [_overlap_stance("t_01", StanceEntry.REVEALED)],
+        traits_by_id,
+        _CATALOGUE,
+    )
+
+    assert "disposition_ratio" in _CATALOGUE.avoid.overlaps["loss_aversion_lambda"]
+    assert trait_ids == ("t_03",)
+    assert pref_params == ("pushback_style",)
+
+
+def test_session_forbidden_keeps_every_line_for_a_third_party_stance() -> None:
+    loss_aversion = bias_trait("loss_aversion_lambda", active=False, trait_id="t_01")
+    disposition = bias_trait("disposition_ratio", active=False, trait_id="t_02")
+    traits_by_id = {t.trait_id: t for t in (loss_aversion, disposition)}
+
+    trait_ids, _ = session_forbidden(
+        ("t_01", "t_02"),
+        (),
+        [_overlap_stance("t_01", StanceEntry.THIRD_PARTY)],
+        traits_by_id,
+        _CATALOGUE,
+    )
+
+    assert trait_ids == ("t_01", "t_02")
+
+
+def test_session_forbidden_drops_overlapping_preference_lines() -> None:
+    register = pref_trait("register", "blunt trading-desk tone", trait_id="t_01")
+
+    _, pref_params = session_forbidden(
+        (),
+        ("hedging_language", "pushback_style"),
+        [_overlap_stance("t_01", StanceEntry.STATED)],
+        {"t_01": register},
+        _CATALOGUE,
+    )
+
+    assert pref_params == ("pushback_style",)
 
 
 # --- revealed bias stance ---------------------------------------------------------------------

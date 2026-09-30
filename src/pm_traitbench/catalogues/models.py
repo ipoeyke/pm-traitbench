@@ -346,12 +346,15 @@ class AvoidLines(BaseModel):
 
     Keyed by bias and preference param so a skeleton's forbidden trait and
     preference ids can look up the line to render into the narrator's forbidden list.
+    `overlaps` maps a stance's param to the params whose line that stance's own
+    behaviour can trip, so a session carrying the stance leaves those lines out.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     biases: dict[str, str]
     preferences: dict[str, str]
+    overlaps: dict[str, tuple[str, ...]]
 
 
 class BiasLabels(BaseModel):

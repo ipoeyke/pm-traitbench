@@ -649,6 +649,26 @@ def test_avoid_blank_line_raises(tmp_path: Path) -> None:
         _check(catalogue)
 
 
+@pytest.mark.parametrize(
+    ("overlaps", "match"),
+    [
+        ({"not_a_param": ["disposition_ratio"]}, "overlaps key 'not_a_param'"),
+        ({"register": ["not_a_param"]}, "names unknown param 'not_a_param'"),
+        ({"register": ["register"]}, "'register' overlaps itself"),
+        ({"register": ["hedging_language", "hedging_language"]}, "repeats a param"),
+    ],
+)
+def test_avoid_bad_overlaps_raise(tmp_path: Path, overlaps: dict, match: str) -> None:
+    _copy_shipped(tmp_path)
+    path = tmp_path / "avoid.yaml"
+    data = _load_yaml(path)
+    data["overlaps"] = overlaps
+    _dump_yaml(path, data)
+    catalogue = load_catalogue(tmp_path)
+    with pytest.raises(CatalogueError, match=match):
+        _check(catalogue)
+
+
 def test_voice_line_with_a_banned_word_raises(tmp_path: Path) -> None:
     _copy_shipped(tmp_path)
     path = tmp_path / "voices.yaml"

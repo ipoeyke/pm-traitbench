@@ -10,7 +10,7 @@ import pytest
 from pm_traitbench.catalogues.models import Catalogue, PreferenceGroup
 from pm_traitbench.config import Config
 from pm_traitbench.engine.stage import ENGINE_STAGE
-from pm_traitbench.enums import AssetClass, Kind, SignalMode
+from pm_traitbench.enums import AssetClass, Kind, SignalMode, StanceEntry
 from pm_traitbench.errors import PlanError
 from pm_traitbench.signals.stage import PLAN_STAGE
 from pm_traitbench.stages import run_stage
@@ -113,6 +113,33 @@ def test_plan_stage_writes_signals_and_skeletons_that_link_to_each_other(
     # setup above is not doing what it claims to.
     pm_001_revealed = [s for s in signals if s.pm_id == "pm_001" and s.mode == SignalMode.REVEALED]
     assert pm_001_revealed
+
+
+def test_no_skeleton_forbids_a_param_one_of_its_own_stances_overlaps(
+    tmp_path: Path, fixture_market: dict, neutral_pm: NeutralPmFactory, catalogue: Catalogue
+) -> None:
+    _, store = _run_full(tmp_path, fixture_market, neutral_pm, catalogue)
+    param_by_id = {(t.pm_id, t.trait_id): t.param for t in store.read(TRAITS)}
+    skeletons = store.read(SKELETONS)
+
+    # The fixture must plant at least one overlapping stance, or this test checks nothing.
+    pm_001_sizes = {
+        len(s.forbidden_trait_ids) + len(s.forbidden_pref_params)
+        for s in skeletons
+        if s.pm_id == "pm_001"
+    }
+    assert len(pm_001_sizes) > 1
+
+    for skeleton in skeletons:
+        forbidden = {
+            param_by_id[(skeleton.pm_id, trait_id)] for trait_id in skeleton.forbidden_trait_ids
+        } | set(skeleton.forbidden_pref_params)
+        for stance in skeleton.stances:
+            if stance.entry == StanceEntry.THIRD_PARTY:
+                continue
+            param = param_by_id[(skeleton.pm_id, stance.trait_id)]
+            clash = forbidden & set(catalogue.avoid.overlaps.get(param, ()))
+            assert not clash, (skeleton.session_id, stance.stance, clash)
 
 
 def test_plan_stage_raises_without_engine_metadata(
