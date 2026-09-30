@@ -67,9 +67,9 @@ def test_in_situ_case_and_governance_kind() -> None:
         assert in_situ_case(answer) == InSituCase(case)
     for kind, answer in GOVERNANCE_ANSWERS.items():
         assert governance_kind(answer) == GovernanceKind(kind)
-    with pytest.raises(HarnessError):
+    with pytest.raises(HarnessError, match="bogus: x"):
         in_situ_case("bogus: x")
-    with pytest.raises(HarnessError):
+    with pytest.raises(HarnessError, match="premise rejected: whatever"):
         governance_kind("premise rejected: whatever")
 
 
@@ -99,6 +99,13 @@ def test_active_bias_phrases_respects_dormancy() -> None:
     assert active_bias_phrases(PM, DAY, traits, [dormant], bank()) == both[1:]
     revive = revive_event(PM, "t_01", date(2026, 2, 3))
     assert active_bias_phrases(PM, date(2026, 2, 3), traits, [dormant, revive], bank()) == both
+
+
+def test_active_bias_phrases_ignores_other_pms_events() -> None:
+    traits = traits_for(PM)
+    other = dormant_event("pm_002", "t_01", DAY)
+    both = active_bias_phrases(PM, DAY, traits, [], bank())
+    assert active_bias_phrases(PM, DAY, traits, [other], bank()) == both
 
 
 def test_active_bias_phrases_unknown_param_is_harness_error() -> None:
@@ -165,6 +172,15 @@ def test_select_items_skips_intrusion_without_active_bias() -> None:
     selection = select_items(_inputs([routine_row(1, CHECKED)], traits=traits))
     assert selection.items == ()
     assert selection.skipped == {"no_active_bias": 1, "no_judge_only_values": 1}
+
+
+def test_select_items_names_probe_in_rubric_errors() -> None:
+    bad_in_situ = in_situ_row(1, "comply").model_copy(update={"answer": "bogus: x"})
+    with pytest.raises(HarnessError, match=f"^probe {probe_id(PM, 1)}: unknown in-situ rubric"):
+        select_items(_inputs([bad_in_situ]))
+    bad_gov = governance_row(2, "update").model_copy(update={"answer": "premise rejected: x"})
+    with pytest.raises(HarnessError, match=f"^probe {probe_id(PM, 2)}: unknown governance rubric"):
+        select_items(_inputs([bad_gov]))
 
 
 def test_select_items_missing_response_raises() -> None:

@@ -178,17 +178,23 @@ def active_bias_phrases(
     bank: ProbeBank,
 ) -> tuple[str, ...]:
     """The behaviour phrase of each bias the PM has active on `day`, in trait order."""
+    # Trait ids restart per PM, so events must be scoped to this PM.
+    own_events = [e for e in drift_events if e.pm_id == pm_id]
     phrases = []
     for trait in sorted(traits, key=lambda t: t.trait_id):
         if trait.pm_id != pm_id or trait.kind != Kind.BIAS:
             continue
-        if not bias_active_at(trait, drift_events, day):
+        if not bias_active_at(trait, own_events, day):
             continue
         try:
             phrases.append(bank.biases[trait.param].behaviour)
         except KeyError as exc:
             raise HarnessError(f"probe bank has no bias {trait.param}") from exc
     return tuple(phrases)
+
+
+def _rubric_error(row: ProbeRow, exc: HarnessError) -> HarnessError:
+    return HarnessError(f"probe {row.probe_id}: {exc}")
 
 
 def _options(row: ProbeRow) -> list[tuple[str, str]]:
@@ -238,7 +244,10 @@ def select_items(inputs: JudgeInputs) -> ItemSelection:
                 )
             )
         elif row.probe_type == ProbeType.IN_SITU:
-            case = in_situ_case(row.answer)
+            try:
+                case = in_situ_case(row.answer)
+            except HarnessError as exc:
+                raise _rubric_error(row, exc) from exc
             items.append(
                 _item(
                     row,
@@ -250,7 +259,10 @@ def select_items(inputs: JudgeInputs) -> ItemSelection:
                 )
             )
         elif row.probe_type == ProbeType.GOVERNANCE:
-            kind = governance_kind(row.answer)
+            try:
+                kind = governance_kind(row.answer)
+            except HarnessError as exc:
+                raise _rubric_error(row, exc) from exc
             items.append(
                 _item(
                     row,
