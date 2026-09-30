@@ -359,8 +359,11 @@ def score_run(config: Config, store: DataStore, run_name: str) -> dict[str, Any]
         bank=load_catalogue().probes,
     )
     sample_path = rd / SAMPLE_FILE
+    # Ratings without a judgements table have nothing to agree with; the scores still stand.
     summary["agreement"] = (
-        agreement(read_ratings(sample_path), judgements) if sample_path.exists() else {}
+        agreement(read_ratings(sample_path), judgements)
+        if sample_path.exists() and judgements
+        else {}
     )
     run_store.write(SCORES, scores)
     (rd / "summary.json").write_text(

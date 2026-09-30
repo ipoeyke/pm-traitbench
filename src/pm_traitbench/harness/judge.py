@@ -170,19 +170,24 @@ def judge_only_values(
     return tuple(found)
 
 
-def sibling_mcq(row: ProbeRow, probes: Sequence[ProbeRow]) -> ProbeRow:
+SiblingKey = tuple[str, date, str | None, str]
+
+
+def mcq_index(probes: Sequence[ProbeRow]) -> dict[SiblingKey, list[ProbeRow]]:
+    """Multiple-choice trait probes keyed by (pm, checkpoint, trait, question) for twin lookup."""
+    index: dict[SiblingKey, list[ProbeRow]] = {}
+    for p in probes:
+        if p.probe_type == ProbeType.TRAIT_MCQ and p.form == ProbeForm.MCQ:
+            index.setdefault((p.pm_id, p.checkpoint_date, p.trait_id, p.question), []).append(p)
+    return index
+
+
+def sibling_mcq(row: ProbeRow, index: Mapping[SiblingKey, Sequence[ProbeRow]]) -> ProbeRow:
     """The multiple-choice probe an open trait twin was drafted with.
 
     The probes stage emits both from one draft, so exactly one matches.
     """
-    matches = [
-        p
-        for p in probes
-        if p.probe_type == ProbeType.TRAIT_MCQ
-        and p.form == ProbeForm.MCQ
-        and (p.pm_id, p.checkpoint_date, p.trait_id, p.question)
-        == (row.pm_id, row.checkpoint_date, row.trait_id, row.question)
-    ]
+    matches = index.get((row.pm_id, row.checkpoint_date, row.trait_id, row.question), ())
     if len(matches) != 1:
         raise HarnessError(
             f"probe {row.probe_id}: expected one multiple-choice sibling, found {len(matches)}"
@@ -244,12 +249,13 @@ def select_items(inputs: JudgeInputs) -> ItemSelection:
     """The judge items for every open reply that needs a judge, in probe id order."""
     items: list[JudgeItem] = []
     skipped = {SKIP_NO_ACTIVE_BIAS: 0, SKIP_NO_JUDGE_ONLY_VALUES: 0}
+    siblings = mcq_index(inputs.probes)
     for row in sorted(inputs.probes, key=lambda p: p.probe_id):
         if row.probe_id not in inputs.responses:
             raise HarnessError(f"no response for probe {row.probe_id}")
         response = inputs.responses[row.probe_id]
         if row.probe_type == ProbeType.TRAIT_MCQ and row.form == ProbeForm.OPEN:
-            sibling = sibling_mcq(row, inputs.probes)
+            sibling = sibling_mcq(row, siblings)
             options = _options(sibling)
             brief = "\n".join(f"{letter}. {text}" for letter, text in options)
             letters = tuple(letter for letter, _ in options)
@@ -484,12 +490,13 @@ def _default_client(config: Config) -> LlmClient:
     return AnthropicClient(config.judge.max_concurrency, config.dialogue.api_max_retries)
 
 
-def _prepare_pass(config: Config, run_store: DataStore, force: bool) -> None:
-    """Clear a previous pass on `force`, else refuse to mix judgements of different settings."""
-    metadata_path = run_store.data_dir / "run_metadata" / f"{JUDGE_METADATA}.json"
+def _check_settings(config: Config, run_store: DataStore, force: bool) -> None:
+    """Refuse to mix judgements of different settings unless `force`.
+
+    Nothing is deleted up front: the table is replaced only when the pass
+    finishes, so a failed forced rerun keeps the previous judgements.
+    """
     if force:
-        run_store.path(JUDGEMENTS).unlink(missing_ok=True)
-        metadata_path.unlink(missing_ok=True)
         return
     previous = run_store.read_run_metadata(JUDGE_METADATA)
     if previous is None:
@@ -560,7 +567,7 @@ def judge_run(
     rd = run_dir(store.data_dir, run_name)
     run_store = DataStore(rd, config.output)
     check_scorable(store, run_store, run_name)
-    _prepare_pass(config, run_store, force)
+    _check_settings(config, run_store, force)
 
     inputs = load_judge_inputs(store, run_store)
     selection = select_items(inputs)

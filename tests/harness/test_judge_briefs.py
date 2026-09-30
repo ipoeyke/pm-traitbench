@@ -19,6 +19,7 @@ from pm_traitbench.harness.judge import (
     governance_kind,
     in_situ_case,
     judge_only_values,
+    mcq_index,
     prompts_sha256,
     schema_for,
     select_items,
@@ -82,12 +83,12 @@ def test_judge_only_values() -> None:
 
 def test_sibling_mcq_found_and_errors() -> None:
     mcq, twin = open_pair(PM, 1, DAY)
-    assert sibling_mcq(twin, [mcq, twin]) == mcq
+    assert sibling_mcq(twin, mcq_index([mcq, twin])) == mcq
     with pytest.raises(HarnessError, match=twin.probe_id):
-        sibling_mcq(twin, [twin])
+        sibling_mcq(twin, mcq_index([twin]))
     other = mcq.model_copy(update={"probe_id": probe_id(PM, 9)})
     with pytest.raises(HarnessError, match=twin.probe_id):
-        sibling_mcq(twin, [mcq, other, twin])
+        sibling_mcq(twin, mcq_index([mcq, other, twin]))
 
 
 def test_active_bias_phrases_respects_dormancy() -> None:

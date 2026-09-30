@@ -19,6 +19,7 @@ from pm_traitbench.harness.sample import (
     allocate_in_situ,
     cohen_kappa,
     draw_sample,
+    rater_brief,
     read_ratings,
     write_sample,
 )
@@ -291,3 +292,11 @@ def test_agreement_unmatched_rating_raises() -> None:
 
     with pytest.raises(HarnessError, match="s_0001"):
         agreement(ratings, [])
+
+
+def test_rater_brief_adds_reference_only_for_open_twins() -> None:
+    mcq, twin = open_pair("pm_001", 1, date(2026, 2, 2))
+    open_item = JudgeItem(twin, Judge.OPEN, "reply", "A. x\nB. y", "", ("A", "B"), "B", ())
+    assert rater_brief(open_item) == "A. x\nB. y\nReference: B"
+    situ = JudgeItem(mcq, Judge.IN_SITU, "reply", "rubric", "comply", (), None, ("honours",))
+    assert rater_brief(situ) == "rubric"

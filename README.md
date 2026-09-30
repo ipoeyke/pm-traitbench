@@ -944,9 +944,10 @@ probe's supporting signals; `judge_in_situ` also has `case` and
 `judge_governance` `answer_kind`), `presence` (accuracy on yes and no answers
 and their balanced accuracy, since most presence answers are no and an
 always-no reply would otherwise look strong) and `awaiting_judge`, which counts
-the open items with no judgement yet. After a full `eval judge` only
-`routine_question/intrusion` can be non-zero, equal to the routine questions
-whose PM had no active bias at the checkpoint.
+the open items no judgement covers yet. A routine question whose PM had no
+active bias at the checkpoint has nothing to intrude and is never awaited;
+the judge run's metadata counts those skips. After a full `eval judge` every
+count is 0.
 
 **Judges.** `eval judge` grades the open replies, one judge per case, and
 writes a `judgements` table. Each judge is told the brief below and answers
@@ -970,9 +971,9 @@ is retried up to `dialogue.max_retries` times, then the pass stops with an
 error; finished items stay cached. The `judgements` columns are `probe_id`,
 `pm_id`, `judge`, `correct`, `detail` (every verdict field as `name=value`
 joined by `; `) and `rationale`. Judge calls are cached under the run, so a
-rerun continues after a spent budget; `--force` discards the judgements
-and judges again, reusing cached calls whose request is unchanged. A rerun under other `judge` settings or prompts
-refuses without `--force`. `judge.model` defaults to the Gate 2 model, which
+rerun continues after a spent budget. A rerun under other `judge` settings or
+prompts refuses without `--force`, which replaces the judgements once the new
+pass finishes, reusing cached calls whose request is unchanged. `judge.model` defaults to the Gate 2 model, which
 also writes the corpus, so a judge may favour replies that read like its own;
 the human sample below bounds that bias.
 

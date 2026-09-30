@@ -73,6 +73,16 @@ def _pick(items: Sequence[JudgeItem], share: int, rng: np.random.Generator) -> l
     return [ordered[i] for i in rng.choice(len(ordered), share, replace=False)]
 
 
+def rater_brief(item: JudgeItem) -> str:
+    """The judge's brief, plus the reference letter an open twin's rater needs to grade against.
+
+    The judge classifies without the answer; a rater deciding correct or not must know it.
+    """
+    if item.judge == Judge.OPEN:
+        return f"{item.brief}\nReference: {item.answer_letter}"
+    return item.brief
+
+
 def draw_sample(
     items: Sequence[JudgeItem],
     judgements: Sequence[JudgementRow],
@@ -110,7 +120,7 @@ def draw_sample(
             "case": item.case,
             "question": item.probe.question,
             "response": item.response,
-            "brief": item.brief,
+            "brief": rater_brief(item),
             "human_correct": "",
             "human_note": "",
         }

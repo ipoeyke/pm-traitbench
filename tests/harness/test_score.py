@@ -565,3 +565,29 @@ def test_score_run_without_sample_has_empty_agreement(tmp_path) -> None:
     write_run(tmp_path, config, store, probes, {p.probe_id: "B" for p in probes})
 
     assert score_run(config, store, "r1")["agreement"] == {}
+
+
+def test_score_run_ignores_ratings_without_judgements(tmp_path) -> None:
+    config = stage_config()
+    store = DataStore(tmp_path, config.output)
+    probes = _judged_corpus()
+    store.write(TRAITS, traits_for("pm_001"))
+    store.write(DRIFT_EVENTS, [])
+    store.write(SIGNALS, [])
+    write_run(tmp_path, config, store, probes, {p.probe_id: "B" for p in probes})
+    rated = dict.fromkeys(SAMPLE_COLUMNS, "") | {
+        "sample_id": "s_0001",
+        "judge": "judge_in_situ",
+        "probe_id": probes[0].probe_id,
+        "pm_id": probes[0].pm_id,
+        "human_correct": "yes",
+    }
+    with (run_dir(tmp_path, "r1") / SAMPLE_FILE).open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=SAMPLE_COLUMNS)
+        writer.writeheader()
+        writer.writerow(rated)
+
+    summary = score_run(config, store, "r1")
+
+    assert summary["agreement"] == {}
+    assert (run_dir(tmp_path, "r1") / "summary.json").exists()

@@ -349,3 +349,17 @@ def test_budget_spent_raises_harness_error(tmp_path) -> None:
     factory, _ = _factory(responder_for())
     with pytest.raises(HarnessError, match="budget"):
         judge_run(config, store, "r1", client_factory=factory)
+
+
+def test_failed_forced_rerun_keeps_previous_judgements(tmp_path) -> None:
+    config, store = _setup(tmp_path)
+    factory, _ = _factory(responder_for())
+    first = judge_run(config, store, "r1", client_factory=factory)
+    before = first.run_store.read(JUDGEMENTS)
+
+    changed = with_section(config, "judge", model="another-model")
+    broken, _ = _factory(lambda request: fake_message([{"type": "text", "text": "nonsense"}]))
+    with pytest.raises(HarnessError):
+        judge_run(changed, store, "r1", force=True, client_factory=broken)
+
+    assert first.run_store.read(JUDGEMENTS) == before
