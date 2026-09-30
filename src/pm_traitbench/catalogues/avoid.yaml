@@ -34,13 +34,13 @@ preferences:
   refi_window_reminder: do not ask the advisor to flag a refinancing window
   roll_reminder: do not ask the advisor to flag a contract roll date
   rebalance_recap: do not ask the advisor to recap a rebalance
-  hedge_instrument: do not specify which instrument to hedge with
-  duration_expression: do not describe expressing a rates view as a curve trade, a butterfly or outright duration
-  futures_vs_etf: do not specify futures, an etf, or the underlying instrument for the trade
-  curve_trade_expression: do not specify a calendar spread, a spread ratio or a butterfly for a curve view
-  pair_vs_outright: do not specify a pair trade, an outright position, or a basket for the trade
-  fx_hedge_expression: do not specify forwards, options or futures for hedging fx exposure
-  credit_index_vs_single_name: do not specify a credit index, single-name bonds or credit default swaps for the trade
+  hedge_instrument: do not state a standing rule or general preference for which instrument to hedge with
+  duration_expression: do not state a standing rule or general preference for expressing rates views as curve trades, butterflies or outright duration
+  futures_vs_etf: do not state a standing rule or general preference for trading through futures, an etf or the underlying instrument
+  curve_trade_expression: do not state a standing rule or general preference for expressing curve views as calendar spreads, spread ratios or butterflies
+  pair_vs_outright: do not state a standing rule or general preference for expressing views as pair trades, outright positions or baskets
+  fx_hedge_expression: do not state a standing rule or general preference for hedging fx exposure with forwards, options or futures
+  credit_index_vs_single_name: do not state a standing rule or general preference for trading credit through an index, single-name bonds or credit default swaps
 
 # Stance param -> forbidden params whose avoid line the stance's own behaviour can trip.
 # A session with a stance on the key leaves these lines out of its forbidden list.

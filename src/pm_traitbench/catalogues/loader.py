@@ -83,6 +83,24 @@ BANNED_STANCE_WORDS: tuple[str, ...] = (
     "exit deficiency",
     "bias",
 )
+# Phrases that name a bias outright in a transcript. Narrower than BANNED_STANCE_WORDS,
+# which guards authored catalogue text: desk talk like "long bias" must pass a transcript.
+TRANSCRIPT_BANNED_PHRASES: tuple[str, ...] = (
+    "loss aversion",
+    "loss averse",
+    "disposition effect",
+    "anchoring bias",
+    "anchoring effect",
+    "extrapolation bias",
+    "herding",
+    "herd mentality",
+    "overconfiden",
+    "miscalibrat",
+    "exit deficiency",
+    "cognitive bias",
+    "behavioral bias",
+    "behavioural bias",
+)
 # Keys are the engine's per-bias action flags, so the line drawn always matches the
 # specific action logged that day, not just the trait behind it.
 REVEALED_PATTERNS: dict[str, tuple[str, ...]] = {
@@ -793,6 +811,19 @@ def matched_params(text: str, params: Iterable[str]) -> tuple[str, ...]:
         param
         for param in params
         if any(re.search(rf"\b{re.escape(form)}\b", lowered) for form in _param_forms(param))
+    )
+
+
+def banned_phrases_in(text: str) -> tuple[str, ...]:
+    """Every `TRANSCRIPT_BANNED_PHRASES` entry starting at a word boundary, case-insensitive.
+
+    Only the start is anchored, so a stem like "overconfiden" still matches its inflections.
+    """
+    lowered = text.lower()
+    return tuple(
+        phrase
+        for phrase in TRANSCRIPT_BANNED_PHRASES
+        if re.search(rf"\b{re.escape(phrase)}", lowered)
     )
 
 
