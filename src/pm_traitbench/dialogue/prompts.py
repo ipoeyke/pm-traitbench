@@ -20,7 +20,7 @@ from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS
 from pm_traitbench.dialogue.turns import Opening
 from pm_traitbench.enums import Effort, Side, Tenor
 from pm_traitbench.errors import DialogueError
-from pm_traitbench.tables.schema import IDEA_ID_PATTERN, LedgerRow
+from pm_traitbench.tables.schema import LedgerRow
 
 NARRATOR_OPENING_MESSAGE = "The advisor is ready for your first message."
 
@@ -38,22 +38,6 @@ _TENOR_ENUM: list[str | None] = [tenor.value for tenor in Tenor] + [None]
 _SIDE_ENUM: list[str] = [side.value for side in Side]
 _NULL = {"type": "null"}
 
-_TRADE_MENTION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "kind": {"const": "trade"},
-        "instrument_id": {"type": "string"},
-        # Structured output then rejects an invented id before `Mention` has to.
-        "trade_idea_id": {"type": "string", "pattern": IDEA_ID_PATTERN},
-        "tenor": {"enum": _TENOR_ENUM},
-        "side": {"enum": _SIDE_ENUM},
-        "size": {"type": "number"},
-        "field": _NULL,
-        "value": _NULL,
-    },
-    "required": _MENTION_REQUIRED_KEYS,
-    "additionalProperties": False,
-}
 _LEVEL_MENTION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -69,28 +53,52 @@ _LEVEL_MENTION_SCHEMA: dict[str, Any] = {
     "required": _MENTION_REQUIRED_KEYS,
     "additionalProperties": False,
 }
-TURN_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "text": {"type": "string"},
-        "mentions": {
-            "type": "array",
-            "items": {"anyOf": [_TRADE_MENTION_SCHEMA, _LEVEL_MENTION_SCHEMA]},
+
+
+def _trade_mention_schema(trade_idea_ids: Sequence[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "kind": {"const": "trade"},
+            "instrument_id": {"type": "string"},
+            # Structured output then rejects any id outside the turn's listed trades.
+            "trade_idea_id": {"enum": list(trade_idea_ids)},
+            "tenor": {"enum": _TENOR_ENUM},
+            "side": {"enum": _SIDE_ENUM},
+            "size": {"type": "number"},
+            "field": _NULL,
+            "value": _NULL,
         },
-    },
-    "required": ["text", "mentions"],
-    "additionalProperties": False,
-}
-ADVISOR_TURN_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "text": {"type": "string"},
-        # The advisor never sees a trade idea id, so it never offers the trade branch.
-        "mentions": {"type": "array", "items": _LEVEL_MENTION_SCHEMA},
-    },
-    "required": ["text", "mentions"],
-    "additionalProperties": False,
-}
+        "required": _MENTION_REQUIRED_KEYS,
+        "additionalProperties": False,
+    }
+
+
+def _turn_schema(mention_schema: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "mentions": {"type": "array", "items": mention_schema},
+        },
+        "required": ["text", "mentions"],
+        "additionalProperties": False,
+    }
+
+
+def narrator_turn_schema(trade_idea_ids: Sequence[str]) -> dict[str, Any]:
+    """A PM turn's reply schema, offering the trade branch only when the turn lists trades.
+
+    Its `trade_idea_id` is an enum of exactly those ids, so neither an invented id nor
+    a trade mention on a turn without listed trades can be generated.
+    """
+    if not trade_idea_ids:
+        return _turn_schema(_LEVEL_MENTION_SCHEMA)
+    return _turn_schema({"anyOf": [_trade_mention_schema(trade_idea_ids), _LEVEL_MENTION_SCHEMA]})
+
+
+# The advisor never sees a trade idea id, so it never offers the trade branch.
+ADVISOR_TURN_SCHEMA: dict[str, Any] = _turn_schema(_LEVEL_MENTION_SCHEMA)
 
 _ADVISOR_MENTIONS_INSTRUCTION = (
     "Return your reply as `text` and `mentions`. For every market number you state, add "
@@ -207,6 +215,14 @@ def opening_line(ctx: SessionContext, opening: Opening) -> str:
     )
 
 
+def listed_trades(ctx: SessionContext, pm_index: int) -> tuple[LedgerRow, ...]:
+    """The trades a PM turn's directive tells it to mention: turn 0's day trades, else none."""
+    directive = ctx.turn_plan.pm_directives[pm_index]
+    if pm_index == 0 and directive.opening is not None:
+        return directive.trades
+    return ()
+
+
 def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
     """One PM turn's mid-conversation directive text.
 
@@ -216,8 +232,8 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
     lines: list[str] = []
     if pm_index == 0 and directive.opening is not None:
         lines.append(opening_line(ctx, directive.opening))
-        if directive.trades:
-            trades = "; ".join(_trade_line(ctx, trade) for trade in directive.trades)
+        if trades_to_mention := listed_trades(ctx, pm_index):
+            trades = "; ".join(_trade_line(ctx, trade) for trade in trades_to_mention)
             lines.append(f"Mention each of these trades: {trades}")
     if directive.stance is not None:
         lines.append(f"In this message: {directive.stance.stance}")
@@ -258,15 +274,18 @@ def base_request(
 
 def narrator_request(
     ctx: SessionContext,
+    pm_index: int,
     messages: Sequence[Mapping[str, Any]],
     config: DialogueConfig,
     feedback: str | None,
 ) -> dict[str, Any]:
-    """The narrator's Messages API request body.
+    """The narrator's Messages API request body for PM turn `pm_index`.
 
     Only `model`, `max_tokens`, `system`, `messages`, `output_config` and
-    `cache_control`; never `thinking` or a sampling param.
+    `cache_control`; never `thinking` or a sampling param. Its schema is
+    `narrator_turn_schema` over the turn's listed trades.
     """
+    trade_idea_ids = sorted({trade.trade_idea_id for trade in listed_trades(ctx, pm_index)})
     return {
         **base_request(
             config.narrator_model,
@@ -274,7 +293,7 @@ def narrator_request(
             config.effort,
             narrator_system(ctx, feedback),
             messages,
-            TURN_SCHEMA,
+            narrator_turn_schema(trade_idea_ids),
         ),
         "cache_control": {"type": "ephemeral"},
     }
@@ -291,7 +310,7 @@ def advisor_request(
 
     The narrator's keys plus `tools`, and `tool_choice` only when tools are
     disabled; never `thinking` or a sampling param. Its schema is
-    `ADVISOR_TURN_SCHEMA`, not `TURN_SCHEMA`, since the advisor never sees a
+    `ADVISOR_TURN_SCHEMA`, not a narrator schema, since the advisor never sees a
     trade idea id and so can never fill a trade mention.
     """
     request = {

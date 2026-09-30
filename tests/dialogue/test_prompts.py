@@ -14,12 +14,12 @@ from pm_traitbench.dialogue.context import PmTables, build_contexts
 from pm_traitbench.dialogue.prompts import (
     ADVISOR_TURN_SCHEMA,
     NARRATOR_OPENING_MESSAGE,
-    TURN_SCHEMA,
     advisor_request,
     advisor_system,
     narrator_directive,
     narrator_request,
     narrator_system,
+    narrator_turn_schema,
     read_advisor_prompt,
 )
 from pm_traitbench.dialogue.session import parse_turn
@@ -46,7 +46,7 @@ def test_narrator_request_has_only_the_allowed_keys(market_lookup):
     ctx = session_context(market_lookup)
     messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
 
-    request = narrator_request(ctx, messages, _CONFIG.dialogue, None)
+    request = narrator_request(ctx, 0, messages, _CONFIG.dialogue, None)
 
     assert set(request) == {
         "model",
@@ -60,7 +60,7 @@ def test_narrator_request_has_only_the_allowed_keys(market_lookup):
     assert request["max_tokens"] == _CONFIG.dialogue.max_output_tokens
     assert request["output_config"] == {
         "effort": _CONFIG.dialogue.effort.value,
-        "format": {"type": "json_schema", "schema": TURN_SCHEMA},
+        "format": {"type": "json_schema", "schema": narrator_turn_schema([])},
     }
     assert request["cache_control"] == {"type": "ephemeral"}
 
@@ -87,8 +87,8 @@ def test_two_builds_from_equal_inputs_give_the_same_request_key(market_lookup):
 
     ctx_1 = session_context(market_lookup)
     ctx_2 = session_context(market_lookup)
-    request_1 = narrator_request(ctx_1, messages, _CONFIG.dialogue, None)
-    request_2 = narrator_request(ctx_2, list(messages), _CONFIG.dialogue, None)
+    request_1 = narrator_request(ctx_1, 0, messages, _CONFIG.dialogue, None)
+    request_2 = narrator_request(ctx_2, 0, list(messages), _CONFIG.dialogue, None)
 
     assert request_1 == request_2
     scope = ctx_1.skeleton.session_id
@@ -96,7 +96,8 @@ def test_two_builds_from_equal_inputs_give_the_same_request_key(market_lookup):
 
 
 def test_turn_schema_mention_enums_come_from_the_enum_classes():
-    trade_schema, level_schema = TURN_SCHEMA["properties"]["mentions"]["items"]["anyOf"]
+    schema = narrator_turn_schema(["ti_001"])
+    trade_schema, level_schema = schema["properties"]["mentions"]["items"]["anyOf"]
 
     assert trade_schema["properties"]["kind"] == {"const": "trade"}
     assert level_schema["properties"]["kind"] == {"const": "level"}
@@ -109,10 +110,7 @@ def test_turn_schema_mention_enums_come_from_the_enum_classes():
     assert trade_schema["properties"]["value"] == {"type": "null"}
     assert level_schema["properties"]["field"] == {"type": "string"}
     assert level_schema["properties"]["value"] == {"type": "number"}
-    assert trade_schema["properties"]["trade_idea_id"] == {
-        "type": "string",
-        "pattern": r"^ti_\d{3,}$",
-    }
+    assert trade_schema["properties"]["trade_idea_id"] == {"enum": ["ti_001"]}
     for mention_schema in (trade_schema, level_schema):
         assert mention_schema["additionalProperties"] is False
         assert set(mention_schema["required"]) == set(mention_schema["properties"])
@@ -169,16 +167,36 @@ def test_advisor_turn_schema_offers_only_level_mentions():
 
     assert "anyOf" not in mentions_items
     assert mentions_items["properties"]["kind"] == {"const": "level"}
-    assert mentions_items == TURN_SCHEMA["properties"]["mentions"]["items"]["anyOf"][1]
+    narrator_items = narrator_turn_schema(["ti_001"])["properties"]["mentions"]["items"]
+    assert mentions_items == narrator_items["anyOf"][1]
 
 
-def test_narrator_turn_schema_still_offers_both_mention_kinds():
-    mentions_items = TURN_SCHEMA["properties"]["mentions"]["items"]
+def test_narrator_turn_schema_offers_both_mention_kinds_when_trades_are_listed():
+    mentions_items = narrator_turn_schema(["ti_001"])["properties"]["mentions"]["items"]
 
     assert {branch["properties"]["kind"]["const"] for branch in mentions_items["anyOf"]} == {
         "trade",
         "level",
     }
+
+
+def test_narrator_turn_schema_drops_the_trade_branch_without_listed_trades():
+    assert narrator_turn_schema([]) == ADVISOR_TURN_SCHEMA
+
+
+def test_narrator_request_limits_trade_ids_to_turn_zero_listed_trades(market_lookup):
+    trades = tuple(
+        ledger_row(trade_idea_id=idea_id, date=DEFAULT_DATE) for idea_id in ("ti_002", "ti_001")
+    )
+    ctx = session_context(market_lookup, day_trades=trades)
+    messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
+
+    first = narrator_request(ctx, 0, messages, _CONFIG.dialogue, None)
+    later = narrator_request(ctx, 1, messages, _CONFIG.dialogue, None)
+
+    schema = first["output_config"]["format"]["schema"]
+    assert schema == narrator_turn_schema(["ti_001", "ti_002"])
+    assert later["output_config"]["format"]["schema"] == narrator_turn_schema([])
 
 
 def test_advisor_request_uses_the_advisor_only_turn_schema():
@@ -305,7 +323,7 @@ def test_narrator_request_never_leaks_trait_or_bias_information(market_lookup):
     messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
     for i in range(len(ctx.turn_plan.pm_directives)):
         messages.append({"role": "system", "content": narrator_directive(ctx, i)})
-    request = narrator_request(ctx, messages, _CONFIG.dialogue, None)
+    request = narrator_request(ctx, 0, messages, _CONFIG.dialogue, None)
     serialized_raw = json.dumps(request)
 
     # The scan is only meaningful if real content flowed through.
@@ -382,9 +400,9 @@ def test_feedback_changes_the_narrator_request_key(market_lookup):
     ctx = session_context(market_lookup)
     messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
 
-    base = narrator_request(ctx, messages, _CONFIG.dialogue, None)
+    base = narrator_request(ctx, 0, messages, _CONFIG.dialogue, None)
     changed = narrator_request(
-        ctx, messages, _CONFIG.dialogue, "Keep this PM's trades tighter to the skeleton."
+        ctx, 0, messages, _CONFIG.dialogue, "Keep this PM's trades tighter to the skeleton."
     )
 
     assert base["system"] != changed["system"]
@@ -426,8 +444,8 @@ def test_two_same_date_check_ins_of_one_pm_get_distinct_cache_keys(market_lookup
 
     ctx_a, ctx_b = build_contexts(pm, voice, market_lookup, catalogue, Config())
     messages = [{"role": "user", "content": NARRATOR_OPENING_MESSAGE}]
-    body_a = narrator_request(ctx_a, messages, _CONFIG.dialogue, None)
-    body_b = narrator_request(ctx_b, messages, _CONFIG.dialogue, None)
+    body_a = narrator_request(ctx_a, 0, messages, _CONFIG.dialogue, None)
+    body_b = narrator_request(ctx_b, 0, messages, _CONFIG.dialogue, None)
 
     assert body_a == body_b
     assert request_key(body_a, ctx_a.skeleton.session_id) != request_key(
