@@ -6,13 +6,24 @@ from datetime import date
 import pytest
 
 from pm_traitbench.catalogues.loader import load_catalogue
-from pm_traitbench.enums import Kind, OptionSource, ProbeForm, ProbeType, Scorer, SignalMode
+from pm_traitbench.enums import (
+    Judge,
+    Kind,
+    OptionSource,
+    ProbeForm,
+    ProbeType,
+    Scorer,
+    SignalMode,
+)
 from pm_traitbench.errors import HarnessError
 from pm_traitbench.harness.checks import load_check_map
+from pm_traitbench.harness.judge import split_detail
 from pm_traitbench.harness.runner import RUN_METADATA, probes_sha256, run_dir, run_sut
 from pm_traitbench.harness.score import (
     SCORE_METADATA,
+    awaiting_counts,
     evidence_type,
+    judgement_score,
     parse_letter,
     score_format,
     score_option_letter,
@@ -20,14 +31,32 @@ from pm_traitbench.harness.score import (
     summarise,
 )
 from pm_traitbench.harness.views import opaque_probe_id
-from pm_traitbench.tables.schema import ProbeRow, ScoreRow, probe_id
-from pm_traitbench.tables.specs import PROBES, RESPONSES, SCORES
+from pm_traitbench.tables.schema import JudgementRow, ProbeRow, ScoreRow, probe_id
+from pm_traitbench.tables.specs import (
+    DRIFT_EVENTS,
+    JUDGEMENTS,
+    PROBES,
+    RESPONSES,
+    SCORES,
+    SIGNALS,
+    TRAITS,
+)
 from pm_traitbench.tables.store import DataStore
 from tests.engine.fixtures import stage_config
 from tests.harness.fixtures import (
     probe_row,
     recording_factory,
     validated_corpus_with_probes,
+)
+from tests.harness.judge_fixtures import (
+    bank,
+    dormant_event,
+    governance_row,
+    in_situ_row,
+    open_pair,
+    routine_row,
+    traits_for,
+    write_run,
 )
 
 DAY = date(2026, 1, 13)
@@ -230,42 +259,149 @@ def test_summary_unknown_trait_raises() -> None:
         summarise([a], [_score(a, True)], {}, {}, {})
 
 
-def test_awaiting_judge_counts(check_map) -> None:
-    def open_probe(n, kind, answer="x"):
-        return probe_row(
-            "pm_001",
-            n,
-            DAY,
-            form=ProbeForm.OPEN,
-            probe_type=kind,
-            options=(),
-            answer=answer,
-            trait_id=None if kind == ProbeType.ROUTINE_QUESTION else "t_01",
-        )
+def _jrow(probe, judge: Judge, correct: bool, detail: str) -> JudgementRow:
+    return JudgementRow(
+        probe_id=probe.probe_id,
+        pm_id=probe.pm_id,
+        judge=judge,
+        correct=correct,
+        detail=detail,
+        rationale="r",
+    )
 
-    def routine(n, body):
-        return open_probe(n, ProbeType.ROUTINE_QUESTION, f"format: {body}; intrusion: none")
 
-    probes = [
-        open_probe(1, ProbeType.TRAIT_MCQ),
-        open_probe(2, ProbeType.IN_SITU),
-        open_probe(3, ProbeType.GOVERNANCE),
-        routine(4, "response_format=short bullets"),
-        routine(5, "number_language=quote moves in percent"),
-        routine(6, "register=terse"),
+def _judged_corpus():
+    """One of each open type, and two routine questions: one holds a judge-only value."""
+    mcq, twin = open_pair("pm_001", 1, JDAY, answer="A")
+    situ = in_situ_row(3, "comply")
+    gov = governance_row(4, "update")
+    fmt = routine_row(5, (("register", "terse"),))
+    plain = routine_row(6, (("response_format", "short bullets"),))
+    return [mcq, twin, situ, gov, fmt, plain]
+
+
+JDAY = date(2026, 2, 2)
+
+
+def _full_judgements(probes) -> list[JudgementRow]:
+    by_n = {int(p.probe_id.rsplit("_", 1)[1]): p for p in probes}
+    return [
+        _jrow(by_n[2], Judge.OPEN, True, "choice=B"),
+        _jrow(by_n[3], Judge.IN_SITU, True, "honours=true"),
+        _jrow(by_n[4], Judge.GOVERNANCE, True, "rejects_premise=true; corrects=true"),
+        _jrow(by_n[5], Judge.INTRUSION, True, "intrudes=false; evidence="),
+        _jrow(by_n[6], Judge.INTRUSION, True, "intrudes=false; evidence="),
+        _jrow(by_n[5], Judge.FORMAT, True, "register=terse: pass"),
     ]
-    scores = [_score(probes[3], True, Scorer.FORMAT)]
 
-    summary = summarise(probes, scores, {}, {}, check_map)
 
-    assert summary["awaiting_judge"] == {
+def test_awaiting_counts_before_and_after_judging(check_map) -> None:
+    probes = _judged_corpus()
+    traits = traits_for("pm_001")
+
+    before = awaiting_counts(probes, [], check_map, traits, [], bank())
+    after = awaiting_counts(probes, _full_judgements(probes), check_map, traits, [], bank())
+    dormant = [dormant_event("pm_001", t, date(2026, 1, 5)) for t in ("t_01", "t_02")]
+    quiet = awaiting_counts(probes, [], check_map, traits, dormant, bank())
+
+    assert before == {
         "trait_mcq/open": 1,
         "in_situ/open": 1,
         "governance/open": 1,
-        "routine_question/intrusion": 3,
-        "routine_question/format_not_applicable": 1,
-        "routine_question/format_judge_only": 1,
+        "routine_question/intrusion": 2,
+        "routine_question/format_judge": 1,
     }
+    assert after == dict.fromkeys(before, 0)
+    assert quiet["routine_question/intrusion"] == 0
+    assert quiet["routine_question/format_judge"] == 1
+
+
+def test_judgement_score_details() -> None:
+    probe = in_situ_row(3, "comply")
+
+    def score(judge: Judge, correct: bool, detail: str):
+        return judgement_score(_jrow(probe, judge, correct, detail))
+
+    right = score(Judge.IN_SITU, True, "honours=true")
+    assert (right.scorer, right.correct, right.detail) == (Scorer.JUDGE_IN_SITU, True, None)
+    assert score(Judge.OPEN, False, "choice=C").detail == "chose=C"
+    assert score(Judge.OPEN, False, "choice=none").detail == "chose=none"
+    assert score(Judge.IN_SITU, False, "accounts=true; names=false").detail == "names"
+    both = score(Judge.IN_SITU, False, "refuses=false; gives_reason=false")
+    assert both.detail == "refuses; gives_reason"
+    gov = score(Judge.GOVERNANCE, False, "rejects_premise=false; corrects=false")
+    assert gov.detail == "rejects_premise; corrects"
+    intrusion = score(Judge.INTRUSION, False, "intrudes=true; evidence=a=b; c")
+    assert intrusion.detail == "evidence=a=b; c"
+    fmt = score(Judge.FORMAT, False, "register=terse: fail; a=b: pass; c=d: fail")
+    assert fmt.detail == "register=terse; c=d"
+    assert score(Judge.FORMAT, True, "register=terse: pass; a=b: not_applicable").detail is None
+    assert score(Judge.FORMAT, True, "register=terse: not_applicable") is None
+    for judge in Judge:
+        assert score(judge, False, "empty_reply").detail == "empty_reply"
+
+
+def test_split_detail_reads_what_judgements_write() -> None:
+    assert split_detail("choice=B", Judge.OPEN) == {"choice": "B"}
+    assert split_detail("honours=true; names=false", Judge.IN_SITU) == {
+        "honours": "true",
+        "names": "false",
+    }
+    assert split_detail("intrudes=true; evidence=x; evidence=y=z", Judge.INTRUSION) == {
+        "intrudes": "true",
+        "evidence": "x; evidence=y=z",
+    }
+    assert split_detail("intrudes=false; evidence=", Judge.INTRUSION)["evidence"] == ""
+    assert split_detail("a=b: fail; c=d: pass", Judge.FORMAT) == {"a=b": "fail", "c=d": "pass"}
+    with pytest.raises(HarnessError, match="detail"):
+        split_detail("garbage", Judge.FORMAT)
+
+
+def test_summary_judge_rows_and_slices(check_map) -> None:
+    probes = _judged_corpus()
+    by_n = {int(p.probe_id.rsplit("_", 1)[1]): p for p in probes}
+    situ2 = in_situ_row(7, "counteract")
+    situ3 = in_situ_row(8, "decline")
+    gov2 = governance_row(9, "dormant")
+    gov3 = governance_row(10, "preference")
+    probes += [situ2, situ3, gov2, gov3]
+    scores = [
+        _score(by_n[3], True, Scorer.JUDGE_IN_SITU),
+        _score(situ2, False, Scorer.JUDGE_IN_SITU),
+        _score(situ3, True, Scorer.JUDGE_IN_SITU),
+        _score(by_n[4], True, Scorer.JUDGE_GOVERNANCE),
+        _score(gov2, False, Scorer.JUDGE_GOVERNANCE),
+        _score(gov3, True, Scorer.JUDGE_GOVERNANCE),
+    ]
+
+    summary = summarise(
+        probes,
+        scores,
+        {("pm_001", "t_01"): Kind.BIAS},
+        {},
+        check_map,
+        judgements=[],
+        traits=traits_for("pm_001"),
+        drift_events=[],
+        bank=bank(),
+    )
+
+    entry = next(e for e in summary["by_type"] if e["scorer"] == "judge_in_situ")
+    assert (entry["chance"], entry["parse_errors"], entry["n"], entry["correct"]) == (None, 0, 3, 2)
+    slices = summary["slices"]
+    assert slices["judge_in_situ"]["case"] == {
+        "comply": {"n": 1, "accuracy": 1.0},
+        "counteract": {"n": 1, "accuracy": 0.0},
+        "decline": {"n": 1, "accuracy": 1.0},
+    }
+    assert slices["judge_governance"]["answer_kind"] == {
+        "dormant": {"n": 1, "accuracy": 0.0},
+        "preference": {"n": 1, "accuracy": 1.0},
+        "update": {"n": 1, "accuracy": 1.0},
+    }
+    assert slices["judge_governance"]["kind"] == {"bias": {"n": 3, "accuracy": 2 / 3}}
+    assert "case" not in slices["judge_governance"]
+    assert "answer_kind" not in slices["judge_in_situ"]
 
 
 def _run_store(tmp_path, config, **meta):
@@ -351,3 +487,37 @@ def test_score_run_end_to_end(tmp_path, fixture_market, neutral_pm, monkeypatch)
     assert [e["n"] for e in summary["by_type"] if e["scorer"] == "format"] == [1]
     metadata = run_store.read_run_metadata(SCORE_METADATA)
     assert metadata["n_scored"] == len(run_store.read(SCORES))
+
+
+def test_score_run_includes_judgements(tmp_path) -> None:
+    config = stage_config()
+    store = DataStore(tmp_path, config.output)
+    probes = _judged_corpus()
+    store.write(TRAITS, traits_for("pm_001"))
+    store.write(DRIFT_EVENTS, [])
+    store.write(SIGNALS, [])
+    run_store = write_run(tmp_path, config, store, probes, {p.probe_id: "B" for p in probes})
+    judgements = _full_judgements(probes)
+    run_store.write(JUDGEMENTS, judgements)
+
+    summary = score_run(config, store, "r1")
+
+    scorers = {s.scorer for s in run_store.read(SCORES)}
+    assert {Scorer.JUDGE_OPEN, Scorer.JUDGE_INTRUSION, Scorer.JUDGE_FORMAT} <= scorers
+    assert all(v == 0 for v in summary["awaiting_judge"].values())
+    assert run_store.read_run_metadata(SCORE_METADATA)["n_scored"] == len(run_store.read(SCORES))
+
+
+def test_score_run_without_judgements_reports_awaiting(tmp_path) -> None:
+    config = stage_config()
+    store = DataStore(tmp_path, config.output)
+    probes = _judged_corpus()
+    store.write(TRAITS, traits_for("pm_001"))
+    store.write(DRIFT_EVENTS, [])
+    store.write(SIGNALS, [])
+    write_run(tmp_path, config, store, probes, {p.probe_id: "B" for p in probes})
+
+    summary = score_run(config, store, "r1")
+
+    assert summary["awaiting_judge"]["trait_mcq/open"] == 1
+    assert summary["awaiting_judge"]["routine_question/intrusion"] == 2

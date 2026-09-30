@@ -890,7 +890,7 @@ nothing. A routine question is checked against the communication formats the
 PM holds, using a check map shipped in `harness/checks.yaml`. The reply passes
 when every held format with a deterministic check passes. An empty reply is
 wrong. A probe whose checkable values are all not applicable to the reply gets
-no score row and is counted under `awaiting_judge`.
+no score row.
 
 | Param | Value | Check |
 |---|---|---|
@@ -930,15 +930,17 @@ such as `12bp`. The `register`, `pushback_style`, `answer_ordering` and "flag
 uncertainty once" values have no deterministic check and wait for judges.
 
 `summary.json` holds `by_type` (per probe type, form and scorer: `n`,
-`correct`, `accuracy`, `chance` for option-letter rows, and `parse_errors`),
+`correct`, `accuracy`, `chance` for option-letter rows and null for judge
+rows, and `parse_errors`),
 `slices` (accuracy per scorer by trait kind, checkpoint label and evidence
 type: `explicit`, `implicit`, `mixed` or `none`, from the modes of the
-probe's supporting signals), `presence` (accuracy on yes and no answers and
-their balanced accuracy, since most presence answers are no and an always-no
-reply would otherwise look strong) and `awaiting_judge`. Open probes are not
-scored here: the open twin of each multiple choice, `in_situ`, `governance`,
-the intrusion half of each routine question and the judge-only format values
-are counted under `awaiting_judge`.
+probe's supporting signals; `judge_in_situ` also has `case` and
+`judge_governance` `answer_kind`), `presence` (accuracy on yes and no answers
+and their balanced accuracy, since most presence answers are no and an
+always-no reply would otherwise look strong) and `awaiting_judge`, which counts
+the open items with no judgement yet. After a full `eval judge` only
+`routine_question/intrusion` can be non-zero, equal to the routine questions
+whose PM had no active bias at the checkpoint.
 
 **Config.** `harness.model` (the Gate 2 model, design) and `harness.effort`
 (high, design) set the baselines' model; `max_answer_tokens` (8000, design)

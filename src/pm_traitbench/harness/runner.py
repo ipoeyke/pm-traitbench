@@ -227,3 +227,19 @@ def run_sut(
         skipped=tuple(sorted(skipped)),
         failed=dict(sorted(failed.items())),
     )
+
+
+def check_scorable(store: DataStore, run_store: DataStore, run_name: str) -> None:
+    meta = run_store.read_run_metadata(RUN_METADATA)
+    if meta is None:
+        raise HarnessError(f"run '{run_name}' has no run metadata; run the evaluation first")
+    if meta.get("pms_failed"):
+        names = ", ".join(sorted(meta["pms_failed"]))
+        raise HarnessError(
+            f"run '{run_name}' has failed PMs ({names}); a partial run's accuracy covers a "
+            "biased subset, so rerun it"
+        )
+    if meta.get("status") != RunStatus.FINISHED:
+        raise HarnessError(f"run '{run_name}' is not finished; rerun the evaluation to completion")
+    if meta.get("probes_sha256") != probes_sha256(store):
+        raise HarnessError(f"probes changed since run '{run_name}' was made; rerun it with --force")

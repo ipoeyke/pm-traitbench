@@ -32,8 +32,12 @@ from pm_traitbench.enums import (
 )
 from pm_traitbench.errors import DialogueBudgetError, HarnessError
 from pm_traitbench.harness.checks import CHECKED_PARAMS, load_check_map, parse_routine_answer
-from pm_traitbench.harness.runner import check_run_name, probes_sha256, run_dir
-from pm_traitbench.harness.score import check_scorable
+from pm_traitbench.harness.runner import (
+    check_run_name,
+    check_scorable,
+    probes_sha256,
+    run_dir,
+)
 from pm_traitbench.tables.schema import DriftEvent, JudgementRow, ProbeRow, Trait
 from pm_traitbench.tables.specs import DRIFT_EVENTS, JUDGEMENTS, PROBES, RESPONSES, TRAITS
 from pm_traitbench.tables.store import DataStore
@@ -422,6 +426,31 @@ def judgement_from_verdict(item: JudgeItem, verdict: Mapping[str, Any]) -> Judge
         detail=detail,
         rationale=verdict["rationale"],
     )
+
+
+def split_detail(detail: str, judge: Judge) -> dict[str, str]:
+    """The fields of a judgement's `detail`, as `judgement_from_verdict` wrote them.
+
+    Pairs are separated by `; ` and split on the first `=`. INTRUSION takes everything
+    after the first `; evidence=` as the quote, which may itself hold `=` or `;`.
+    FORMAT keys are `param=value` and hold `=`, so each pair splits on its last `: `.
+    """
+    if judge == Judge.INTRUSION:
+        head, sep, evidence = detail.partition("; evidence=")
+        key, eq, flag = head.partition("=")
+        if not sep or not eq:
+            raise HarnessError(f"malformed intrusion detail: {detail!r}")
+        return {key: flag, "evidence": evidence}
+    fields = {}
+    for pair in detail.split("; "):
+        if judge == Judge.FORMAT:
+            key, sep, value = pair.rpartition(": ")
+        else:
+            key, sep, value = pair.partition("=")
+        if not sep:
+            raise HarnessError(f"malformed {judge.value} detail: {detail!r}")
+        fields[key] = value
+    return fields
 
 
 def empty_judgement(item: JudgeItem) -> JudgementRow:
