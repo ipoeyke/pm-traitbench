@@ -947,8 +947,14 @@ bounds a reply including thinking. A baseline reply still unparsable after
 recorded as an empty response and scores wrong. `short_page_words` (400,
 design) is the `short_page` ceiling. `pm_token_budget` (unset, guess) caps
 fresh tokens per PM for a baseline; spending it fails that PM, and `eval
-score` then refuses the run until it is rerun. Each carries its basis and note
-in the config.
+score` then refuses the run until it is rerun. `judge.model` (the Gate 2
+model, design) and `judge.effort` (high, design) set the judges' model, one
+model for every judge; `max_tokens` (4000, design) bounds thinking plus the
+short JSON verdict. `max_concurrency` (8, guess) is the dialogue stage's value.
+`sample_size` (100, guess, at least 5) is the human-rated sample, 20 items per
+judge. `token_budget` (unset, guess) caps fresh tokens for one judge pass;
+spending it stops the pass and finished items stay cached. Each carries its
+basis and note in the config.
 
 ## Development
 

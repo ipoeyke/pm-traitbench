@@ -18,6 +18,7 @@ from pm_traitbench.tables.schema import (
     Gate2TraitRow,
     Idea,
     Instrument,
+    JudgementRow,
     LedgerRow,
     Persona,
     PositionDay,
@@ -106,7 +107,8 @@ PROBES = TableSpec("probes", ProbeRow, ("pm_id", "probe_id"))
 PROBES_TABLES: tuple[TableSpec, ...] = (PROBES,)
 
 RESPONSES = TableSpec("responses", ResponseRow, ("pm_id", "probe_id"))
-SCORES = TableSpec("scores", ScoreRow, ("pm_id", "probe_id"))
+SCORES = TableSpec("scores", ScoreRow, ("pm_id", "probe_id", "scorer"))
+JUDGEMENTS = TableSpec("judgements", JudgementRow, ("pm_id", "probe_id", "judge"))
 
 
 def parts_spec(pm_id: str) -> TableSpec:
