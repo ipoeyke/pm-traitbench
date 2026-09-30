@@ -384,10 +384,11 @@ def parse_verdict(item: JudgeItem, response: Mapping[str, Any]) -> dict[str, Any
             )
         case Judge.FORMAT:
             values = payload.get("values")
+            outcomes = {o.value for o in FormatOutcome}
             valid = (
                 isinstance(values, dict)
                 and set(values) == set(item.fields)
-                and all(v in {o.value for o in FormatOutcome} for v in values.values())
+                and all(isinstance(v, str) and v in outcomes for v in values.values())
             )
     return payload if valid else None
 
@@ -490,9 +491,14 @@ async def _judge_items(
         return judgement_from_verdict(item, verdict)
 
     try:
-        return list(await asyncio.gather(*(one(item) for item in items)))
+        # Let siblings finish and commit so a failure never discards replies already paid for.
+        results = await asyncio.gather(*(one(item) for item in items), return_exceptions=True)
     finally:
         await client.aclose()
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    return list(results)
 
 
 def judge_run(

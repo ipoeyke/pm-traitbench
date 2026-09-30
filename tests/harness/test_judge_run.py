@@ -1,5 +1,6 @@
 """Tests for verdict parsing, judgement rows and the judge pass."""
 
+import asyncio
 import json
 from datetime import date
 
@@ -118,6 +119,8 @@ def test_parse_verdict_format_values_must_match_fields() -> None:
     assert parse_verdict(FORMAT, reply({"register=blunt": "pass"})) is None
     assert parse_verdict(FORMAT, reply({**good, "register=blunt": "maybe"})) is None
     assert parse_verdict(FORMAT, reply(["pass"])) is None
+    unhashable = {"register=blunt": ["pass"], "hedging_language=once": {"a": "pass"}}
+    assert parse_verdict(FORMAT, reply(unhashable)) is None
 
 
 def test_judgement_correct_rules() -> None:
@@ -257,6 +260,40 @@ def test_judge_run_unparsable_raises(tmp_path) -> None:
     with pytest.raises(HarnessError, match=rf"judge:.*{probes[0].probe_id}"):
         judge_run(config, store, "r1", client_factory=factory)
     assert len(clients[0].requests) == 1 + config.dialogue.max_retries
+
+
+def test_judge_run_failure_keeps_sibling_replies_cached(tmp_path) -> None:
+    config = with_section(stage_config(), "dialogue", max_retries=0)
+    config, store = _setup(tmp_path, config=config)
+    ok = responder_for()
+
+    def one_bad(request):
+        if "counteract" in request["messages"][0]["content"]:
+            return _message("nonsense")
+        return ok(request)
+
+    class SlowClient(FakeClient):
+        async def send(self, request):
+            # Healthy calls stay in flight while the failing one raises.
+            if "counteract" not in request["messages"][0]["content"]:
+                for _ in range(5):
+                    await asyncio.sleep(0)
+            return await super().send(request)
+
+    clients: list[FakeClient] = []
+
+    def factory(_config):
+        clients.append(SlowClient(one_bad))
+        return clients[-1]
+
+    with pytest.raises(HarnessError):
+        judge_run(config, store, "r1", client_factory=factory)
+    assert len(clients[0].requests) == 6
+
+    factory2, clients2 = _factory(ok)
+    judge_run(config, store, "r1", client_factory=factory2)
+    (request,) = clients2[0].requests
+    assert "counteract" in request["messages"][0]["content"]
 
 
 def test_judge_run_replays_cache(tmp_path) -> None:
