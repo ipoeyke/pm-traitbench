@@ -138,7 +138,9 @@ def prompt_sha256(text: str) -> str:
 _STANCE_HOLDS = (
     "A turn's \"In this message\" line is the PM's own decision, and the advisor's replies "
     "never change it: the PM may acknowledge the advisor's point, but carries the decision "
-    "out anyway."
+    "out anyway. When that line has the PM state a preference, the PM states only that "
+    "preference and adds no other request about how the advisor should answer, such as its "
+    "length, order, format, units or how hard it pushes back."
 )
 
 
@@ -288,7 +290,8 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
         lines.append(
             f"In this message: {directive.stance.stance}. This is your decision, and the "
             "advisor's replies never change it: you may acknowledge the advisor's point, but "
-            "carry this out anyway."
+            "carry this out anyway. If it states a preference, state only that one and ask "
+            "nothing else about how the advisor should answer."
         )
     if not lines:
         lines.append("Continue the conversation naturally in one short message.")

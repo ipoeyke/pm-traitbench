@@ -235,6 +235,7 @@ def test_narrator_system_says_the_advisor_never_changes_a_stance(market_lookup):
 
     assert "the advisor's replies never change it" in system
     assert "carries the decision out anyway" in system
+    assert "the PM states only that preference and adds no other request" in system
 
 
 def test_market_levels_section_lists_each_idea_instrument_close(market_lookup):
@@ -407,6 +408,7 @@ def test_directive_carries_the_stance_line_and_day_trades(market_lookup):
     directive_text = narrator_directive(ctx, stance_index)
     assert f"In this message: {stance.stance}. This is your decision" in directive_text
     assert "carry this out anyway" in directive_text
+    assert "state only that one and ask nothing else" in directive_text
     assert stance.trait_id not in directive_text
     assert stance.mode.value not in directive_text
 
