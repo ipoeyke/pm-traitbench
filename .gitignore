@@ -222,3 +222,6 @@ __marimo__/
 
 # Pipeline output
 data/
+
+# Claude Code worktrees
+.claude/worktrees/
