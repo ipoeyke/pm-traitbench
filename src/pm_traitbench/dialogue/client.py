@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import anthropic
+import httpx2
 
 from pm_traitbench.dialogue.usage import usage_of
 from pm_traitbench.errors import DialogueBudgetError, DialogueError, PmTraitbenchError
@@ -209,8 +210,9 @@ class CachedClient:
 class AnthropicClient:
     """Live Anthropic backend, built lazily so a fully cached run never needs credentials.
 
-    Bounds concurrency; maps credential and 400 errors, and, once the SDK's
-    own retries are exhausted, other API status and connection errors, to
+    Streams each reply and returns the final message. Bounds concurrency; maps
+    credential and 400 errors, other API status and connection errors once the
+    SDK's own retries are exhausted, and a connection lost mid-stream, to
     `DialogueError`.
     """
 
@@ -228,7 +230,8 @@ class AnthropicClient:
 
         async with self._semaphore:
             try:
-                message = await self._client.messages.create(**request)
+                async with self._client.messages.stream(**request) as stream:
+                    message = await stream.get_final_message()
             except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
                 raise DialogueError(_NO_CREDENTIALS_MESSAGE) from e
             except anthropic.BadRequestError as e:
@@ -242,6 +245,10 @@ class AnthropicClient:
             except anthropic.APIConnectionError as e:
                 # Covers `APITimeoutError`, its subclass.
                 raise DialogueError(f"{type(e).__name__}: {e.message}") from e
+            except httpx2.TransportError as e:
+                # The SDK wraps transport errors only before the stream opens; a drop
+                # while reading it arrives raw, and the SDK does not retry it.
+                raise DialogueError(f"{type(e).__name__} while streaming the reply: {e}") from e
             except TypeError as e:
                 # With nothing configured, the SDK signals missing credentials with a bare
                 # TypeError at request time (header resolution runs before any network call);
