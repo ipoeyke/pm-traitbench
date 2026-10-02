@@ -194,7 +194,7 @@ def test_classify_request_carries_rules_ledger_and_no_vocabulary():
     )
 
     assert set(request.keys()) == {"model", "max_tokens", "system", "messages", "output_config"}
-    assert request["max_tokens"] == 8000
+    assert request["max_tokens"] == 4000
 
     system = request["system"]
     user = request["messages"][0]["content"]

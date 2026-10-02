@@ -1139,8 +1139,8 @@ def test_gate2_config_defaults_and_basis() -> None:
     config = Config().gate2
     assert config.model == DEFAULT_MODEL
     assert config.effort == Effort.HIGH
-    assert config.recovery_max_output_tokens == 32000
-    assert config.classify_max_output_tokens == 8000
+    assert config.recovery_max_output_tokens == 16000
+    assert config.classify_max_output_tokens == 4000
     assert config.alpha == 0.05
     assert config.min_class == 2
     assert config.ngram_n == 5

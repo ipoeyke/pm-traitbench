@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import anthropic
@@ -339,11 +340,38 @@ class _StubMessage:
         return fake_message([turn_text("ok")])
 
 
-def _stub_client_factory(build_count: dict[str, int], captured_kwargs: dict[str, object]) -> type:
-    class _StubMessages:
-        async def create(self, **request: object) -> _StubMessage:
-            return _StubMessage()
+class _StubStream:
+    """Stands in for the SDK's stream manager; raises `on_enter` on open, `on_read` on read."""
 
+    def __init__(self, on_enter: Exception | None = None, on_read: Exception | None = None):
+        self._on_enter = on_enter
+        self._on_read = on_read
+
+    async def __aenter__(self) -> "_StubStream":
+        if self._on_enter is not None:
+            raise self._on_enter
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+    async def get_final_message(self) -> _StubMessage:
+        if self._on_read is not None:
+            raise self._on_read
+        return _StubMessage()
+
+
+class _StubMessages:
+    def __init__(self, stream: Callable[[], _StubStream] = _StubStream) -> None:
+        self._stream = stream
+        self.requests: list[dict] = []
+
+    def stream(self, **request: object) -> _StubStream:
+        self.requests.append(request)
+        return self._stream()
+
+
+def _stub_client_factory(build_count: dict[str, int], captured_kwargs: dict[str, object]) -> type:
     class _StubClient:
         def __init__(self, **kwargs: object) -> None:
             build_count["n"] += 1
@@ -414,18 +442,16 @@ def test_anthropic_client_reports_missing_credentials_as_a_dialogue_error(
         (lambda: _connection_error(anthropic.APITimeoutError), None),
     ],
 )
+@pytest.mark.parametrize("phase", ["on_enter", "on_read"])
 def test_transient_sdk_errors_map_to_a_dialogue_error(
-    monkeypatch: pytest.MonkeyPatch, build_error, expected_status: int | None
+    monkeypatch: pytest.MonkeyPatch, build_error, expected_status: int | None, phase: str
 ) -> None:
+    """Errors map the same whether raised opening the stream or reading it."""
     error = build_error()
-
-    class _StubMessages:
-        async def create(self, **request: object) -> None:
-            raise error
 
     class _StubClient:
         def __init__(self, **kwargs: object) -> None:
-            self.messages = _StubMessages()
+            self.messages = _StubMessages(lambda: _StubStream(**{phase: error}))
 
     monkeypatch.setattr(anthropic, "AsyncAnthropic", _StubClient)
     client = AnthropicClient(max_concurrency=1)
@@ -444,10 +470,6 @@ def test_anthropic_client_aclose_closes_the_sdk_client_if_built(
 ) -> None:
     closed = {"n": 0}
 
-    class _StubMessages:
-        async def create(self, **request: object) -> _StubMessage:
-            return _StubMessage()
-
     class _StubClient:
         def __init__(self, **kwargs: object) -> None:
             self.messages = _StubMessages()
@@ -462,6 +484,158 @@ def test_anthropic_client_aclose_closes_the_sdk_client_if_built(
     asyncio.run(client.aclose())
 
     assert closed["n"] == 1
+
+
+def test_anthropic_client_streams_the_whole_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    messages = _StubMessages()
+
+    class _StubClient:
+        def __init__(self, **kwargs: object) -> None:
+            self.messages = messages
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _StubClient)
+    client = AnthropicClient(max_concurrency=1)
+
+    response = asyncio.run(client.send(_REQUEST))
+
+    assert messages.requests == [_REQUEST]
+    assert response == _StubMessage().to_dict()
+
+
+_REAL_ASYNC_ANTHROPIC = anthropic.AsyncAnthropic
+
+_MESSAGE_START = {
+    "type": "message_start",
+    "message": {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-5-5",
+        "content": [],
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": {"input_tokens": 12, "output_tokens": 0},
+    },
+}
+_TEXT_EVENTS = [
+    {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "he"}},
+    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "llo"}},
+    {"type": "content_block_stop", "index": 0},
+    {
+        "type": "message_delta",
+        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+        "usage": {"output_tokens": 7},
+    },
+    {"type": "message_stop"},
+]
+
+
+def _sse(event: dict) -> bytes:
+    return f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode()
+
+
+class _SseBody(httpx2.AsyncByteStream):
+    """An SSE body that yields `events`, then raises `then_raise` if given."""
+
+    def __init__(self, events: list[dict], then_raise: Exception | None = None) -> None:
+        self._events = events
+        self._then_raise = then_raise
+
+    async def __aiter__(self):
+        for event in self._events:
+            yield _sse(event)
+        if self._then_raise is not None:
+            raise self._then_raise
+
+
+def _serve_streams(monkeypatch: pytest.MonkeyPatch, bodies: list[_SseBody]) -> list[int]:
+    """Back `AnthropicClient` with the real SDK over a mock transport serving `bodies` in order.
+
+    Returns a one-item list counting the HTTP requests the transport received.
+    """
+    served = [0]
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        body = bodies[served[0]]
+        served[0] += 1
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, stream=body)
+
+    def factory(**kwargs: object) -> anthropic.AsyncAnthropic:
+        transport = httpx2.MockTransport(handler)
+        return _REAL_ASYNC_ANTHROPIC(
+            api_key="test-key", http_client=httpx2.AsyncClient(transport=transport), **kwargs
+        )
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", factory)
+    return served
+
+
+_STREAM_REQUEST = {**_REQUEST, "max_tokens": 10}
+
+
+def test_real_sdk_stream_is_assembled_into_the_final_message_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_streams(monkeypatch, [_SseBody([_MESSAGE_START, *_TEXT_EVENTS])])
+    client = AnthropicClient(max_concurrency=1)
+
+    response = asyncio.run(client.send(_STREAM_REQUEST))
+
+    assert response["content"] == [{"type": "text", "text": "hello"}]
+    assert response["stop_reason"] == "end_turn"
+    assert response["usage"]["input_tokens"] == 12
+    assert response["usage"]["output_tokens"] == 7
+
+
+def test_real_sdk_error_event_mid_stream_maps_to_a_dialogue_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overloaded = {
+        "type": "error",
+        "error": {"type": "overloaded_error", "message": "Overloaded"},
+    }
+    _serve_streams(monkeypatch, [_SseBody([_MESSAGE_START, overloaded])])
+    client = AnthropicClient(max_concurrency=1)
+
+    with pytest.raises(DialogueError, match="Overloaded"):
+        asyncio.run(client.send(_STREAM_REQUEST))
+
+
+@pytest.mark.parametrize(
+    "drop",
+    [httpx2.ReadError("connection reset"), httpx2.RemoteProtocolError("peer closed")],
+    ids=["read_error", "remote_protocol_error"],
+)
+def test_real_sdk_connection_lost_mid_stream_maps_to_a_dialogue_error(
+    monkeypatch: pytest.MonkeyPatch, drop: Exception
+) -> None:
+    """A transport error after the stream opens is not wrapped by the SDK, nor retried."""
+    served = _serve_streams(monkeypatch, [_SseBody([_MESSAGE_START], then_raise=drop)])
+    client = AnthropicClient(max_concurrency=1, max_retries=2)
+
+    with pytest.raises(DialogueError, match=f"{type(drop).__name__} while streaming the reply"):
+        asyncio.run(client.send(_STREAM_REQUEST))
+
+    assert served == [1]
+
+
+def test_a_failed_stream_releases_its_concurrency_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve_streams(
+        monkeypatch,
+        [
+            _SseBody([_MESSAGE_START], then_raise=httpx2.ReadError("connection reset")),
+            _SseBody([_MESSAGE_START, *_TEXT_EVENTS]),
+        ],
+    )
+    client = AnthropicClient(max_concurrency=1)
+
+    async def scenario() -> dict:
+        with pytest.raises(DialogueError):
+            await client.send(_STREAM_REQUEST)
+        return await asyncio.wait_for(client.send(_STREAM_REQUEST), timeout=5)
+
+    assert asyncio.run(scenario())["stop_reason"] == "end_turn"
 
 
 def test_anthropic_client_aclose_is_a_noop_when_never_built() -> None:

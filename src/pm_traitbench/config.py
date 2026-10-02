@@ -2223,7 +2223,7 @@ class Gate2Config(BaseModel):
         },
     )
     recovery_max_output_tokens: int = Field(
-        32000,
+        16000,
         ge=256,
         json_schema_extra={
             "basis": "design",
@@ -2234,7 +2234,7 @@ class Gate2Config(BaseModel):
         },
     )
     classify_max_output_tokens: int = Field(
-        8000,
+        4000,
         ge=256,
         json_schema_extra={
             "basis": "design",
