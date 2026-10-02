@@ -1,4 +1,5 @@
-"""Tests for the leakage and forbidden-trait judge requests, parsers and label mapping."""
+"""Tests for the leakage, forbidden-trait and stance judge requests, parsers, label mapping
+and refusal fallback."""
 
 import asyncio
 import json
@@ -11,14 +12,19 @@ from pm_traitbench.dialogue.client import CachedClient
 from pm_traitbench.dialogue.validate.judge import (
     FORBIDDEN_SCHEMA,
     LEAK_SCHEMA,
+    STANCE_SCHEMA,
+    STANCE_SYSTEM,
     LeakVerdict,
+    StanceVerdict,
     Violation,
     forbidden_request,
     leak_request,
     map_label,
     parse_forbidden,
     parse_leak,
+    parse_stance,
     send_judged,
+    stance_request,
     transcript_text,
 )
 from pm_traitbench.errors import ValidateError
@@ -28,9 +34,11 @@ from tests.dialogue.validate.fixtures import (
     forbidden_reply,
     is_forbidden_request,
     is_leak_request,
+    is_stance_request,
     leak_reply,
     log_of,
     pm_turn,
+    stance_reply,
 )
 
 _CONFIG = Config().validation
@@ -98,6 +106,55 @@ def test_judge_requests_never_carry_a_turn_directive():
 
     assert directive not in leak_dump
     assert directive not in forbidden_dump
+
+
+def test_stance_request_tags_the_message_before_the_instruction():
+    """The PM message comes first and both parts sit in XML tags, which keeps the API from
+    reading the request as a reasoning-extraction attempt and refusing it.
+    """
+    pm_text = "Holding the full size, the thesis has not changed."
+    stance = "refuse to trim the position"
+
+    request = stance_request(pm_text, stance, _CONFIG)
+
+    assert set(request.keys()) == {"model", "max_tokens", "system", "messages", "output_config"}
+    assert request["system"] == STANCE_SYSTEM
+    assert request["messages"] == [
+        {
+            "role": "user",
+            "content": (
+                f"<pm_message>{pm_text}</pm_message>\n\n<instruction>{stance}</instruction>"
+            ),
+        }
+    ]
+    assert request["model"] == _CONFIG.judge_model
+    assert request["output_config"]["format"]["schema"] is STANCE_SCHEMA
+    assert is_stance_request(request)
+    assert not is_leak_request(request)
+    assert not is_forbidden_request(request)
+
+
+def test_stance_request_keeps_tag_like_text_inside_its_tags():
+    """Angle brackets in the PM text or stance line are passed through verbatim, each still
+    wrapped in exactly one pair of its own tags.
+    """
+    content = stance_request("buy <b>now</b>", "say <no>", _CONFIG)["messages"][0]["content"]
+
+    assert content.startswith("<pm_message>buy <b>now</b></pm_message>")
+    assert content.endswith("<instruction>say <no></instruction>")
+    assert content.count("<pm_message>") == content.count("<instruction>") == 1
+
+
+def test_parse_stance_accepts_a_valid_reply_and_rejects_bad_shapes():
+    assert parse_stance(stance_reply(True, "held firm")) == StanceVerdict(
+        carried_out=True, reason="held firm"
+    )
+
+    string_flag = fake_message([{"type": "text", "text": '{"carried_out": "yes", "reason": "r"}'}])
+    assert parse_stance(string_flag) is None
+
+    refused = {**stance_reply(True, "held firm"), "stop_reason": "refusal"}
+    assert parse_stance(refused) is None
 
 
 def test_parse_leak_accepts_a_valid_reply_and_rejects_bad_shapes():
@@ -172,15 +229,16 @@ def _unparsable_then_valid(tmp_path):
 def test_send_judged_retries_then_commits(tmp_path):
     fake, client = _unparsable_then_valid(tmp_path)
 
-    parsed, rejected = asyncio.run(
+    parsed, rejected, fell_back = asyncio.run(
         send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2)
     )
 
     assert rejected == 1
     assert parsed == _VERDICT
+    assert fell_back is False
     assert len(fake.requests) == 2
 
-    parsed_again, rejected_again = asyncio.run(
+    parsed_again, rejected_again, _ = asyncio.run(
         send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2)
     )
     assert rejected_again == 0
@@ -209,7 +267,7 @@ def test_send_judged_bypasses_a_cached_reply_that_fails_the_real_parser(tmp_path
     asyncio.run(send_judged(client, _REQUEST, lambda response: response, "s_test", max_retries=0))
     assert len(fake.requests) == 1
 
-    parsed, rejected = asyncio.run(
+    parsed, rejected, fell_back = asyncio.run(
         send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=1)
     )
 
@@ -217,3 +275,88 @@ def test_send_judged_bypasses_a_cached_reply_that_fails_the_real_parser(tmp_path
     assert rejected == 1
     assert parsed == _VERDICT
     assert client.totals.cache_hits == 1
+
+
+_REFUSAL = fake_message(
+    [{"type": "text", "text": "I can't help with that."}],
+    stop_reason="refusal",
+)
+_FALLBACK = "claude-sonnet-5-5"
+
+
+def _leak_ok(_request=None):
+    return leak_reply(_VERDICT.explicit, _VERDICT.label, _VERDICT.quote)
+
+
+def _refuse_primary(request):
+    return _REFUSAL if request["model"] == _REQUEST["model"] else _leak_ok()
+
+
+def test_send_judged_falls_back_to_another_model_on_refusal(tmp_path):
+    fake, client = _cached_client(_refuse_primary, tmp_path)
+
+    parsed, rejected, fell_back = asyncio.run(
+        send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2, fallback_model=_FALLBACK)
+    )
+
+    assert parsed == _VERDICT
+    assert rejected == 1
+    assert fell_back is True
+    assert [r["model"] for r in fake.requests] == [_REQUEST["model"], _FALLBACK]
+    assert fake.requests[1] == {**_REQUEST, "model": _FALLBACK}
+
+
+def test_send_judged_does_not_fall_back_on_an_unparsable_reply(tmp_path):
+    fake, client = _unparsable_then_valid(tmp_path)
+
+    parsed, rejected, fell_back = asyncio.run(
+        send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2, fallback_model=_FALLBACK)
+    )
+
+    assert parsed == _VERDICT
+    assert rejected == 1
+    assert fell_back is False
+    assert {r["model"] for r in fake.requests} == {_REQUEST["model"]}
+
+
+def test_send_judged_replays_a_cached_refusal_straight_to_the_fallback(tmp_path):
+    """A committed refusal lets a rerun skip the primary call and reuse the cached fallback."""
+    fake, client = _cached_client(_refuse_primary, tmp_path)
+    send = send_judged(
+        client, _REQUEST, parse_leak, "s_test", max_retries=2, fallback_model=_FALLBACK
+    )
+    asyncio.run(send)
+
+    parsed, rejected, fell_back = asyncio.run(
+        send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2, fallback_model=_FALLBACK)
+    )
+
+    assert parsed == _VERDICT
+    assert rejected == 1
+    assert fell_back is True
+    assert len(fake.requests) == 2  # both replies of the rerun came from the cache
+    assert client.totals.cache_hits == 2
+
+
+def test_send_judged_without_fallback_raises_on_repeated_refusal(tmp_path):
+    fake, client = _cached_client(lambda _request: _REFUSAL, tmp_path)
+
+    with pytest.raises(ValidateError, match=r"session s_test: the judge reply was refused"):
+        asyncio.run(send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=1))
+
+    assert len(fake.requests) == 2
+    assert {r["model"] for r in fake.requests} == {_REQUEST["model"]}
+
+
+def test_send_judged_raises_when_the_fallback_also_refuses(tmp_path):
+    fake, client = _cached_client(lambda _request: _REFUSAL, tmp_path)
+
+    with pytest.raises(ValidateError, match=r"session s_test: the judge reply was refused"):
+        asyncio.run(
+            send_judged(
+                client, _REQUEST, parse_leak, "s_test", max_retries=1, fallback_model=_FALLBACK
+            )
+        )
+
+    # one primary refusal, then 1 + max_retries fallback attempts; no fallback of the fallback
+    assert [r["model"] for r in fake.requests] == [_REQUEST["model"], _FALLBACK, _FALLBACK]

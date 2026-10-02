@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pm_traitbench.catalogues.models import BiasLabels
 from pm_traitbench.config import BIAS_PARAMS, ValidateConfig
-from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_parsed
+from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_until_accepted
 from pm_traitbench.dialogue.prompts import base_request
 from pm_traitbench.enums import TurnRole
 from pm_traitbench.errors import ValidateError
@@ -141,7 +141,8 @@ def forbidden_request(
 
 def stance_request(pm_text: str, stance: str, config: ValidateConfig) -> dict[str, Any]:
     """The stance judge's request body for one PM turn and the stance line it carried."""
-    content = f"Instruction: {stance}\n\nPM message: {pm_text}"
+    # XML-tagged and message-first to minimise API reasoning-extraction refusals
+    content = f"<pm_message>{pm_text}</pm_message>\n\n<instruction>{stance}</instruction>"
     return _judge_request(STANCE_SYSTEM, content, STANCE_SCHEMA, config)
 
 
@@ -217,20 +218,49 @@ def map_label(label: str | None, labels: BiasLabels) -> str | None:
     return None
 
 
+_UNPARSABLE_REASON = "the judge reply was unparsable or schema-invalid"
+_REFUSED_REASON = "the judge reply was refused"
+
+
+class _Refused:
+    """Marks a judge reply the model refused, so the request is re-sent to the fallback model."""
+
+
+_REFUSED = _Refused()
+
+
 async def send_judged[T](
     client: CachedClient,
     request: Mapping[str, Any],
     parse: Callable[[Mapping[str, Any]], T | None],
     session_id: str,
     max_retries: int,
-) -> tuple[T, int]:
-    """Send `request` through `send_parsed`; raises `ValidateError` once retries are spent."""
-    return await send_parsed(
+    fallback_model: str | None = None,
+) -> tuple[T, int, bool]:
+    """Send `request` until `parse` accepts a reply; raises `ValidateError` once retries are spent.
+
+    With `fallback_model`, a refusal is committed and the request is re-sent once to that model
+    with its own retries. Returns the parsed reply, the rejected count summed across both models,
+    and whether the fallback model answered.
+    """
+
+    def classify(response: Mapping[str, Any]) -> tuple[T | _Refused | None, str]:
+        if response.get("stop_reason") == "refusal":
+            return (_REFUSED if fallback_model is not None else None), _REFUSED_REASON
+        return parse(response), _UNPARSABLE_REASON
+
+    _, parsed, rejected = await send_until_accepted(
         client,
         request,
-        parse,
+        classify,
         scope=session_id,
         max_retries=max_retries,
         error_type=ValidateError,
-        reason="the judge reply was unparsable or schema-invalid",
     )
+    if not isinstance(parsed, _Refused):
+        return parsed, rejected, False
+    assert fallback_model is not None
+    fallback_parsed, fallback_rejected, _ = await send_judged(
+        client, {**request, "model": fallback_model}, parse, session_id, max_retries
+    )
+    return fallback_parsed, rejected + 1 + fallback_rejected, True

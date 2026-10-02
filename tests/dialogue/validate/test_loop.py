@@ -113,6 +113,8 @@ def test_clean_session_passes_on_attempt_one_with_no_narrator_call(market_lookup
 
     assert len(outcome.rows) == 1
     assert outcome.rows[0].status == ValidationStatus.PASS
+    assert outcome.rows[0].fallback_model is None
+    assert outcome.rows[0].fallback_judges == ()
     assert outcome.final == SessionResult(
         session=session, log=_CLEAN_LOG, warnings=(), rejected_replies=0
     )
@@ -438,11 +440,74 @@ def test_stance_judge_sees_only_the_pm_turn_and_its_stance_line(market_lookup, t
     result = _once(ctx, client, log=log)
 
     assert len(seen) == 1
-    assert seen[0]["messages"][0]["content"] == f"Instruction: {line}\n\nPM message: holding it"
+    assert seen[0]["messages"][0]["content"] == (
+        f"<pm_message>holding it</pm_message>\n\n<instruction>{line}</instruction>"
+    )
     assert result.stance_reasons == (
         f'stance not carried out in PM turn 1: "{line}": the PM cut the position',
     )
     assert result.passed is False
+
+
+def _refused(_request):
+    return fake_message([{"type": "text", "text": "no"}], stop_reason="refusal")
+
+
+def test_judge_refusals_fall_back_and_name_each_fallen_back_judge(market_lookup, tmp_path):
+    config = Config()
+    lines = ("hold EQ-0001 through the drawdown", "refuse to add to EQ-0002")
+    ctx = validate_context(
+        market_lookup,
+        stances=tuple(
+            stance(f"t_0{i}", SignalMode.STATED, StanceEntry.STATED, line)
+            for i, line in enumerate(lines, 1)
+        ),
+        avoid_lines=("never mention position size",),
+        pm_turns=2,
+    )
+    log = log_of(
+        SESSION_ID,
+        "pm_001",
+        [pm_turn("holding it"), advisor_turn("cut?"), pm_turn("not adding"), advisor_turn("ok")],
+    )
+    primary = config.validation.judge_model
+
+    def forbidden(request):
+        return _refused(request) if request["model"] == primary else forbidden_reply([])
+
+    def judge(request):
+        refuse = request["model"] == primary and "not adding" in request["messages"][0]["content"]
+        return _refused(request) if refuse else stance_reply(True, "carried out")
+
+    client = scripted_client(tmp_path, _raise, _raise, forbidden, stance=judge)
+    result = _once(ctx, client, log=log)
+
+    assert result.passed is True
+    assert result.fallback_judges == ("forbidden", "stance turn 2")
+    assert result.rejected_replies == 2
+
+
+def test_a_fallen_back_judge_is_recorded_on_the_validation_row(market_lookup, tmp_path):
+    config = Config()
+    ctx = validate_context(
+        market_lookup,
+        stances=(stance("t_01", SignalMode.STATED, StanceEntry.STATED, "hold EQ-0001"),),
+    )
+    session = _session_from(ctx, ("all clear on the book", "noted"))
+
+    def judge(request):
+        if request["model"] == config.validation.judge_model:
+            return _refused(request)
+        return stance_reply(True, "carried out")
+
+    client = scripted_client(tmp_path, _raise, _raise, _clean_forbidden, stance=judge)
+    outcome = _run(ctx, session, _CLEAN_LOG, client, config=config)
+
+    (row,) = outcome.rows
+    assert row.status == ValidationStatus.PASS
+    assert row.judge_model == config.validation.judge_model
+    assert row.fallback_model == config.validation.refusal_fallback_model
+    assert row.fallback_judges == ("stance turn 1",)
 
 
 def test_stance_judge_is_not_called_without_stances(market_lookup, tmp_path):

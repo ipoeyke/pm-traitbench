@@ -141,7 +141,8 @@ def _run_metadata(
     dropped sessions), so `fails_by_layer`, `regenerated` and the typicality rates all
     describe this run alone. `dropped`, `dropped_session_ids`, `void_signal_ids` and
     `void_signals_by_pm` are cumulative across every run instead, since a dropped
-    session stays dropped.
+    session stays dropped. `fallback_verdicts` counts this run's judge verdicts that came
+    from the refusal fallback model.
     """
     dropped = set(dropped_session_ids)
     void_signal_ids: list[str] = []
@@ -179,6 +180,8 @@ def _run_metadata(
 
     return {
         "judge_model": config.validation.judge_model,
+        "refusal_fallback_model": config.validation.refusal_fallback_model,
+        "fallback_verdicts": sum(len(row.fallback_judges) for row in new_rows),
         "pms": sorted(pm_ids),
         "sessions_checked": len(typicality_by_session),
         "fails_by_layer": fails_by_layer,
