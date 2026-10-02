@@ -236,11 +236,12 @@ async def send_judged[T](
     session_id: str,
     max_retries: int,
     fallback_model: str | None = None,
-) -> tuple[T, int]:
+) -> tuple[T, int, bool]:
     """Send `request` until `parse` accepts a reply; raises `ValidateError` once retries are spent.
 
     With `fallback_model`, a refusal is committed and the request is re-sent once to that model
-    with its own retries; the returned count sums both models' rejected replies.
+    with its own retries. Returns the parsed reply, the rejected count summed across both models,
+    and whether the fallback model answered.
     """
 
     def classify(response: Mapping[str, Any]) -> tuple[T | _Refused | None, str]:
@@ -257,9 +258,9 @@ async def send_judged[T](
         error_type=ValidateError,
     )
     if not isinstance(parsed, _Refused):
-        return parsed, rejected
+        return parsed, rejected, False
     assert fallback_model is not None
-    fallback_parsed, fallback_rejected = await send_judged(
+    fallback_parsed, fallback_rejected, _ = await send_judged(
         client, {**request, "model": fallback_model}, parse, session_id, max_retries
     )
-    return fallback_parsed, rejected + 1 + fallback_rejected
+    return fallback_parsed, rejected + 1 + fallback_rejected, True

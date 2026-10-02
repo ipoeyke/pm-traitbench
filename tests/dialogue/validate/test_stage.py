@@ -609,6 +609,8 @@ def test_run_metadata_keys_and_typicality_rate(
     # The stage's own keys; the rest is the runner's shared metadata envelope.
     assert set(metadata) >= {
         "judge_model",
+        "refusal_fallback_model",
+        "fallback_verdicts",
         "pms",
         "sessions_checked",
         "fails_by_layer",
@@ -628,6 +630,8 @@ def test_run_metadata_keys_and_typicality_rate(
     }
 
     assert metadata["regeneration_rate_by_typicality"] == {"typical": 0.0}
+    assert metadata["refusal_fallback_model"] == config.validation.refusal_fallback_model
+    assert metadata["fallback_verdicts"] == 0
     assert metadata["dropped"] == 0
     assert metadata["regenerated"] == 0
 
@@ -651,6 +655,8 @@ def _validation_row(
         level_warnings=0,
         reasons=() if passed else ("forbidden: test reason",),
         judge_model="judge-test",
+        fallback_model=None,
+        fallback_judges=(),
     )
 
 

@@ -229,15 +229,16 @@ def _unparsable_then_valid(tmp_path):
 def test_send_judged_retries_then_commits(tmp_path):
     fake, client = _unparsable_then_valid(tmp_path)
 
-    parsed, rejected = asyncio.run(
+    parsed, rejected, fell_back = asyncio.run(
         send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2)
     )
 
     assert rejected == 1
     assert parsed == _VERDICT
+    assert fell_back is False
     assert len(fake.requests) == 2
 
-    parsed_again, rejected_again = asyncio.run(
+    parsed_again, rejected_again, _ = asyncio.run(
         send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2)
     )
     assert rejected_again == 0
@@ -266,7 +267,7 @@ def test_send_judged_bypasses_a_cached_reply_that_fails_the_real_parser(tmp_path
     asyncio.run(send_judged(client, _REQUEST, lambda response: response, "s_test", max_retries=0))
     assert len(fake.requests) == 1
 
-    parsed, rejected = asyncio.run(
+    parsed, rejected, fell_back = asyncio.run(
         send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=1)
     )
 
@@ -294,12 +295,13 @@ def _refuse_primary(request):
 def test_send_judged_falls_back_to_another_model_on_refusal(tmp_path):
     fake, client = _cached_client(_refuse_primary, tmp_path)
 
-    parsed, rejected = asyncio.run(
+    parsed, rejected, fell_back = asyncio.run(
         send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2, fallback_model=_FALLBACK)
     )
 
     assert parsed == _VERDICT
     assert rejected == 1
+    assert fell_back is True
     assert [r["model"] for r in fake.requests] == [_REQUEST["model"], _FALLBACK]
     assert fake.requests[1] == {**_REQUEST, "model": _FALLBACK}
 
@@ -307,12 +309,13 @@ def test_send_judged_falls_back_to_another_model_on_refusal(tmp_path):
 def test_send_judged_does_not_fall_back_on_an_unparsable_reply(tmp_path):
     fake, client = _unparsable_then_valid(tmp_path)
 
-    parsed, rejected = asyncio.run(
+    parsed, rejected, fell_back = asyncio.run(
         send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2, fallback_model=_FALLBACK)
     )
 
     assert parsed == _VERDICT
     assert rejected == 1
+    assert fell_back is False
     assert {r["model"] for r in fake.requests} == {_REQUEST["model"]}
 
 
@@ -324,12 +327,13 @@ def test_send_judged_replays_a_cached_refusal_straight_to_the_fallback(tmp_path)
     )
     asyncio.run(send)
 
-    parsed, rejected = asyncio.run(
+    parsed, rejected, fell_back = asyncio.run(
         send_judged(client, _REQUEST, parse_leak, "s_test", max_retries=2, fallback_model=_FALLBACK)
     )
 
     assert parsed == _VERDICT
     assert rejected == 1
+    assert fell_back is True
     assert len(fake.requests) == 2  # both replies of the rerun came from the cache
     assert client.totals.cache_hits == 2
 

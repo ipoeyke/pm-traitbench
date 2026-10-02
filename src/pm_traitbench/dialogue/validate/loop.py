@@ -52,6 +52,7 @@ class LayerResult:
     level_warnings: int
     warnings: tuple[str, ...]
     rejected_replies: int
+    fallback_judges: tuple[str, ...]
 
     def reasons_by_layer(self) -> dict[str, tuple[str, ...]]:
         """Each layer's reject reasons, keyed by layer name in `LAYERS` order."""
@@ -73,8 +74,8 @@ def revealed_params(ctx: SessionContext, trait_param_by_id: Mapping[str, str]) -
     )
 
 
-async def _unjudged() -> tuple[None, int]:
-    return None, 0
+async def _unjudged() -> tuple[None, int, bool]:
+    return None, 0, False
 
 
 def stanced_pm_turns(ctx: SessionContext, log: DialogueLog) -> tuple[tuple[int, str, str], ...]:
@@ -152,17 +153,26 @@ async def validate_once(
         for _, text, stance in stanced
     )
     (
-        (verdict, leak_rejected),
-        (violations, forbidden_rejected),
+        (verdict, leak_rejected, leak_fell_back),
+        (violations, forbidden_rejected, forbidden_fell_back),
         *stance_results,
     ) = await asyncio.gather(leak_send, forbidden_send, *stance_sends)
 
     stance_reasons = tuple(
         f'stance not carried out in PM turn {number}: "{stance}": {stance_verdict.reason}'
-        for (number, _, stance), (stance_verdict, _) in zip(stanced, stance_results, strict=True)
+        for (number, _, stance), (stance_verdict, _, _) in zip(stanced, stance_results, strict=True)
         if not stance_verdict.carried_out
     )
-    stance_rejected = sum(rejected for _, rejected in stance_results)
+    stance_rejected = sum(rejected for _, rejected, _ in stance_results)
+    fallback_judges = (
+        *(("leak",) if leak_fell_back else ()),
+        *(("forbidden",) if forbidden_fell_back else ()),
+        *(
+            f"stance turn {number}"
+            for (number, _, _), (_, _, fell_back) in zip(stanced, stance_results, strict=True)
+            if fell_back
+        ),
+    )
 
     # A judge finding counts only with its evidence: the quote must appear in a PM turn,
     # so a verdict invented from the topic rather than the text cannot fail a session.
@@ -199,6 +209,7 @@ async def validate_once(
         level_warnings=level_warnings,
         warnings=tuple(warnings),
         rejected_replies=leak_rejected + forbidden_rejected + stance_rejected,
+        fallback_judges=fallback_judges,
     )
 
 
@@ -273,6 +284,10 @@ async def run_session(
                 level_warnings=layer.level_warnings,
                 reasons=layer.reasons,
                 judge_model=config.validation.judge_model,
+                fallback_model=(
+                    config.validation.refusal_fallback_model if layer.fallback_judges else None
+                ),
+                fallback_judges=layer.fallback_judges,
             )
         )
 

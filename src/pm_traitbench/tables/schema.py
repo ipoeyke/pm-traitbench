@@ -1187,7 +1187,17 @@ class ValidationRow(BaseModel):
         ge=0, description="Number of advisor level mentions no tool result confirmed."
     )
     reasons: tuple[str, ...] = Field(description="Free-text reasons the attempt did not pass.")
-    judge_model: str = Field(min_length=1, description="Model that judged the attempt.")
+    judge_model: str = Field(min_length=1, description="Model the judge calls were first sent to.")
+    fallback_model: str | None = Field(
+        min_length=1,
+        description="Model that answered the judge calls the judge model refused, if any.",
+    )
+    fallback_judges: tuple[str, ...] = Field(
+        description=(
+            "Judge calls the fallback model answered: 'leak', 'forbidden' or "
+            "'stance turn {n}', with n the 1-based PM turn number."
+        )
+    )
 
     @model_validator(mode="after")
     def _check_session_id(self) -> "ValidationRow":
@@ -1219,6 +1229,12 @@ class ValidationRow(BaseModel):
     def _check_unjudged_leak(self) -> "ValidationRow":
         if not self.leak_judged and not self.leak_ok:
             raise ValueError("leak_ok must be true when leak_judged is false")
+        return self
+
+    @model_validator(mode="after")
+    def _check_fallback(self) -> "ValidationRow":
+        if (self.fallback_model is None) != (not self.fallback_judges):
+            raise ValueError("fallback_model must be set exactly when fallback_judges is non-empty")
         return self
 
 

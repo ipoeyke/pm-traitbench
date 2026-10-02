@@ -22,6 +22,8 @@ def _row(**overrides: object) -> ValidationRow:
         "level_warnings": 0,
         "reasons": (),
         "judge_model": "claude-opus-5-5",
+        "fallback_model": None,
+        "fallback_judges": (),
     }
     fields.update(overrides)
     return ValidationRow(**fields)
@@ -73,3 +75,12 @@ def test_validation_spec_key_and_hidden_columns() -> None:
         "session_id",
         "attempt",
     }
+
+
+def test_fallback_model_is_set_exactly_when_a_judge_fell_back() -> None:
+    row = _row(fallback_model="claude-sonnet-5-5", fallback_judges=("stance turn 2",))
+    assert row.fallback_judges == ("stance turn 2",)
+    with pytest.raises(ValidationError):
+        _row(fallback_model="claude-sonnet-5-5", fallback_judges=())
+    with pytest.raises(ValidationError):
+        _row(fallback_model=None, fallback_judges=("leak",))
