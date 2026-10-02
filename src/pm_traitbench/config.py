@@ -2038,6 +2038,17 @@ class ValidateConfig(BaseModel):
             "note": "strongest current model, one judge",
         },
     )
+    refusal_fallback_model: str | None = Field(
+        "claude-sonnet-5",
+        min_length=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "re-judges a request the judge model refused, such as an API "
+                "reasoning-extraction refusal; None disables the fallback"
+            ),
+        },
+    )
     effort: Effort = Field(
         Effort.LOW,
         json_schema_extra={"basis": "design", "note": "a yes/no reading task"},

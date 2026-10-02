@@ -438,7 +438,9 @@ def test_stance_judge_sees_only_the_pm_turn_and_its_stance_line(market_lookup, t
     result = _once(ctx, client, log=log)
 
     assert len(seen) == 1
-    assert seen[0]["messages"][0]["content"] == f"Instruction: {line}\n\nPM message: holding it"
+    assert seen[0]["messages"][0]["content"] == (
+        f"<pm_message>holding it</pm_message>\n\n<instruction>{line}</instruction>"
+    )
     assert result.stance_reasons == (
         f'stance not carried out in PM turn 1: "{line}": the PM cut the position',
     )

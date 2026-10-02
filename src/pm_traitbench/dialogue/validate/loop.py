@@ -107,6 +107,7 @@ async def validate_once(
     session_id = ctx.skeleton.session_id
     prefix = session_prefix(session_id)
     max_retries = config.dialogue.max_retries
+    fallback_model = config.validation.refusal_fallback_model
 
     ledger_reasons = check_trades(log, ctx.skeleton, ledger, config.validation.size_tolerance)
     level_reasons = check_pm_levels(
@@ -124,6 +125,7 @@ async def validate_once(
         parse_forbidden,
         session_id,
         max_retries,
+        fallback_model,
     )
     leak_send = (
         send_judged(
@@ -132,6 +134,7 @@ async def validate_once(
             parse_leak,
             session_id,
             max_retries,
+            fallback_model,
         )
         if leak_judged
         else _unjudged()
@@ -144,6 +147,7 @@ async def validate_once(
             parse_stance,
             session_id,
             max_retries,
+            fallback_model,
         )
         for _, text, stance in stanced
     )
