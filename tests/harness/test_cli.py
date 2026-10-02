@@ -1,5 +1,6 @@
 """Tests for the `eval run` and `eval score` commands and their separation from the stages."""
 
+import csv
 import json
 import re
 from pathlib import Path
@@ -10,10 +11,22 @@ import yaml
 from pm_traitbench import pipeline
 from pm_traitbench.cli import build_parser, main
 from pm_traitbench.config import load_config
+from pm_traitbench.harness.judge import load_judge_inputs, select_items
+from pm_traitbench.harness.runner import run_dir
+from pm_traitbench.harness.sample import SAMPLE_COLUMNS
 from pm_traitbench.stages import Stage
+from pm_traitbench.tables.specs import JUDGEMENTS, PROBES
+from pm_traitbench.tables.store import DataStore
 from tests.dialogue.fixtures import FakeClient, fake_message
 from tests.engine.fixtures import stage_config, stage_config_overrides
 from tests.harness.fixtures import validated_corpus_with_probes
+from tests.harness.judge_fixtures import (
+    GOVERNANCE_ANSWERS,
+    IN_SITU_ANSWERS,
+    governance_row,
+    in_situ_row,
+    responder_for,
+)
 
 ECHO = "tests.harness.fixtures:ECHO_FACTORY"
 FAILING = "tests.harness.fixtures:FAILING_FACTORY"
@@ -90,6 +103,103 @@ def test_baseline_name_resolves(corpus: Path, monkeypatch: pytest.MonkeyPatch) -
     )
 
     assert _eval(corpus, "run", "--sut", "no-memory") == 0
+
+
+def _inject_judge_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "pm_traitbench.harness.judge.AnthropicClient",
+        lambda *args, **kwargs: FakeClient(responder_for()),
+    )
+
+
+def _add_open_cases(corpus: Path) -> None:
+    """Append in-situ and governance probes; the neutral fixture PM has nothing else to judge."""
+    store = DataStore(corpus, load_config(corpus / CONFIG_NAME).output)
+    probes = store.read(PROBES)
+    pm_id, day = probes[0].pm_id, probes[0].checkpoint_date
+    extra = [
+        *(in_situ_row(900 + i, case, pm_id, day) for i, case in enumerate(IN_SITU_ANSWERS)),
+        *(governance_row(910 + i, kind, pm_id, day) for i, kind in enumerate(GOVERNANCE_ANSWERS)),
+    ]
+    store.write(PROBES, [*probes, *extra])
+
+
+def test_eval_judge_sample_score_end_to_end(
+    corpus: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    _inject_judge_client(monkeypatch)
+    _add_open_cases(corpus)
+    assert _eval(corpus, "run", "--sut", ECHO, "--run-name", "echo") == 0
+
+    assert _eval(corpus, "judge", "--run-name", "echo") == 0
+    judge_out = capsys.readouterr().out
+    config = load_config(corpus / CONFIG_NAME)
+    store = DataStore(corpus, config.output)
+    run_store = DataStore(run_dir(corpus, "echo"), config.output)
+    expected = len(select_items(load_judge_inputs(store, run_store)).items)
+    assert re.search(rf"judged {expected} items \(.*\), skipped \d+", judge_out)
+    assert expected > 0
+    assert len(run_store.read(JUDGEMENTS)) == expected
+
+    assert _eval(corpus, "sample", "--run-name", "echo", "--size", "5") == 0
+    sample = run_dir(corpus, "echo") / "human_sample.csv"
+    with sample.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert 0 < len(rows) <= 5
+    assert tuple(rows[0]) == SAMPLE_COLUMNS
+    for row in rows:
+        row["human_correct"] = "yes"
+    with sample.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=SAMPLE_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+    capsys.readouterr()
+
+    assert _eval(corpus, "score", "--run-name", "echo") == 0
+    score_out = capsys.readouterr().out
+    assert re.search(
+        r"agreement judge_\w+: n=\d+ rate=\d\.\d{3} kappa=(\d\.\d{3}|-|-?\d\.\d{3})", score_out
+    )
+    summary = json.loads((run_dir(corpus, "echo") / "summary.json").read_text(encoding="utf-8"))
+    assert set(summary["agreement"]) == {row["judge"] for row in rows}
+    for key, value in summary["awaiting_judge"].items():
+        if key != "routine_question/intrusion":
+            assert value == 0
+
+
+def test_eval_sample_before_judge_exit_1(corpus: Path, capsys) -> None:
+    assert _eval(corpus, "run", "--sut", ECHO, "--run-name", "echo") == 0
+    capsys.readouterr()
+
+    assert _eval(corpus, "sample", "--run-name", "echo") == 1
+    assert "eval judge" in capsys.readouterr().err
+
+
+def test_eval_sample_refuses_overwrite_without_force(
+    corpus: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    _inject_judge_client(monkeypatch)
+    _add_open_cases(corpus)
+    assert _eval(corpus, "run", "--sut", ECHO, "--run-name", "echo") == 0
+    assert _eval(corpus, "judge", "--run-name", "echo") == 0
+    assert _eval(corpus, "sample", "--run-name", "echo", "--size", "2") == 0
+    capsys.readouterr()
+
+    assert _eval(corpus, "sample", "--run-name", "echo", "--size", "2") == 1
+    assert "--force" in capsys.readouterr().err
+    assert _eval(corpus, "sample", "--run-name", "echo", "--size", "2", "--force") == 0
+
+
+def test_eval_judge_bad_run_name_exit_1(corpus: Path, capsys) -> None:
+    assert _eval(corpus, "judge", "--run-name", "Bad Name") == 1
+    assert "run name 'Bad Name' must match" in capsys.readouterr().err
+
+
+def test_eval_sample_rejects_zero_size(corpus: Path, capsys) -> None:
+    with pytest.raises(SystemExit):
+        _eval(corpus, "sample", "--run-name", "echo", "--size", "0")
+
+    assert "must be at least 1" in capsys.readouterr().err
 
 
 def test_stage_named_eval_rejected() -> None:

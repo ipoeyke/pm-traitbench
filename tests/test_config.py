@@ -18,6 +18,7 @@ from pm_traitbench.config import (
     EventSpec,
     Gate2Config,
     HarnessConfig,
+    JudgeConfig,
     MarketConfig,
     PlanConfig,
     PmFilter,
@@ -1199,3 +1200,30 @@ def test_harness_defaults() -> None:
     assert harness.max_answer_tokens == 8000
     assert harness.short_page_words == 400
     assert harness.pm_token_budget is None
+
+
+def test_judge_config_defaults() -> None:
+    judge = Config().judge
+    assert isinstance(judge, JudgeConfig)
+    assert judge.model == DEFAULT_MODEL
+    assert judge.effort == Effort.HIGH
+    assert judge.max_tokens == 4000
+    assert judge.max_concurrency == 8
+    assert judge.sample_size == 100
+    assert judge.token_budget is None
+
+
+def test_dump_with_basis_covers_every_judge_leaf() -> None:
+    config = Config()
+    rows = {row.path: row for row in config.dump_with_basis()}
+    judge_paths = [path for path in rows if path.startswith("judge.")]
+    assert set(judge_paths) == {f"judge.{name}" for name in type(config.judge).model_fields}
+    for path in judge_paths:
+        row = rows[path]
+        assert row.basis in ("sourced", "design", "guess")
+        assert row.note.strip()
+
+
+def test_judge_sample_size_below_floor_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        Config.model_validate({"judge": {"sample_size": 4}})

@@ -2136,6 +2136,62 @@ class HarnessConfig(BaseModel):
     )
 
 
+class JudgeConfig(BaseModel):
+    """Settings for the LLM judges that grade open replies against a rubric."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: str = Field(
+        DEFAULT_MODEL,
+        json_schema_extra={
+            "basis": "design",
+            "note": "one judge model; the human-rated sample bounds its noise",
+        },
+    )
+    effort: Effort = Field(
+        Effort.HIGH,
+        json_schema_extra={
+            "basis": "design",
+            "note": "grading against a rubric benefits from thinking, at Gate 2's effort",
+        },
+    )
+    max_tokens: int = Field(
+        4000,
+        ge=256,
+        json_schema_extra={
+            "basis": "design",
+            "note": "thinking plus a short JSON verdict, the dialogue stage's output cap",
+        },
+    )
+    max_concurrency: int = Field(
+        8,
+        ge=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "the dialogue stage's value, well inside default API rate limits",
+        },
+    )
+    sample_size: int = Field(
+        100,
+        ge=5,
+        json_schema_extra={
+            "basis": "guess",
+            "note": "20 items per judge, enough to notice an agreement rate below 0.8",
+        },
+    )
+    token_budget: int | None = Field(
+        None,
+        ge=1,
+        json_schema_extra={
+            "basis": "guess",
+            "note": (
+                "cap on fresh tokens for one judge pass; spending it stops the pass "
+                "and finished items stay cached"
+            ),
+        },
+    )
+
+
 class Gate2Config(BaseModel):
     """Settings for Gate 2: the recovery model, exact-test level, overlap measure and limits."""
 
@@ -2394,6 +2450,7 @@ class Config(BaseModel):
     validation: ValidateConfig = Field(default_factory=ValidateConfig)
     gate2: Gate2Config = Field(default_factory=Gate2Config)
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
+    judge: JudgeConfig = Field(default_factory=JudgeConfig)
     probes: ProbesConfig = Field(default_factory=ProbesConfig)
 
     @model_validator(mode="after")

@@ -31,6 +31,7 @@ from pm_traitbench.enums import (
     Gate2Slice,
     Gate2Verdict,
     InstrumentKind,
+    Judge,
     Kind,
     MentionKind,
     Op,
@@ -141,6 +142,7 @@ __all__ = [
     "ProbeRow",
     "ResponseRow",
     "ScoreRow",
+    "JudgementRow",
     "probe_id",
     "to_record",
     "multiplier_field",
@@ -1668,5 +1670,31 @@ class ScoreRow(BaseModel):
 
     @model_validator(mode="after")
     def _check_probe_id_prefix(self) -> "ScoreRow":
+        _check_probe_prefix(self.probe_id, self.pm_id)
+        return self
+
+
+class JudgementRow(BaseModel):
+    """One judge's verdict on one reply."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    probe_id: str = Field(pattern=_PROBE_ID_PATTERN, description="Probe that was judged.")
+    pm_id: str = Field(pattern=_PM_ID_PATTERN, description="PM the probe is asked about.")
+    judge: Judge = Field(description="Which judge produced the verdict.")
+    correct: bool = Field(description="Whether the judge accepted the reply.")
+    detail: str = Field(
+        min_length=1,
+        description=(
+            "Every verdict field as name=value joined by '; ' in schema order, or "
+            "empty_reply; flat because the arrow format has no nested column."
+        ),
+    )
+    rationale: str = Field(
+        description="The judge's explanation; empty when the reply was empty, which has none."
+    )
+
+    @model_validator(mode="after")
+    def _check_probe_id_prefix(self) -> "JudgementRow":
         _check_probe_prefix(self.probe_id, self.pm_id)
         return self

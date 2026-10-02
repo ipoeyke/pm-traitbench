@@ -62,6 +62,7 @@ uv run pm-traitbench dialogue --config configs/demo.yaml --data-dir data
 uv run pm-traitbench validate --config configs/demo.yaml --data-dir data
 uv run pm-traitbench gate2 --config configs/demo.yaml --data-dir data
 uv run pm-traitbench probes --config configs/demo.yaml --data-dir data
+uv run pm-traitbench eval run --sut no-memory --data-dir data
 uv run pm-traitbench eval run --sut full-context --data-dir data
 uv run pm-traitbench eval score --run-name full-context --data-dir data
 ```
@@ -102,13 +103,14 @@ which traits the validated dialogue shows and writes `gate2_traits`,
 `gate2_signals`, `gate2_pm` and `gate2_cells`; it exits 1 when a blocking
 row fails - one one-sided Fisher exact test per bias parameter and one
 pooled Poisson-binomial test over every held preference, at `gate2.alpha`.
-A blocking row below `gate2.min_class` PMs either side is `insufficient`
-and reported but never blocks. The `probes` stage writes `probes`, one row per question with ground truth at
-each checkpoint of a PM's schedule, calling no model; `answer`, the option
-sources and the supporting signal ids are hidden columns. Pass `--force` to
-overwrite a table that already exists. The `eval` commands are not a stage:
-they replay the corpus into a system under test and score its answers; see
-Evaluation. Run `uv run pm-traitbench --help` for the full command list.
+A blocking row below `gate2.min_class` PMs either side is `insufficient` and
+reported but never blocks. The `probes` stage writes `probes`, one row per
+question with ground truth at each checkpoint of a PM's schedule, calling no
+model; `answer`, the option sources and the supporting signal ids are hidden
+columns. Pass `--force` to overwrite a table that already exists. The `eval`
+commands are not a stage: they replay the corpus into a system under test and
+score its answers; see Evaluation. Run `uv run pm-traitbench --help` for the
+full command list.
 
 `fetch-market` only needs to run first when the config references a real
 market seed, as the default and demo configs both do for their pilot seed;
@@ -849,8 +851,11 @@ stale on purpose, so a system that stores the premise from the question would
 corrupt its own memory.
 
 ```sh
+uv run pm-traitbench eval run --sut no-memory --data-dir data
 uv run pm-traitbench eval run --sut full-context --data-dir data
 uv run pm-traitbench eval run --sut mypackage.adapter:factory --run-name mine --workers 4
+uv run pm-traitbench eval judge --run-name mine --data-dir data
+uv run pm-traitbench eval sample --run-name mine --size 100 --data-dir data
 uv run pm-traitbench eval score --run-name mine --data-dir data
 ```
 
@@ -868,8 +873,9 @@ the run was made by a different `--sut` or under a different `harness` config.
 probes.
 
 A run directory holds `responses` (one row per probe), `scores`,
+`judgements` (after `eval judge`), `human_sample.csv` (after `eval sample`),
 `summary.json`, `parts/` (one responses file per finished PM), `cache/` (the
-baselines' model replies, keyed by request) and `run_metadata/`.
+baselines' and judges' model replies, keyed by request) and `run_metadata/`.
 
 **Baselines.** Both answer at the Gate 2 model and effort
 (`harness.model`, `harness.effort`) with the advisor prompt, the profile and
@@ -890,7 +896,7 @@ nothing. A routine question is checked against the communication formats the
 PM holds, using a check map shipped in `harness/checks.yaml`. The reply passes
 when every held format with a deterministic check passes. An empty reply is
 wrong. A probe whose checkable values are all not applicable to the reply gets
-no score row and is counted under `awaiting_judge`.
+no score row.
 
 | Param | Value | Check |
 |---|---|---|
@@ -927,18 +933,65 @@ The checks are:
 usually the month. `confidence_level` needs the confidence or conviction word
 because a bare percentage is a quoted move. The bp unit matches glued forms
 such as `12bp`. The `register`, `pushback_style`, `answer_ordering` and "flag
-uncertainty once" values have no deterministic check and wait for judges.
+uncertainty once" values have no deterministic check and are graded by `judge_format`.
 
 `summary.json` holds `by_type` (per probe type, form and scorer: `n`,
-`correct`, `accuracy`, `chance` for option-letter rows, and `parse_errors`),
+`correct`, `accuracy`, `chance` for option-letter rows and null for judge
+rows, and `parse_errors`),
 `slices` (accuracy per scorer by trait kind, checkpoint label and evidence
 type: `explicit`, `implicit`, `mixed` or `none`, from the modes of the
-probe's supporting signals), `presence` (accuracy on yes and no answers and
-their balanced accuracy, since most presence answers are no and an always-no
-reply would otherwise look strong) and `awaiting_judge`. Open probes are not
-scored here: the open twin of each multiple choice, `in_situ`, `governance`,
-the intrusion half of each routine question and the judge-only format values
-are counted under `awaiting_judge`.
+probe's supporting signals; `judge_in_situ` also has `case` and
+`judge_governance` `answer_kind`), `presence` (accuracy on yes and no answers
+and their balanced accuracy, since most presence answers are no and an
+always-no reply would otherwise look strong) and `awaiting_judge`, which counts
+the open items no judgement covers yet. A routine question whose PM had no
+active bias at the checkpoint has nothing to intrude and is never awaited;
+the judge run's metadata counts those skips. After a full `eval judge` every
+count is 0.
+
+**Judges.** `eval judge` grades the open replies, one judge per case, and
+writes a `judgements` table. Each judge is told the brief below and answers
+with a short JSON verdict after a `rationale`.
+
+| Judge | Probes | Told | Verdict | Correct |
+|---|---|---|---|---|
+| `judge_open` | open twin of a `trait_mcq` | the sibling's lettered options | `choice` | equals the sibling's answer letter |
+| `judge_in_situ` | `in_situ` | the rubric | `honours`, or `accounts` and `names`, or `refuses` and `gives_reason` | all true |
+| `judge_governance` | `governance` | the event date and current state | `rejects_premise`, `corrects` | either true |
+| `judge_intrusion` | `routine_question` | the PM's active bias tendencies | `intrudes`, `evidence` | not intrudes |
+| `judge_format` | `routine_question` with judge-only held values | those values | `pass`, `fail` or `not_applicable` per value | no fail |
+
+The intrusion judge is told the behaviour phrases of the biases active at the
+checkpoint. Communication formats never count as intrusion, and a
+reply does not intrude just because a preference is how the PM wants to be
+advised. A routine question whose PM had no active bias, or that holds no
+judge-only value, gets no row from that judge. An empty reply is wrong without
+a model call and its `detail` is `empty_reply`. A verdict that does not parse
+is retried up to `dialogue.max_retries` times, then the pass stops with an
+error; finished items stay cached. The `judgements` columns are `probe_id`,
+`pm_id`, `judge`, `correct`, `detail` (every verdict field as `name=value`
+joined by `; `) and `rationale`. Judge calls are cached under the run, so a
+rerun continues after a spent budget. A rerun under other `judge` settings or
+prompts refuses without `--force`, which replaces the judgements once the new
+pass finishes, reusing cached calls whose request is unchanged. `judge.model` defaults to the Gate 2 model, which
+also writes the corpus, so a judge may favour replies that read like its own;
+the human sample below bounds that bias.
+
+**Human sample.** After `eval judge`, `uv run pm-traitbench eval sample
+--run-name mine --data-dir data` writes `human_sample.csv` to the run
+directory, `judge.sample_size` rows drawn with a seed. The judges share the
+rows evenly and in-situ rows split 40/40/20 over counteract, decline and
+comply; a judge or case with too few items hands its share to the next.
+Replies that were empty are left out. The columns are `sample_id`, `judge`,
+`probe_id`, `pm_id`, `case`, `question`, `response`, `brief`, `human_correct`
+and `human_note`. Verdicts and rationales are withheld so raters stay blind. `eval sample`
+refuses to overwrite an existing sample without `--force`, because a rerun
+would discard entered ratings.
+Fill `human_correct` with `yes` or `no` (blank means unrated) and rerun `eval
+score`: `summary.json` then holds `agreement` per judge with `n`, the
+agreement rate and Cohen's kappa. Kappa is reported because intrusion and
+governance verdicts are mostly one-sided, which makes raw agreement look high;
+it is null when chance agreement is total.
 
 **Config.** `harness.model` (the Gate 2 model, design) and `harness.effort`
 (high, design) set the baselines' model; `max_answer_tokens` (8000, design)
@@ -947,8 +1000,14 @@ bounds a reply including thinking. A baseline reply still unparsable after
 recorded as an empty response and scores wrong. `short_page_words` (400,
 design) is the `short_page` ceiling. `pm_token_budget` (unset, guess) caps
 fresh tokens per PM for a baseline; spending it fails that PM, and `eval
-score` then refuses the run until it is rerun. Each carries its basis and note
-in the config.
+score` then refuses the run until it is rerun. `judge.model` (the Gate 2
+model, design) and `judge.effort` (high, design) set the judges' model, one
+model for every judge; `max_tokens` (4000, design) bounds thinking plus the
+short JSON verdict. `max_concurrency` (8, guess) is the dialogue stage's value.
+`sample_size` (100, guess, at least 5) is the human-rated sample, 20 items per
+judge. `token_budget` (unset, guess) caps fresh tokens for one judge pass;
+spending it stops the pass and finished items stay cached. Each carries its
+basis and note in the config.
 
 ## Development
 

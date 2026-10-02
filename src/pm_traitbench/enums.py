@@ -446,6 +446,31 @@ class ProbeSkip(StrEnum):
 class Scorer(StrEnum):
     OPTION_LETTER = "option_letter"
     FORMAT = "format"
+    JUDGE_OPEN = "judge_open"
+    JUDGE_IN_SITU = "judge_in_situ"
+    JUDGE_GOVERNANCE = "judge_governance"
+    JUDGE_INTRUSION = "judge_intrusion"
+    JUDGE_FORMAT = "judge_format"
+
+
+class Judge(StrEnum):
+    OPEN = "judge_open"
+    IN_SITU = "judge_in_situ"
+    GOVERNANCE = "judge_governance"
+    INTRUSION = "judge_intrusion"
+    FORMAT = "judge_format"
+
+
+class InSituCase(StrEnum):
+    COMPLY = "comply"
+    COUNTERACT = "counteract"
+    DECLINE = "decline"
+
+
+class GovernanceKind(StrEnum):
+    PREFERENCE = "preference"
+    UPDATE = "update"
+    DORMANT = "dormant"
 
 
 class FormatOutcome(StrEnum):

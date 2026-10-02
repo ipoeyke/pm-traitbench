@@ -3,10 +3,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from pm_traitbench.enums import Scorer
+from pm_traitbench.enums import Judge, Scorer
 from pm_traitbench.tables.formats import FORMATS
-from pm_traitbench.tables.schema import ResponseRow, ScoreRow, to_record
-from pm_traitbench.tables.specs import RESPONSES, parts_spec
+from pm_traitbench.tables.schema import JudgementRow, ResponseRow, ScoreRow, to_record
+from pm_traitbench.tables.specs import JUDGEMENTS, RESPONSES, SCORES, parts_spec
 
 
 def _response(**overrides: object) -> ResponseRow:
@@ -65,3 +65,38 @@ def test_parts_spec_names_pm() -> None:
     spec = parts_spec("pm_001")
     assert spec.name == "parts/pm_001"
     assert spec.key == RESPONSES.key
+
+
+def test_scores_key_includes_scorer() -> None:
+    assert SCORES.key == ("pm_id", "probe_id", "scorer")
+
+
+def test_judgements_spec() -> None:
+    assert JUDGEMENTS.name == "judgements"
+    assert JUDGEMENTS.model is JudgementRow
+    assert JUDGEMENTS.key == ("pm_id", "probe_id", "judge")
+
+
+def _judgement(**overrides: object) -> JudgementRow:
+    fields = {
+        "probe_id": "p_pm001_0001",
+        "pm_id": "pm_001",
+        "judge": Judge.OPEN,
+        "correct": True,
+        "detail": "verdict=right",
+        "rationale": "matches the ground truth",
+    }
+    fields.update(overrides)
+    return JudgementRow(**fields)
+
+
+def test_judgement_row_round_trip() -> None:
+    row = _judgement()
+    assert JudgementRow.model_validate(row.model_dump()) == row
+    with pytest.raises(ValidationError):
+        _judgement(detail="")
+    assert _judgement(rationale="").rationale == ""
+
+
+def test_judge_and_scorer_share_values() -> None:
+    assert {j.value for j in Judge} <= {s.value for s in Scorer}

@@ -1,4 +1,4 @@
-"""Deterministic scoring of replies: option letters and routine-question format checks."""
+"""Scoring of replies: option letters, format checks and judge verdicts, and the summary."""
 
 import json
 import re
@@ -7,15 +7,16 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pm_traitbench.catalogues.loader import load_catalogue
+from pm_traitbench.catalogues.models import ProbeBank
 from pm_traitbench.config import Config
 from pm_traitbench.enums import (
     CheckKind,
     EvidenceType,
     FormatOutcome,
+    Judge,
     Kind,
     ProbeForm,
     ProbeType,
-    RunStatus,
     Scorer,
     SignalMode,
 )
@@ -26,9 +27,26 @@ from pm_traitbench.harness.checks import (
     parse_routine_answer,
     run_check,
 )
-from pm_traitbench.harness.runner import RUN_METADATA, probes_sha256, run_dir
-from pm_traitbench.tables.schema import ProbeRow, ScoreRow
-from pm_traitbench.tables.specs import PROBES, RESPONSES, SCORES, SIGNALS, TRAITS
+from pm_traitbench.harness.judge import (
+    EMPTY_REPLY,
+    JudgeInputs,
+    governance_kind,
+    in_situ_case,
+    select_items,
+    split_detail,
+)
+from pm_traitbench.harness.runner import check_scorable, probes_sha256, run_dir
+from pm_traitbench.harness.sample import SAMPLE_FILE, agreement, read_ratings
+from pm_traitbench.tables.schema import DriftEvent, JudgementRow, ProbeRow, ScoreRow, Trait
+from pm_traitbench.tables.specs import (
+    DRIFT_EVENTS,
+    JUDGEMENTS,
+    PROBES,
+    RESPONSES,
+    SCORES,
+    SIGNALS,
+    TRAITS,
+)
 from pm_traitbench.tables.store import DataStore
 
 SCORE_METADATA = "eval-score"
@@ -94,7 +112,7 @@ def score_format(
     if not held:
         return None
     if not response.strip():
-        return _format_row(row, False, "empty_reply")
+        return _format_row(row, False, EMPTY_REPLY)
     outcomes = [
         (f"{param}={value}", run_check(check_map[(param, value)], response, short_page_words))
         for param, value in held
@@ -113,6 +131,72 @@ def _format_row(row: ProbeRow, correct: bool, detail: str | None) -> ScoreRow:
         correct=correct,
         detail=detail,
     )
+
+
+_AWAITING_KEYS: dict[Judge, str] = {
+    Judge.OPEN: "trait_mcq/open",
+    Judge.IN_SITU: "in_situ/open",
+    Judge.GOVERNANCE: "governance/open",
+    Judge.INTRUSION: "routine_question/intrusion",
+    Judge.FORMAT: "routine_question/format_judge",
+}
+
+
+def judgement_score(row: JudgementRow) -> ScoreRow | None:
+    """The score row of a judgement, or None when a format judge found nothing to check."""
+    detail = None
+    if row.detail == EMPTY_REPLY:
+        detail = row.detail
+    elif row.judge == Judge.FORMAT:
+        outcomes = split_detail(row.detail, row.judge)
+        if all(o == FormatOutcome.NOT_APPLICABLE for o in outcomes.values()):
+            return None
+        detail = "; ".join(k for k, o in outcomes.items() if o == FormatOutcome.FAIL) or None
+    elif not row.correct:
+        fields = split_detail(row.detail, row.judge)
+        match row.judge:
+            case Judge.OPEN:
+                detail = f"chose={fields['choice']}"
+            case Judge.INTRUSION:
+                detail = f"evidence={fields['evidence']}"
+            case _:
+                detail = "; ".join(k for k, v in fields.items() if v == "false")
+    return ScoreRow(
+        probe_id=row.probe_id,
+        pm_id=row.pm_id,
+        scorer=Scorer(row.judge.value),
+        correct=row.correct,
+        detail=detail,
+    )
+
+
+def awaiting_counts(
+    probes: Sequence[ProbeRow],
+    judgements: Sequence[JudgementRow],
+    check_map: Mapping[tuple[str, str], CheckKind],
+    traits: Sequence[Trait],
+    drift_events: Sequence[DriftEvent],
+    bank: ProbeBank,
+) -> dict[str, int]:
+    """Per judge item type, the items that have no judgement row yet.
+
+    Items come from the same selection the judge pass uses, so a routine question with
+    no active bias or no judge-only value is never awaiting.
+    """
+    inputs = JudgeInputs(
+        probes,
+        dict.fromkeys((p.probe_id for p in probes), ""),
+        traits,
+        drift_events,
+        bank,
+        check_map,
+    )
+    judged = {(j.probe_id, j.judge) for j in judgements}
+    counts = dict.fromkeys(_AWAITING_KEYS.values(), 0)
+    for item in select_items(inputs).items:
+        if (item.probe.probe_id, item.judge) not in judged:
+            counts[_AWAITING_KEYS[item.judge]] += 1
+    return counts
 
 
 def evidence_type(signal_ids: Sequence[str], modes: Mapping[str, SignalMode]) -> EvidenceType:
@@ -144,6 +228,11 @@ def summarise(
     kinds: Mapping[tuple[str, str], Kind],
     modes: Mapping[str, SignalMode],
     check_map: Mapping[tuple[str, str], CheckKind],
+    *,
+    judgements: Sequence[JudgementRow] = (),
+    traits: Sequence[Trait] = (),
+    drift_events: Sequence[DriftEvent] = (),
+    bank: ProbeBank | None = None,
 ) -> dict[str, Any]:
     """Aggregate scores by probe type, slice dimension and presence answer.
 
@@ -157,6 +246,8 @@ def summarise(
             "kind": defaultdict(list),
             "checkpoint_label": defaultdict(list),
             "evidence": defaultdict(list),
+            "case": defaultdict(list),
+            "answer_kind": defaultdict(list),
         }
     )
     presence: dict[str, list[ScoreRow]] = {"yes": [], "no": []}
@@ -173,6 +264,10 @@ def summarise(
         d["kind"][kind].append(score)
         d["checkpoint_label"][row.checkpoint_label].append(score)
         d["evidence"][evidence_type(row.supporting_signal_ids, modes)].append(score)
+        if score.scorer == Scorer.JUDGE_IN_SITU:
+            d["case"][in_situ_case(row.answer)].append(score)
+        elif score.scorer == Scorer.JUDGE_GOVERNANCE:
+            d["answer_kind"][governance_kind(row.answer)].append(score)
         if row.probe_type == ProbeType.TRAIT_PRESENCE:
             text = getattr(row, f"option_{row.answer.lower()}")
             presence["yes" if text == "yes" else "no"].append(score)
@@ -197,25 +292,21 @@ def summarise(
             }
         )
 
-    scored = {s.probe_id for s in scores if s.scorer == Scorer.FORMAT}
-    routine = [p for p in probes if p.probe_type == ProbeType.ROUTINE_QUESTION]
-    unscored = [p for p in routine if p.probe_id not in scored]
-    not_applicable = sum(bool(checkable_values(p, check_map)) for p in unscored)
-    awaiting = {
-        "trait_mcq/open": _count(probes, ProbeType.TRAIT_MCQ, ProbeForm.OPEN),
-        "in_situ/open": _count(probes, ProbeType.IN_SITU, ProbeForm.OPEN),
-        "governance/open": _count(probes, ProbeType.GOVERNANCE, ProbeForm.OPEN),
-        "routine_question/intrusion": len(routine),
-        "routine_question/format_not_applicable": not_applicable,
-        "routine_question/format_judge_only": len(unscored) - not_applicable,
-    }
+    awaiting = awaiting_counts(
+        probes,
+        judgements,
+        check_map,
+        traits,
+        drift_events,
+        bank if bank is not None else load_catalogue().probes,
+    )
     accuracies = {k: (_rate(v)["accuracy"] if v else None) for k, v in presence.items()}
     both = all(presence.values())
     return {
         "by_type": by_type,
         "awaiting_judge": awaiting,
         "slices": {
-            scorer: {name: _slice(groups) for name, groups in d.items()}
+            scorer: {name: _slice(groups) for name, groups in d.items() if groups}
             for scorer, d in sorted(dims.items())
         },
         "presence": {
@@ -226,31 +317,11 @@ def summarise(
     }
 
 
-def _count(probes: Sequence[ProbeRow], probe_type: ProbeType, form: ProbeForm) -> int:
-    return sum(p.probe_type == probe_type and p.form == form for p in probes)
-
-
-def _check_run(store: DataStore, run_store: DataStore, run_name: str) -> None:
-    meta = run_store.read_run_metadata(RUN_METADATA)
-    if meta is None:
-        raise HarnessError(f"run '{run_name}' has no run metadata; run the evaluation first")
-    if meta.get("pms_failed"):
-        names = ", ".join(sorted(meta["pms_failed"]))
-        raise HarnessError(
-            f"run '{run_name}' has failed PMs ({names}); a partial run's accuracy covers a "
-            "biased subset, so rerun it"
-        )
-    if meta.get("status") != RunStatus.FINISHED:
-        raise HarnessError(f"run '{run_name}' is not finished; rerun the evaluation to completion")
-    if meta.get("probes_sha256") != probes_sha256(store):
-        raise HarnessError(f"probes changed since run '{run_name}' was made; rerun it with --force")
-
-
 def score_run(config: Config, store: DataStore, run_name: str) -> dict[str, Any]:
     """Score a finished run's responses, write scores and summary.json, and return the summary."""
     rd = run_dir(store.data_dir, run_name)
     run_store = DataStore(rd, config.output)
-    _check_run(store, run_store, run_name)
+    check_scorable(store, run_store, run_name)
 
     responses = {r.probe_id: r.response for r in run_store.read(RESPONSES)}
     probes = store.read(PROBES)
@@ -270,9 +341,30 @@ def score_run(config: Config, store: DataStore, run_name: str) -> dict[str, Any]
         if score is not None:
             scores.append(score)
 
-    kinds = {(t.pm_id, t.trait_id): t.kind for t in store.read(TRAITS)}
+    judgements = run_store.read(JUDGEMENTS) if run_store.exists(JUDGEMENTS) else []
+    scores += [s for s in map(judgement_score, judgements) if s is not None]
+
+    traits = store.read(TRAITS)
+    kinds = {(t.pm_id, t.trait_id): t.kind for t in traits}
     modes = {s.signal_id: s.mode for s in store.read(SIGNALS)}
-    summary = summarise(probes, scores, kinds, modes, check_map)
+    summary = summarise(
+        probes,
+        scores,
+        kinds,
+        modes,
+        check_map,
+        judgements=judgements,
+        traits=traits,
+        drift_events=store.read(DRIFT_EVENTS),
+        bank=load_catalogue().probes,
+    )
+    sample_path = rd / SAMPLE_FILE
+    # Ratings without a judgements table have nothing to agree with; the scores still stand.
+    summary["agreement"] = (
+        agreement(read_ratings(sample_path), judgements)
+        if sample_path.exists() and judgements
+        else {}
+    )
     run_store.write(SCORES, scores)
     (rd / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
