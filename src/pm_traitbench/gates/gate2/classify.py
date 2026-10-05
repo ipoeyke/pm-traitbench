@@ -67,6 +67,21 @@ CLASSIFY_SCHEMA: dict[str, Any] = {
 }
 
 
+# Stance entries on which the PM states their own habit or preference: every self-owned
+# entry but a revealed action. The classification model is asked for this many statements.
+SELF_STATEMENT_ENTRIES = frozenset(
+    {
+        StanceEntry.STATED,
+        StanceEntry.CLAIM,
+        StanceEntry.RETRACT,
+        StanceEntry.REVEALED_REACTION,
+        StanceEntry.DRIFT_UPDATE,
+        StanceEntry.DRIFT_DORMANT,
+        StanceEntry.DRIFT_REVIVE,
+    }
+)
+
+
 def is_classifiable(signal: Signal) -> bool:
     """Whether `signal` is a self-owned, confirmed, stated one - the only kind classified."""
     return (
@@ -108,13 +123,20 @@ def signal_turn_index(skeleton: Skeleton, log: DialogueLog, signal_id: str) -> i
 
 @dataclass(frozen=True)
 class ClassifyUnit:
-    """One session's classifiable signals, ready for a classification request and its scorer."""
+    """One session's classifiable signals, ready for a classification request and its scorer.
+
+    `n_statements` is what the request asks the model to find: every self-statement turn,
+    classifiable or not, since the model counts them all. `max_statements` is the PM turn
+    count, the most a reply can list before it is rejected as runaway.
+    """
 
     session: Session
     log: DialogueLog
     skeleton: Skeleton
     signals: tuple[Signal, ...]
     turn_index_by_signal: Mapping[str, int]
+    n_statements: int
+    max_statements: int
 
 
 def classify_units(
@@ -147,6 +169,12 @@ def classify_units(
             sig.signal_id: signal_turn_index(skeleton, log, sig.signal_id)
             for sig in session_signals
         }
+        n_statements = sum(1 for s in skeleton.stances if s.entry in SELF_STATEMENT_ENTRIES)
+        if n_statements < len(session_signals):
+            raise Gate2Error(
+                f"session '{session_id}': {len(session_signals)} classifiable signals but "
+                f"only {n_statements} self-statement stances"
+            )
         units.append(
             ClassifyUnit(
                 session=session,
@@ -154,6 +182,8 @@ def classify_units(
                 skeleton=skeleton,
                 signals=session_signals,
                 turn_index_by_signal=turn_index_by_signal,
+                n_statements=n_statements,
+                max_statements=sum(1 for turn in log.turns if turn.role == TurnRole.PM),
             )
         )
     return tuple(units)
@@ -254,13 +284,20 @@ class _ClassificationReply(BaseModel):
     statements: tuple[Statement, ...] = Field(strict=False)
 
 
-def parse_classification(response: Mapping[str, Any], n: int) -> tuple[Statement, ...] | None:
-    """A validated 1-to-`n` statements, or `None` for anything schema-invalid or out of bounds."""
+def parse_classification(
+    response: Mapping[str, Any], max_statements: int
+) -> tuple[Statement, ...] | None:
+    """A validated 1-to-`max_statements` statements, else `None`.
+
+    The ceiling is the session's PM turn count, not the count asked for: a reply that
+    also quotes a retraction's two halves or a described action is fine, since the
+    scorer takes only the quote in each signal's own turn.
+    """
     try:
         reply = _ClassificationReply.model_validate(last_text_json(response))
     except ValidationError:
         return None
-    if not 1 <= len(reply.statements) <= n:
+    if not 1 <= len(reply.statements) <= max_statements:
         return None
     return reply.statements
 
@@ -306,7 +343,7 @@ def score_classification(
 async def send_classification(
     client: CachedClient,
     request: Mapping[str, Any],
-    n: int,
+    max_statements: int,
     session_id: str,
     max_retries: int,
 ) -> tuple[tuple[Statement, ...], int]:
@@ -314,7 +351,7 @@ async def send_classification(
     return await send_parsed(
         client,
         request,
-        lambda response: parse_classification(response, n),
+        lambda response: parse_classification(response, max_statements),
         scope=session_id,
         max_retries=max_retries,
         error_type=Gate2Error,

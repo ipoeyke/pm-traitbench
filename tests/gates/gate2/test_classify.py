@@ -18,6 +18,7 @@ from pm_traitbench.enums import (
 )
 from pm_traitbench.errors import Gate2Error
 from pm_traitbench.gates.gate2.classify import (
+    SELF_STATEMENT_ENTRIES,
     ClassifyUnit,
     Statement,
     classify_request,
@@ -43,7 +44,9 @@ from tests.signals.fixtures import persona as build_persona
 
 def test_classify_units_keep_only_own_confirm_stated_signals_in_surviving_sessions():
     session_keep = session_of(
-        PM_A, date(2026, 1, 5), ["I always cut losers fast", "I like short bullets"]
+        PM_A,
+        date(2026, 1, 5),
+        ["I always cut losers fast", "I like short bullets", "I exit the instant my case is met"],
     )
     session_dropped = session_of(PM_A, date(2026, 1, 6), ["irrelevant"])
 
@@ -92,9 +95,17 @@ def test_classify_units_keep_only_own_confirm_stated_signals_in_surviving_sessio
         entry=StanceEntry.STATED,
         stance="I like short bullets",
     )
-    skeleton_keep = skeleton_with_stances(session_keep, [stance_a, stance_b])
+    stance_claim = Stance(
+        signal_id="sg_007",
+        trait_id="t_07",
+        mode=SignalMode.CONTRADICTION,
+        entry=StanceEntry.CLAIM,
+        stance="I exit the instant my case is met",
+    )
+    skeleton_keep = skeleton_with_stances(session_keep, [stance_a, stance_b, stance_claim])
     log_keep = log_with_directives(
-        session_keep, ["I always cut losers fast", "I like short bullets"]
+        session_keep,
+        ["I always cut losers fast", "I like short bullets", "I exit the instant my case is met"],
     )
 
     sessions_by_id = {session_keep.session_id: session_keep}
@@ -109,8 +120,10 @@ def test_classify_units_keep_only_own_confirm_stated_signals_in_surviving_sessio
     # Signals within a unit are sorted by signal id, not by trait id or insertion order.
     assert [s.signal_id for s in unit.signals] == ["sg_001", "sg_002"]
     assert unit.turn_index_by_signal == {"sg_001": 2, "sg_002": 0}
-    n = len(unit.signals)
-    assert n == 2
+    # The model is asked for every self-statement turn, the claim included, and may list
+    # up to one statement per PM turn.
+    assert unit.n_statements == 3
+    assert unit.max_statements == 3
 
 
 def test_classify_units_raises_when_a_surviving_session_has_no_log_or_skeleton():
@@ -228,16 +241,16 @@ def test_classify_request_ledger_section_says_none_when_empty():
 
 def test_parse_classification_bounds_and_enum():
     zero = classify_reply([])
-    assert parse_classification(zero, n=2) is None
+    assert parse_classification(zero, max_statements=2) is None
 
     too_many = classify_reply([("a", "bias"), ("b", "preference"), ("c", "bias")])
-    assert parse_classification(too_many, n=2) is None
+    assert parse_classification(too_many, max_statements=2) is None
 
     bad_kind = classify_reply([("a", "habit")])
-    assert parse_classification(bad_kind, n=2) is None
+    assert parse_classification(bad_kind, max_statements=2) is None
 
     good = classify_reply([("a", "bias"), ("b", "preference")])
-    statements = parse_classification(good, n=2)
+    statements = parse_classification(good, max_statements=2)
     assert statements is not None
     assert [s.quote for s in statements] == ["a", "b"]
     assert [s.kind for s in statements] == [Kind.BIAS, Kind.PREFERENCE]
@@ -257,6 +270,8 @@ def test_score_classification_scores_each_signal_on_its_own_turn():
         skeleton=skeleton,
         signals=(sig_a, sig_b),
         turn_index_by_signal={sig_a.signal_id: 0, sig_b.signal_id: 2},
+        n_statements=2,
+        max_statements=2,
     )
     kind_by_trait = {"t_01": Kind.BIAS, "t_02": Kind.PREFERENCE}
 
@@ -290,6 +305,8 @@ def test_score_classification_drops_empty_quote_and_credits_no_signal():
         skeleton=skeleton,
         signals=(sig_a, sig_b),
         turn_index_by_signal={sig_a.signal_id: 0, sig_b.signal_id: 2},
+        n_statements=2,
+        max_statements=2,
     )
     kind_by_trait = {"t_01": Kind.BIAS, "t_02": Kind.PREFERENCE}
 
@@ -310,3 +327,47 @@ def test_send_classification_labels_failure_by_session(tmp_path):
 
     with pytest.raises(Gate2Error, match=r"^session sess_1: "):
         asyncio.run(send_classification(client, request, 2, "sess_1", max_retries=0))
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        StanceEntry.STATED,
+        StanceEntry.CLAIM,
+        StanceEntry.RETRACT,
+        StanceEntry.REVEALED_REACTION,
+        StanceEntry.DRIFT_UPDATE,
+        StanceEntry.DRIFT_DORMANT,
+        StanceEntry.DRIFT_REVIVE,
+    ],
+)
+def test_every_self_statement_entry_counts_toward_n(entry: StanceEntry):
+    assert entry in SELF_STATEMENT_ENTRIES
+
+
+@pytest.mark.parametrize("entry", [StanceEntry.REVEALED, StanceEntry.THIRD_PARTY])
+def test_a_revealed_action_or_third_party_line_does_not_count_toward_n(entry: StanceEntry):
+    assert entry not in SELF_STATEMENT_ENTRIES
+
+
+def test_classify_units_raise_when_classifiable_signals_outnumber_self_statements():
+    session = session_of(PM_A, date(2026, 1, 5), ["I always cut losers fast"])
+    sig = signal(PM_A, session.session_id, date(2026, 1, 5), "t_01", signal_id="sg_001")
+    # A revealed stance on the signal's turn: the signal is stated, but the skeleton says not.
+    stance = Stance(
+        signal_id="sg_001",
+        trait_id="t_01",
+        mode=SignalMode.REVEALED,
+        entry=StanceEntry.REVEALED,
+        stance="I always cut losers fast",
+    )
+    skeleton = skeleton_with_stances(session, [stance])
+    log = log_with_directives(session, ["I always cut losers fast"])
+
+    with pytest.raises(Gate2Error, match="1 classifiable signals but only 0 self-statement"):
+        classify_units(
+            {session.session_id: session},
+            {session.session_id: log},
+            {session.session_id: skeleton},
+            [sig],
+        )

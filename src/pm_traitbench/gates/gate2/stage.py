@@ -108,7 +108,6 @@ class ClassifyRequestUnit:
 
     session_id: str
     request: dict[str, Any]
-    n: int
     unit: ClassifyUnit
 
 
@@ -190,12 +189,17 @@ def _run(
         idea_rules = [r for r in pm_rules if r.scope == RuleScope.IDEA]
         pm_ledger: list[LedgerRow] = ledger_by_pm.get(pm_id, [])
         for unit in units:
-            n = len(unit.signals)
             req = classify_request(
-                persona, pm_rules, idea_rules, pm_ledger, unit.session, n, config.gate2
+                persona,
+                pm_rules,
+                idea_rules,
+                pm_ledger,
+                unit.session,
+                unit.n_statements,
+                config.gate2,
             )
             classify_request_units.append(
-                ClassifyRequestUnit(session_id=unit.session.session_id, request=req, n=n, unit=unit)
+                ClassifyRequestUnit(session_id=unit.session.session_id, request=req, unit=unit)
             )
 
     client = stage_client(store, client_factory, config, config.gate2.token_budget)
@@ -210,7 +214,11 @@ def _run(
                 client, unit.request, unit.entries, unit.pm_id, config.dialogue.max_retries
             )
         return await send_classification(
-            client, unit.request, unit.n, unit.session_id, config.dialogue.max_retries
+            client,
+            unit.request,
+            unit.unit.max_statements,
+            unit.session_id,
+            config.dialogue.max_retries,
         )
 
     results = asyncio.run(
