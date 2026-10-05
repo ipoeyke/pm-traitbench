@@ -52,7 +52,9 @@ _FILE_NAMES = (
 # planted event a line may quote. "value" names the preference itself, so any entry
 # whose slot set contains it must use it, or the line would never say what the PM wants.
 STANCE_SLOTS: dict[tuple[Kind, StanceEntry], frozenset[str]] = {
-    (Kind.BIAS, StanceEntry.REVEALED): frozenset({"instrument", "entry", "target", "stop"}),
+    (Kind.BIAS, StanceEntry.REVEALED): frozenset(
+        {"instrument", "entry", "target", "stop", "round_level"}
+    ),
     (Kind.BIAS, StanceEntry.STATED): frozenset(),
     (Kind.BIAS, StanceEntry.CLAIM): frozenset(),
     (Kind.BIAS, StanceEntry.RETRACT): frozenset(),

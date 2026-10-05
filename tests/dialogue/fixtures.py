@@ -17,7 +17,7 @@ import pytest
 from pm_traitbench.catalogues.models import Voice
 from pm_traitbench.config import DEFAULT_MODEL, Config, TurnRanges
 from pm_traitbench.dialogue.client import CachedClient, LlmClient, Reply
-from pm_traitbench.dialogue.context import SessionContext
+from pm_traitbench.dialogue.context import SessionContext, annotate_day_trades
 from pm_traitbench.dialogue.tools import MarketLookup
 from pm_traitbench.dialogue.turns import TurnPlan, plan_turns
 from pm_traitbench.engine.stage import ENGINE_STAGE
@@ -225,6 +225,16 @@ def session_context(
             trade.instrument_id, lookup.instruments[trade.instrument_id].name
         )
 
+    # A day trade on another idea gets a stub idea, so its trade note can still be built.
+    trade_ideas = {idea.trade_idea_id: idea}
+    for trade in resolved_day_trades:
+        trade_ideas.setdefault(
+            trade.trade_idea_id,
+            idea.model_copy(
+                update={"trade_idea_id": trade.trade_idea_id, "instrument_id": trade.instrument_id}
+            ),
+        )
+
     return SessionContext(
         skeleton=skeleton,
         persona=pm,
@@ -233,6 +243,7 @@ def session_context(
         idea_rules=(),
         ideas=() if is_silence else (idea,),
         day_trades=resolved_day_trades,
+        trade_notes=annotate_day_trades(resolved_day_trades, trade_ideas, (), (), None),
         open_positions=(),
         question_instrument=question_instrument,
         instrument_names=instrument_names,

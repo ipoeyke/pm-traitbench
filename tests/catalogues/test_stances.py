@@ -26,7 +26,9 @@ _N_PREFERENCES_MAX = 8
 # Which parts of a planted event a stance line for a given (kind of trait, kind of
 # evidence) pair may quote.
 _EXPECTED_STANCE_SLOTS: dict[tuple[Kind, StanceEntry], frozenset[str]] = {
-    (Kind.BIAS, StanceEntry.REVEALED): frozenset({"instrument", "entry", "target", "stop"}),
+    (Kind.BIAS, StanceEntry.REVEALED): frozenset(
+        {"instrument", "entry", "target", "stop", "round_level"}
+    ),
     (Kind.BIAS, StanceEntry.STATED): frozenset(),
     (Kind.BIAS, StanceEntry.CLAIM): frozenset(),
     (Kind.BIAS, StanceEntry.RETRACT): frozenset(),

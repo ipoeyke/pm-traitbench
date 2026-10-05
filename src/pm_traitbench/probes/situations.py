@@ -10,12 +10,11 @@ from pm_traitbench.config import Config
 from pm_traitbench.engine.adapters.base import Adapter
 from pm_traitbench.engine.biases.anchoring import entry_anchor
 from pm_traitbench.engine.constants import ANCHOR_FRACTION
-from pm_traitbench.engine.ideas import PRICE_QUOTED_OUTRIGHT_CLASSES
 from pm_traitbench.engine.market_view import MarketView
-from pm_traitbench.engine.templates import level_text
 from pm_traitbench.engine.triggers import find_pm_rule
 from pm_traitbench.enums import AssetClass, StreetView
 from pm_traitbench.errors import ProbesError
+from pm_traitbench.levels import PRICE_QUOTED_OUTRIGHT_CLASSES, level_text
 from pm_traitbench.tables.schema import Rule
 
 

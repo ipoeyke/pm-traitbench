@@ -8,12 +8,21 @@ rather than re-derived inside every prompt builder.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 
 from pm_traitbench.catalogues.models import Catalogue, Voice
 from pm_traitbench.config import Config, PmFilter
 from pm_traitbench.dialogue.tools import MarketLookup
 from pm_traitbench.dialogue.turns import TurnPlan, plan_turns
-from pm_traitbench.enums import AssetClass, DriftStatus, InstrumentKind, SessionKind
+from pm_traitbench.enums import (
+    AssetClass,
+    DriftStatus,
+    InstrumentKind,
+    PositionAction,
+    SessionKind,
+    Side,
+    Tenor,
+)
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.rng import stream
 from pm_traitbench.tables.schema import (
@@ -36,6 +45,83 @@ _ASSET_CLASS_KINDS: dict[AssetClass, tuple[InstrumentKind, ...]] = {
 }
 
 
+# A ledger row's identity within one PM-day: the ledger table's key minus (pm_id, date).
+type TradeKey = tuple[str, str, Tenor | None, Side]
+
+_KIND_BY_ACTION: dict[PositionAction, str] = {
+    PositionAction.ADD: "adds to the position",
+    PositionAction.TRIM: "trims the position",
+    PositionAction.CUT: "closes the whole position",
+    PositionAction.EXIT: "closes the whole position",
+    PositionAction.ROLL: "rolls the position",
+}
+_OPENS = "opens the position"
+_HORIZON_END = "at the end of the horizon"
+_OWN_CALL = "on your own call"
+
+
+@dataclass(frozen=True)
+class TradeNote:
+    """What one day trade does to its position and what drove it, in the narrator's words."""
+
+    kind: str
+    trigger: str | None
+
+
+def trade_key(row: LedgerRow) -> TradeKey:
+    return (row.trade_idea_id, row.instrument_id, row.tenor, row.side)
+
+
+def annotate_day_trades(
+    day_trades: Sequence[LedgerRow],
+    ideas: Mapping[str, Idea],
+    position_days: Sequence[PositionDay],
+    rules: Sequence[Rule],
+    horizon_end: date | None,
+) -> dict[TradeKey, TradeNote]:
+    """A `TradeNote` per day trade, so the narrator never guesses whether a sell is a trim.
+
+    The kind comes from the idea's entry date, else its `position_days` action that
+    day; a row with neither (a test fixture, say) is read off its side against the
+    idea's. The trigger is the rule text behind `rule_id`, else the horizon's end, else
+    the PM's own call; an opening trade carries none.
+    """
+    rule_text = {rule.rule_id: rule.text for rule in rules}
+    notes: dict[TradeKey, TradeNote] = {}
+    for row in day_trades:
+        idea = ideas.get(row.trade_idea_id)
+        if idea is None:
+            raise DialogueError(
+                f"day trade names trade idea '{row.trade_idea_id}' the PM does not have"
+            )
+        if idea.entry_date == row.date:
+            notes[trade_key(row)] = TradeNote(kind=_OPENS, trigger=None)
+            continue
+        action = next(
+            (
+                pd.action
+                for pd in position_days
+                if pd.trade_idea_id == row.trade_idea_id and pd.date == row.date
+            ),
+            None,
+        )
+        if action in _KIND_BY_ACTION:
+            kind = _KIND_BY_ACTION[action]
+        else:
+            kind = "adds to the position" if row.side == idea.side else "closes the whole position"
+        if row.rule_id is not None:
+            text = rule_text.get(row.rule_id)
+            if text is None:
+                raise DialogueError(f"day trade names rule '{row.rule_id}' the PM does not have")
+            trigger = f"on your rule: {text}"
+        elif horizon_end is not None and row.date == horizon_end:
+            trigger = _HORIZON_END
+        else:
+            trigger = _OWN_CALL
+        notes[trade_key(row)] = TradeNote(kind=kind, trigger=trigger)
+    return notes
+
+
 @dataclass(frozen=True)
 class SessionContext:
     """Everything one session's prompt builders read, already filtered and ordered."""
@@ -47,6 +133,7 @@ class SessionContext:
     idea_rules: tuple[Rule, ...]
     ideas: tuple[Idea, ...]
     day_trades: tuple[LedgerRow, ...]
+    trade_notes: Mapping[TradeKey, TradeNote]
     open_positions: tuple[Idea, ...]
     question_instrument: Instrument | None
     instrument_names: Mapping[str, str]
@@ -144,6 +231,8 @@ def build_contexts(
     )
     traits_by_id = {trait.trait_id: trait for trait in pm.traits}
 
+    timeline = config.timeline()
+    horizon_end = timeline.weekdays_in_weeks(1, timeline.n_weeks)[-1]
     contexts: list[SessionContext] = []
     for skeleton in sorted(pm.skeletons, key=lambda s: s.session_id):
         ideas: list[Idea] = []
@@ -177,6 +266,10 @@ def build_contexts(
                 ),
                 key=_ledger_sort_key,
             )
+        )
+
+        trade_notes = annotate_day_trades(
+            day_trades, pm.ideas, pm.position_days, pm.rules, horizon_end
         )
 
         open_position_ideas: list[Idea] = []
@@ -244,6 +337,7 @@ def build_contexts(
                 idea_rules=idea_rules,
                 ideas=tuple(ideas),
                 day_trades=day_trades,
+                trade_notes=trade_notes,
                 open_positions=open_positions,
                 question_instrument=question_instrument,
                 instrument_names=instrument_names,

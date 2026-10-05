@@ -1,29 +1,34 @@
 """Tests for `skeleton`: rendering planned sessions into hidden `Skeleton` rows."""
 
 import numpy as np
+import pytest
 
 from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.enums import (
+    AssetClass,
     CarrierSource,
     DriftEventType,
+    Expression,
     Ownership,
     SessionKind,
     SignalMode,
     StanceEntry,
     Valence,
 )
+from pm_traitbench.errors import CatalogueError
+from pm_traitbench.levels import idea_level_text
 from pm_traitbench.signals.assemble import Assembly, PlacedSignal, PlannedSession, assemble
 from pm_traitbench.signals.assemble import session_id as make_session_id
 from pm_traitbench.signals.carriers import Carrier, carrier_pools
 from pm_traitbench.signals.quotas import DateWindow, PlannedSignal, plan_quotas
 from pm_traitbench.signals.skeleton import (
     forbidden_sets,
-    format_level,
     render_skeletons,
     session_forbidden,
 )
 from pm_traitbench.tables.schema import Skeleton, Stance
+from tests.gates.fixtures import position_day
 from tests.signals.fixtures import (
     TRADING_DAYS,
     bias_trait,
@@ -142,18 +147,19 @@ def test_session_forbidden_drops_the_params_a_stance_overlaps() -> None:
     loss_aversion = bias_trait("loss_aversion_lambda", active=True, trait_id="t_01")
     disposition = bias_trait("disposition_ratio", active=False, trait_id="t_02")
     herding = bias_trait("herding_weight", active=False, trait_id="t_03")
-    traits_by_id = {t.trait_id: t for t in (loss_aversion, disposition, herding)}
+    exit_deficiency = bias_trait("exit_deficiency", active=False, trait_id="t_04")
+    traits_by_id = {t.trait_id: t for t in (loss_aversion, disposition, herding, exit_deficiency)}
 
     trait_ids, pref_params = session_forbidden(
-        ("t_02", "t_03"),
+        ("t_02", "t_03", "t_04"),
         ("pushback_style",),
         [_overlap_stance("t_01", StanceEntry.REVEALED)],
         traits_by_id,
         _CATALOGUE,
     )
 
-    assert "disposition_ratio" in _CATALOGUE.avoid.overlaps["loss_aversion_lambda"]
-    assert trait_ids == ("t_03",)
+    assert "exit_deficiency" in _CATALOGUE.avoid.overlaps["loss_aversion_lambda"]
+    assert trait_ids == ("t_02", "t_03")
     assert pref_params == ("pushback_style",)
 
 
@@ -190,7 +196,12 @@ def test_session_forbidden_drops_overlapping_preference_lines() -> None:
 # --- revealed bias stance ---------------------------------------------------------------------
 
 
-def _revealed_bias_stance(trait_param: str, trait_id: str, pattern: str, idea):
+def _price(level: float) -> str:
+    """An equity outright level as the stance quotes it: the price, not the log level."""
+    return idea_level_text(level, AssetClass.EQUITIES, Expression.OUTRIGHT)
+
+
+def _revealed_bias_stance(trait_param: str, trait_id: str, pattern: str, idea, position_days=()):
     day = idea.entry_date
     carrier = Carrier(trait_id, idea.trade_idea_id, day, CarrierSource.LEDGER, pattern)
     planned = PlannedSignal(
@@ -219,7 +230,9 @@ def _revealed_bias_stance(trait_param: str, trait_id: str, pattern: str, idea):
         claims=(),
     )
     inputs = plan_inputs(
-        traits=(bias_trait(trait_param, trait_id=trait_id),), ideas={idea.trade_idea_id: idea}
+        traits=(bias_trait(trait_param, trait_id=trait_id),),
+        ideas={idea.trade_idea_id: idea},
+        position_days=tuple(position_days),
     )
     assembly = Assembly(sessions=(session,), signals=(), warnings=(), counts={})
     skeletons = render_skeletons(inputs, assembly, _CATALOGUE, _rng())
@@ -236,7 +249,7 @@ def test_revealed_bias_stance_names_carrier_instrument_and_entry_level() -> None
     )
     text = _revealed_bias_stance("loss_aversion_lambda", "t_01", "add", idea)
     assert "EQ-0007" in text
-    assert format_level(123.456) in text
+    assert _price(123.456) in text
     assert "{" not in text
 
 
@@ -250,8 +263,32 @@ def test_revealed_bias_stance_names_carrier_target_level() -> None:
     )
     text = _revealed_bias_stance("disposition_ratio", "t_02", "realise_gain_early", idea)
     assert "EQ-0008" in text
-    assert format_level(150.0) in text
+    assert _price(150.0) in text
     assert "{" not in text
+
+
+def test_anchoring_exit_stance_names_the_round_level_from_position_days() -> None:
+    # Every 'exit_at_anchor' line quotes {round_level}, carried on the idea's position days.
+    idea = idea_row(trade_idea_id="ti_002", entry_date=TRADING_DAYS[0], target_level=150.0)
+    day = position_day(
+        pm_id=idea.pm_id,
+        trade_idea_id="ti_002",
+        date=TRADING_DAYS[0],
+        anchor_level=120.0,
+        effective_exit_level=120.0,
+    )
+
+    text = _revealed_bias_stance("anchoring_rho", "t_02", "exit_at_anchor", idea, (day,))
+
+    assert _price(120.0) in text
+    assert "{" not in text
+
+
+def test_anchoring_exit_stance_without_a_round_level_fails_to_render() -> None:
+    idea = idea_row(trade_idea_id="ti_002", entry_date=TRADING_DAYS[0])
+
+    with pytest.raises(CatalogueError, match="round_level"):
+        _revealed_bias_stance("anchoring_rho", "t_02", "exit_at_anchor", idea)
 
 
 # --- claim and revealed pair on separate sessions ---------------------------------------------

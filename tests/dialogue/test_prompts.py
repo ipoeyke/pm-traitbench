@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import math
 import re
 
 import pytest
@@ -10,7 +11,7 @@ from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.catalogues.models import Voice
 from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.dialogue.client import request_key
-from pm_traitbench.dialogue.context import PmTables, build_contexts
+from pm_traitbench.dialogue.context import PmTables, TradeNote, build_contexts, trade_key
 from pm_traitbench.dialogue.prompts import (
     ADVISOR_TURN_SCHEMA,
     NARRATOR_OPENING_MESSAGE,
@@ -282,6 +283,16 @@ def test_narrator_system_limits_trade_mentions_to_the_directive(market_lookup):
     assert "never with a trade mention" in system
 
 
+def test_narrator_system_quotes_idea_levels_as_prices_not_log_levels(market_lookup):
+    idea = idea_row(entry_level=100.0 * math.log(55.0), target_level=100.0 * math.log(60.0))
+    ctx = dataclasses.replace(session_context(market_lookup), ideas=(idea,))
+
+    system = narrator_system(ctx, None)
+
+    assert "entry 55.00, target 60.00" in system
+    assert f"entry {idea.entry_level}" not in system
+
+
 def test_narrator_system_contains_voice_rules_and_avoid_lines(market_lookup):
     ctx = session_context(market_lookup)
     pm_rule = rule(rule_id="r_01", text="Cut a position after two consecutive stop triggers.")
@@ -415,6 +426,29 @@ def test_directive_carries_the_stance_line_and_day_trades(market_lookup):
     opening_text = narrator_directive(ctx, 0)
     assert "Mention each of these trades" in opening_text
     assert trade.trade_idea_id in opening_text
+
+
+def test_directive_trade_line_says_what_the_trade_does_and_why(market_lookup):
+    trade = ledger_row(trade_idea_id="ti_001", date=DEFAULT_DATE)
+    ctx = session_context(market_lookup, day_trades=(trade,))
+
+    assert "(opens the position)" in narrator_directive(ctx, 0)
+
+    closing = dataclasses.replace(
+        ctx,
+        trade_notes={
+            trade_key(trade): TradeNote(
+                "closes the whole position", "on your rule: Exit after a 5 percent drawdown."
+            )
+        },
+    )
+    directive_text = narrator_directive(closing, 0)
+
+    assert (
+        "(closes the whole position, on your rule: Exit after a 5 percent drawdown.)"
+        in directive_text
+    )
+    assert "not a trim" in narrator_system(ctx, None)
 
 
 def test_directive_trade_line_includes_the_tenor_when_set(market_lookup):

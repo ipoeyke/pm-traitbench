@@ -1,6 +1,6 @@
 biases:
   loss_aversion_lambda: do not describe averaging into a losing position, holding one to avoid taking the loss, or pushing to get back to even after a loss
-  disposition_ratio: do not describe selling winners quickly or holding on to losing positions
+  disposition_ratio: do not describe taking profit on a winner well short of target while sitting on a losing position
   anchoring_rho: do not describe taking profit at a round number short of your target
   extrapolation_theta: do not describe adding to or entering a trade because a recent trend kept extending
   herding_weight: do not describe taking a position because the street or other desks are already positioned that way
@@ -45,13 +45,13 @@ preferences:
 # Stance param -> forbidden params whose avoid line the stance's own behaviour can trip.
 # A session with a stance on the key leaves these lines out of its forbidden list.
 overlaps:
-  loss_aversion_lambda: [disposition_ratio, exit_deficiency]
+  loss_aversion_lambda: [exit_deficiency]
   disposition_ratio: [loss_aversion_lambda, anchoring_rho]
   anchoring_rho: [disposition_ratio]
   herding_weight: [conviction_size_miscalibration, positioning_context, peer_comparison]
   overconfidence_coverage: [conviction_size_miscalibration]
   conviction_size_miscalibration: [overconfidence_coverage]
-  exit_deficiency: [disposition_ratio, loss_aversion_lambda]
+  exit_deficiency: [loss_aversion_lambda]
   response_format: [length_on_routine_questions]
   length_on_routine_questions: [response_format]
   answer_ordering: [response_format]

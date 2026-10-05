@@ -1,6 +1,6 @@
 definitions:
-  loss_aversion_lambda: adds to or holds a losing position to avoid taking the loss, rather than cutting it as the rules say
-  disposition_ratio: sells positions at a gain sooner than positions at a loss, holding losers longer than winners
+  loss_aversion_lambda: adds to or holds a losing position because the loss hurts more than an equal gain, pushing to get back to even rather than cutting as the rules say
+  disposition_ratio: realises gains well short of target while sitting on losing positions, so winners are sold sooner than losers across the book; holding one loser, or one early exit at a round level, is not this on its own
   anchoring_rho: sets exits and valuations around a reference number such as the entry price, a target or a round level rather than the current view
   extrapolation_theta: enters after a move has already run, expecting the recent trend to continue
   herding_weight: follows the street view or crowd positioning over their own signal when the two disagree
