@@ -25,6 +25,13 @@ from pm_traitbench.dialogue.usage import usage_of
 from pm_traitbench.errors import DialogueBudgetError, DialogueError, PmTraitbenchError
 
 _NO_CREDENTIALS_MESSAGE = "no Anthropic credentials: run `ant auth login` or set ANTHROPIC_API_KEY"
+# Looked up at call time so a test can replace it.
+_sleep = asyncio.sleep
+
+
+def _retry_delay(attempt: int) -> float:
+    """The SDK's backoff shape: 0.5s doubling per retry, capped at 8s."""
+    return min(0.5 * 2.0**attempt, 8.0)
 
 
 def scope_prefix(label: str, scope: str) -> str:
@@ -211,9 +218,10 @@ class AnthropicClient:
     """Live Anthropic backend, built lazily so a fully cached run never needs credentials.
 
     Streams each reply and returns the final message. Bounds concurrency; maps
-    credential and 400 errors, other API status and connection errors once the
-    SDK's own retries are exhausted, and a connection lost mid-stream, to
-    `DialogueError`.
+    credential and 400 errors, and other API status and connection errors once
+    the SDK's own retries are exhausted, to `DialogueError`. A connection lost
+    mid-stream, which the SDK never retries, is retried here `max_retries` times
+    with the SDK's backoff before it becomes one too.
     """
 
     def __init__(self, max_concurrency: int, max_retries: int = 2) -> None:
@@ -229,35 +237,46 @@ class AnthropicClient:
                 raise DialogueError(_NO_CREDENTIALS_MESSAGE) from e
 
         async with self._semaphore:
-            try:
-                async with self._client.messages.stream(**request) as stream:
-                    message = await stream.get_final_message()
-            except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
-                raise DialogueError(_NO_CREDENTIALS_MESSAGE) from e
-            except anthropic.BadRequestError as e:
-                raise DialogueError(e.message) from e
-            except anthropic.APIStatusError as e:
-                # Anything past a mapped 4xx above: rate limits, overloads and other
-                # 5xxs, once the SDK's own retries are spent.
-                raise DialogueError(
-                    f"{type(e).__name__} (status {e.status_code}): {e.message}"
-                ) from e
-            except anthropic.APIConnectionError as e:
-                # Covers `APITimeoutError`, its subclass.
-                raise DialogueError(f"{type(e).__name__}: {e.message}") from e
-            except httpx2.TransportError as e:
-                # The SDK wraps transport errors only before the stream opens; a drop
-                # while reading it arrives raw, and the SDK does not retry it.
-                raise DialogueError(f"{type(e).__name__} while streaming the reply: {e}") from e
-            except TypeError as e:
-                # With nothing configured, the SDK signals missing credentials with a bare
-                # TypeError at request time (header resolution runs before any network call);
-                # an unexpected keyword from a request-builder change raises the same way, so
-                # this is worded to not assert credentials are the cause.
-                raise DialogueError(
-                    f"request could not be built: {e}; if no credentials are configured, "
-                    "run `ant auth login` or set ANTHROPIC_API_KEY"
-                ) from e
+            for attempt in range(self._max_retries + 1):
+                try:
+                    return await self._stream_once(request)
+                except httpx2.TransportError as e:
+                    # The SDK wraps transport errors only before the stream opens; a drop
+                    # while reading it arrives raw, and the SDK does not retry it.
+                    if attempt == self._max_retries:
+                        raise DialogueError(
+                            f"{type(e).__name__} while streaming the reply: {e} "
+                            f"(gave up after {attempt} retries)"
+                        ) from e
+                    await _sleep(_retry_delay(attempt))
+        raise AssertionError("unreachable: the retry loop returns or raises")
+
+    async def _stream_once(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """One streamed attempt, mapping every SDK error but a mid-stream transport one."""
+        assert self._client is not None
+        try:
+            async with self._client.messages.stream(**request) as stream:
+                message = await stream.get_final_message()
+        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
+            raise DialogueError(_NO_CREDENTIALS_MESSAGE) from e
+        except anthropic.BadRequestError as e:
+            raise DialogueError(e.message) from e
+        except anthropic.APIStatusError as e:
+            # Anything past a mapped 4xx above: rate limits, overloads and other
+            # 5xxs, once the SDK's own retries are spent.
+            raise DialogueError(f"{type(e).__name__} (status {e.status_code}): {e.message}") from e
+        except anthropic.APIConnectionError as e:
+            # Covers `APITimeoutError`, its subclass.
+            raise DialogueError(f"{type(e).__name__}: {e.message}") from e
+        except TypeError as e:
+            # With nothing configured, the SDK signals missing credentials with a bare
+            # TypeError at request time (header resolution runs before any network call);
+            # an unexpected keyword from a request-builder change raises the same way, so
+            # this is worded to not assert credentials are the cause.
+            raise DialogueError(
+                f"request could not be built: {e}; if no credentials are configured, "
+                "run `ant auth login` or set ANTHROPIC_API_KEY"
+            ) from e
         return message.to_dict()
 
     async def aclose(self) -> None:
