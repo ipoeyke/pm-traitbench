@@ -375,7 +375,7 @@ def _run(
         "insufficient": insufficient_blocking(cells),
         "overlap": summarise(list(containments.values())),
         "warnings": [*citation_warnings, *quote_warnings, *overlap_warnings],
-        **client.totals.as_metadata(),
+        **client.totals.as_metadata(config.prices.models),
         "rejected_replies": rejected_replies,
         "thresholds": config.gate2.model_dump(mode="json"),
     }

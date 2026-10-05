@@ -150,7 +150,7 @@ Opening instruction by kind, when turn 1 carries no stance that already sets the
 
 Reads `personas`, `rules`, `traits`, `drift_events`, the engine tables, `signals`, `skeletons` and the market tables for the PMs' seeds, plus the plan stage's run metadata. Filters PMs, draws voices, builds one context per skeleton, runs sessions concurrently with at most `max_concurrency` in flight, and on success writes `sessions` and `dialogue_logs` in key order, so a fully cached rerun writes byte-identical tables. Registered as stage 6 `dialogue` with CLI subcommand `dialogue`, same arguments as the other stages.
 
-Run metadata extras: `narrator_model`, `advisor_model`, `advisor_prompt_sha256`, `voices` (per PM), `sessions` (count per kind), `calls`, `cache_hits`, fresh `input_tokens`, `output_tokens`, `cache_read_tokens`, and `warnings` (tool-round caps, in PM and session order).
+Run metadata extras: `narrator_model`, `advisor_model`, `advisor_prompt_sha256`, `voices` (per PM), `sessions` (count per kind), `calls`, `cache_hits`, fresh `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `usage_by_model` (the same four counts and `cost_usd` per request model), `cost_usd` (the stage's fresh usage at `prices.models` list prices; `unpriced_models` names any model the table lacks), and `warnings` (tool-round caps, in PM and session order).
 
 ## Errors
 

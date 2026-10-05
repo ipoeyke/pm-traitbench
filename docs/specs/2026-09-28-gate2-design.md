@@ -162,7 +162,7 @@ Every leaf carries `basis` and `note`.
 
 ## Run metadata extras
 
-`model`, `pms`, `pms_without_sessions`, `sessions_sha256`, `failed` (blocking rows not passing, `all/<param>` or `all/preferences`), `insufficient` (blocking rows short of `min_class`), `overlap` (`median`, `p90`, `max`), `warnings` (unknown cited ids, dropped quotes, containment above threshold, in PM order), `calls`, `cache_hits`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `rejected_replies`, `thresholds` (the `gate2` config dump).
+`model`, `pms`, `pms_without_sessions`, `sessions_sha256`, `failed` (blocking rows not passing, `all/<param>` or `all/preferences`), `insufficient` (blocking rows short of `min_class`), `overlap` (`median`, `p90`, `max`), `warnings` (unknown cited ids, dropped quotes, containment above threshold, in PM order), `calls`, `cache_hits`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `usage_by_model` (the same four counts and `cost_usd` per request model), `cost_usd` (the stage's fresh usage at `prices.models` list prices; `unpriced_models` names any model the table lacks), `rejected_replies`, `thresholds` (the `gate2` config dump).
 
 ## Error handling
 

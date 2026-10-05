@@ -192,7 +192,7 @@ def _run_metadata(
         "void_signals_by_pm": dict(sorted(void_signals_by_pm.items())),
         "regeneration_rate_by_typicality": regeneration_rate_by_typicality,
         "warnings": warnings,
-        **totals.as_metadata(),
+        **totals.as_metadata(config.prices.models),
         "rejected_replies": rejected_replies,
     }
 

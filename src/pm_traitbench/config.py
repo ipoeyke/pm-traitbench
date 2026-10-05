@@ -1941,6 +1941,43 @@ class PmFilter(BaseModel):
     )
 
 
+class ModelPrice(BaseModel):
+    """One model's list prices in USD per million tokens, by the four usage fields."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    input: float = Field(ge=0)
+    output: float = Field(ge=0)
+    cache_read: float = Field(ge=0)
+    cache_write: float = Field(ge=0, description="5-minute cache writes, 1.25x input")
+
+
+class PricesConfig(BaseModel):
+    """List prices per model id, used to cost each LLM stage's fresh token usage."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    models: dict[str, ModelPrice] = Field(
+        {
+            "claude-fable-5-1": ModelPrice(
+                input=10.0, output=50.0, cache_read=0.25, cache_write=12.5
+            ),
+            "claude-opus-5-5": ModelPrice(input=4.0, output=20.0, cache_read=0.2, cache_write=5.0),
+            "claude-sonnet-5-5": ModelPrice(
+                input=2.0, output=10.0, cache_read=0.2, cache_write=2.5
+            ),
+            "claude-sonnet-5": ModelPrice(input=2.0, output=10.0, cache_read=0.2, cache_write=2.5),
+            "claude-haiku-4-5": ModelPrice(input=1.0, output=5.0, cache_read=0.1, cache_write=1.25),
+        },
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "Anthropic API list prices as of 2026-09; a model missing here is reported unpriced"
+            ),
+        },
+    )
+
+
 class DialogueConfig(BaseModel):
     """Settings for the dialogue stage: narrator and advisor models, turn budgets and limits."""
 
@@ -2474,6 +2511,7 @@ class Config(BaseModel):
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     judge: JudgeConfig = Field(default_factory=JudgeConfig)
     probes: ProbesConfig = Field(default_factory=ProbesConfig)
+    prices: PricesConfig = Field(default_factory=PricesConfig)
 
     @model_validator(mode="after")
     def _check_week_ranges_within_calendar(self) -> "Config":

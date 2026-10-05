@@ -325,7 +325,7 @@ def _run(
         "pms": [pm.persona.pm_id for pm in selected],
         "voices": voices,
         "sessions": session_counts,
-        **client.totals.as_metadata(),
+        **client.totals.as_metadata(config.prices.models),
         "warnings": warnings,
         "rejected_replies": rejected_replies,
     }
