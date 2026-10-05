@@ -33,6 +33,11 @@ def level_text(level: float, unit: str, *, price_quoted: bool) -> str:
     return f"{level:.{_LEVEL_DECIMALS[unit]}f}{UNIT_DISPLAY[unit]}"
 
 
+def move_text(move: float, unit: str) -> str:
+    """A signed series move at the unit's fixed precision, without the unit."""
+    return f"{move:+.{_LEVEL_DECIMALS[unit]}f}"
+
+
 def is_price_quoted(asset_class: AssetClass, expression: Expression) -> bool:
     """Whether an idea's levels are `100 * ln(price)`: an equity or commodity outright."""
     return expression == Expression.OUTRIGHT and asset_class in PRICE_QUOTED_OUTRIGHT_CLASSES

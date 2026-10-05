@@ -21,20 +21,12 @@ from pm_traitbench.enums import (
     InstrumentKind,
     Tenor,
 )
-from pm_traitbench.levels import level_text
+from pm_traitbench.levels import level_text, move_text
 
 # Within-family tenor order (short/front first); the two families never mix
 # within one idea, so reused ranks across families never get compared.
 _TENOR_RANK: dict[Tenor, int] = {t: i for i, t in enumerate(SOVEREIGN_TENORS)}
 _TENOR_RANK.update({t: i for i, t in enumerate(FUTURES_TENORS)})
-
-# Display precision by series unit, shared with `level_text`.
-_LEVEL_DECIMALS: dict[str, int] = {"bp": 1, "pct": 2}
-
-
-def move_text(move: float, unit: str) -> str:
-    """A signed series move at the unit's fixed precision, without the unit."""
-    return f"{move:+.{_LEVEL_DECIMALS[unit]}f}"
 
 
 def _display_name(view: MarketView, instrument_id: str) -> str:
