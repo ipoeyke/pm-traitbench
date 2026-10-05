@@ -48,7 +48,6 @@ from pm_traitbench.engine.templates import (
 from pm_traitbench.engine.triggers import ledger_rows, leg_sides
 from pm_traitbench.enums import (
     Action,
-    AssetClass,
     Expression,
     Op,
     RuleScope,
@@ -57,10 +56,10 @@ from pm_traitbench.enums import (
     StreetView,
 )
 from pm_traitbench.errors import EngineError
+from pm_traitbench.levels import is_price_quoted
 from pm_traitbench.tables.schema import Idea, LedgerRow, Leg, Persona, Rule, Trait
 
 _SIDE_SIGN: dict[Side, int] = {Side.BUY: 1, Side.SELL: -1}
-PRICE_QUOTED_OUTRIGHT_CLASSES = (AssetClass.EQUITIES, AssetClass.COMMODITIES)
 
 
 @dataclass(frozen=True)
@@ -314,9 +313,7 @@ def attempt_entry(
         rng_for("anchor", t, attempt).uniform() < params.value("anchoring_rho")
     )
 
-    price_quoted = (
-        form == Expression.OUTRIGHT and adapter.asset_class in PRICE_QUOTED_OUTRIGHT_CLASSES
-    )
+    price_quoted = is_price_quoted(adapter.asset_class, form)
     trade_idea_id = idea_id(state.next_idea)
     rule_counter = state.next_rule
 

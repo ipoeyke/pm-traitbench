@@ -6,11 +6,8 @@ given rng, then fills its slots. The catalogue's own consistency check
 knows how to fill.
 """
 
-import math
-
 import numpy as np
 
-from pm_traitbench.catalogues.loader import UNIT_DISPLAY
 from pm_traitbench.catalogues.loader import render_signpost as _fill_signpost
 from pm_traitbench.catalogues.loader import render_thesis as _fill_text
 from pm_traitbench.catalogues.models import Catalogue
@@ -24,24 +21,15 @@ from pm_traitbench.enums import (
     InstrumentKind,
     Tenor,
 )
+from pm_traitbench.levels import level_text
 
 # Within-family tenor order (short/front first); the two families never mix
 # within one idea, so reused ranks across families never get compared.
 _TENOR_RANK: dict[Tenor, int] = {t: i for i, t in enumerate(SOVEREIGN_TENORS)}
 _TENOR_RANK.update({t: i for i, t in enumerate(FUTURES_TENORS)})
 
-# Display precision by series unit; a quoted price always shows 2 dp.
+# Display precision by series unit, shared with `level_text`.
 _LEVEL_DECIMALS: dict[str, int] = {"bp": 1, "pct": 2}
-_PRICE_DECIMALS = 2
-
-
-def level_text(level: float, unit: str, *, price_quoted: bool) -> str:
-    """A series level in the instrument's own terms: a bare price for a price-quoted
-    outright (`exp(level / 100)`), else the rounded level with its unit.
-    """
-    if price_quoted:
-        return f"{math.exp(level / 100.0):.{_PRICE_DECIMALS}f}"
-    return f"{level:.{_LEVEL_DECIMALS[unit]}f}{UNIT_DISPLAY[unit]}"
 
 
 def move_text(move: float, unit: str) -> str:

@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import math
 import re
 
 import pytest
@@ -280,6 +281,16 @@ def test_narrator_system_limits_trade_mentions_to_the_directive(market_lookup):
 
     assert 'trade a turn\'s "Mention each of these trades" directive lists' in system
     assert "never with a trade mention" in system
+
+
+def test_narrator_system_quotes_idea_levels_as_prices_not_log_levels(market_lookup):
+    idea = idea_row(entry_level=100.0 * math.log(55.0), target_level=100.0 * math.log(60.0))
+    ctx = dataclasses.replace(session_context(market_lookup), ideas=(idea,))
+
+    system = narrator_system(ctx, None)
+
+    assert "entry 55.00, target 60.00" in system
+    assert f"entry {idea.entry_level}" not in system
 
 
 def test_narrator_system_contains_voice_rules_and_avoid_lines(market_lookup):

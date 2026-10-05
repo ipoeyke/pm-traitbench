@@ -6,8 +6,10 @@ import pytest
 from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.enums import (
+    AssetClass,
     CarrierSource,
     DriftEventType,
+    Expression,
     Ownership,
     SessionKind,
     SignalMode,
@@ -15,13 +17,13 @@ from pm_traitbench.enums import (
     Valence,
 )
 from pm_traitbench.errors import CatalogueError
+from pm_traitbench.levels import idea_level_text
 from pm_traitbench.signals.assemble import Assembly, PlacedSignal, PlannedSession, assemble
 from pm_traitbench.signals.assemble import session_id as make_session_id
 from pm_traitbench.signals.carriers import Carrier, carrier_pools
 from pm_traitbench.signals.quotas import DateWindow, PlannedSignal, plan_quotas
 from pm_traitbench.signals.skeleton import (
     forbidden_sets,
-    format_level,
     render_skeletons,
     session_forbidden,
 )
@@ -194,6 +196,11 @@ def test_session_forbidden_drops_overlapping_preference_lines() -> None:
 # --- revealed bias stance ---------------------------------------------------------------------
 
 
+def _price(level: float) -> str:
+    """An equity outright level as the stance quotes it: the price, not the log level."""
+    return idea_level_text(level, AssetClass.EQUITIES, Expression.OUTRIGHT)
+
+
 def _revealed_bias_stance(trait_param: str, trait_id: str, pattern: str, idea, position_days=()):
     day = idea.entry_date
     carrier = Carrier(trait_id, idea.trade_idea_id, day, CarrierSource.LEDGER, pattern)
@@ -242,7 +249,7 @@ def test_revealed_bias_stance_names_carrier_instrument_and_entry_level() -> None
     )
     text = _revealed_bias_stance("loss_aversion_lambda", "t_01", "add", idea)
     assert "EQ-0007" in text
-    assert format_level(123.456) in text
+    assert _price(123.456) in text
     assert "{" not in text
 
 
@@ -256,7 +263,7 @@ def test_revealed_bias_stance_names_carrier_target_level() -> None:
     )
     text = _revealed_bias_stance("disposition_ratio", "t_02", "realise_gain_early", idea)
     assert "EQ-0008" in text
-    assert format_level(150.0) in text
+    assert _price(150.0) in text
     assert "{" not in text
 
 
@@ -273,7 +280,7 @@ def test_anchoring_exit_stance_names_the_round_level_from_position_days() -> Non
 
     text = _revealed_bias_stance("anchoring_rho", "t_02", "exit_at_anchor", idea, (day,))
 
-    assert format_level(120.0) in text
+    assert _price(120.0) in text
     assert "{" not in text
 
 

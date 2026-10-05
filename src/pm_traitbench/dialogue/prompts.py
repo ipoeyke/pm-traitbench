@@ -20,6 +20,7 @@ from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS
 from pm_traitbench.dialogue.turns import Opening
 from pm_traitbench.enums import Effort, Side, Tenor
 from pm_traitbench.errors import DialogueError
+from pm_traitbench.levels import idea_level_text
 from pm_traitbench.tables.schema import LedgerRow
 
 NARRATOR_OPENING_MESSAGE = "The advisor is ready for your first message."
@@ -211,12 +212,16 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
         persona.stated_profile.self_description,
     ]
     sections.extend(rule.text for rule in ctx.pm_rules)
+    asset_class = mandate.asset_class
     for idea in ctx.ideas:
         name = ctx.instrument_names[idea.instrument_id]
+        entry, target, stop = (
+            idea_level_text(level, asset_class, idea.expression)
+            for level in (idea.entry_level, idea.target_level, idea.stop_level)
+        )
         sections.append(
             f"Idea {idea.trade_idea_id}: {name} ({idea.instrument_id}), {idea.side.value}, "
-            f"entry {idea.entry_level}, target {idea.target_level}, stop {idea.stop_level}. "
-            f"Thesis: {idea.thesis}"
+            f"entry {entry}, target {target}, stop {stop}. Thesis: {idea.thesis}"
         )
         sections.extend(
             rule.text for rule in ctx.idea_rules if rule.trade_idea_id == idea.trade_idea_id
