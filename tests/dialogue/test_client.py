@@ -10,6 +10,7 @@ import anthropic
 import httpx2
 import pytest
 
+from pm_traitbench.dialogue import client as client_module
 from pm_traitbench.dialogue.client import (
     AnthropicClient,
     CachedClient,
@@ -574,6 +575,17 @@ def _serve_streams(monkeypatch: pytest.MonkeyPatch, bodies: list[_SseBody]) -> l
 _STREAM_REQUEST = {**_REQUEST, "max_tokens": 10}
 
 
+def _patch_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Replace the client's retry sleep with a recorder of the delays it asked for."""
+    slept: list[float] = []
+
+    async def record(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(client_module, "_sleep", record)
+    return slept
+
+
 def test_real_sdk_stream_is_assembled_into_the_final_message_dict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -607,17 +619,46 @@ def test_real_sdk_error_event_mid_stream_maps_to_a_dialogue_error(
     [httpx2.ReadError("connection reset"), httpx2.RemoteProtocolError("peer closed")],
     ids=["read_error", "remote_protocol_error"],
 )
-def test_real_sdk_connection_lost_mid_stream_maps_to_a_dialogue_error(
+def test_real_sdk_connection_lost_mid_stream_is_retried_then_maps_to_a_dialogue_error(
     monkeypatch: pytest.MonkeyPatch, drop: Exception
 ) -> None:
-    """A transport error after the stream opens is not wrapped by the SDK, nor retried."""
-    served = _serve_streams(monkeypatch, [_SseBody([_MESSAGE_START], then_raise=drop)])
+    """A transport error after the stream opens is not wrapped or retried by the SDK, so
+    the client retries it itself, `max_retries` times, before giving up.
+    """
+    served = _serve_streams(
+        monkeypatch, [_SseBody([_MESSAGE_START], then_raise=drop) for _ in range(3)]
+    )
+    slept = _patch_sleep(monkeypatch)
     client = AnthropicClient(max_concurrency=1, max_retries=2)
 
-    with pytest.raises(DialogueError, match=f"{type(drop).__name__} while streaming the reply"):
+    with pytest.raises(
+        DialogueError,
+        match=f"{type(drop).__name__} while streaming the reply.*gave up after 2 retries",
+    ):
         asyncio.run(client.send(_STREAM_REQUEST))
 
-    assert served == [1]
+    assert served == [3]
+    assert slept == [0.5, 1.0]
+
+
+def test_a_dropped_stream_is_retried_and_the_retry_can_succeed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    served = _serve_streams(
+        monkeypatch,
+        [
+            _SseBody([_MESSAGE_START], then_raise=httpx2.RemoteProtocolError("peer closed")),
+            _SseBody([_MESSAGE_START, *_TEXT_EVENTS]),
+        ],
+    )
+    slept = _patch_sleep(monkeypatch)
+    client = AnthropicClient(max_concurrency=1, max_retries=4)
+
+    response = asyncio.run(client.send(_STREAM_REQUEST))
+
+    assert response["content"] == [{"type": "text", "text": "hello"}]
+    assert served == [2]
+    assert slept == [0.5]
 
 
 def test_a_failed_stream_releases_its_concurrency_slot(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -628,7 +669,7 @@ def test_a_failed_stream_releases_its_concurrency_slot(monkeypatch: pytest.Monke
             _SseBody([_MESSAGE_START, *_TEXT_EVENTS]),
         ],
     )
-    client = AnthropicClient(max_concurrency=1)
+    client = AnthropicClient(max_concurrency=1, max_retries=0)
 
     async def scenario() -> dict:
         with pytest.raises(DialogueError):
