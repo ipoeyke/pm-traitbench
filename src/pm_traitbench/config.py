@@ -1994,6 +1994,17 @@ class DialogueConfig(BaseModel):
             ),
         },
     )
+    refusal_fallback_model: str | None = Field(
+        "claude-sonnet-5",
+        min_length=1,
+        json_schema_extra={
+            "basis": "design",
+            "note": (
+                "answers a narrator or advisor turn the model refused, such as an API "
+                "reasoning-extraction refusal; None disables the fallback"
+            ),
+        },
+    )
     api_max_retries: int = Field(
         4,
         ge=0,
