@@ -247,9 +247,17 @@ def _pad(items: Sequence) -> tuple:
 
 
 def _mcq_pair(
-    trait_id: str, question: str, options: OptionSet, ids: tuple[str, ...]
+    trait_id: str,
+    question: str,
+    options: OptionSet,
+    ids: tuple[str, ...],
+    open_question: str | None = None,
 ) -> tuple[Draft, Draft]:
-    """A multiple-choice draft and its open twin, answered with the correct option's text."""
+    """A multiple-choice draft and its open twin, answered with the correct option's text.
+
+    The twin asks `open_question` when given: a bias stem stands on its own, but a
+    preference stem points at "these" options the twin does not carry.
+    """
     mcq = Draft(
         ProbeType.TRAIT_MCQ,
         trait_id,
@@ -265,7 +273,7 @@ def _mcq_pair(
         ProbeType.TRAIT_MCQ,
         trait_id,
         ProbeForm.OPEN,
-        question,
+        question if open_question is None else open_question,
         _NO_OPTIONS,
         answer,
         _NO_OPTIONS,
@@ -356,14 +364,10 @@ def mcq_drafts(
             },
             rng_for("options", trait.trait_id),
         )
-        question = _line(
-            pm,
-            rng_for,
-            bank.preferences[entry.group].mcq,
-            ProbeType.TRAIT_MCQ,
-            trait.trait_id,
-        )
-        drafts.extend(_mcq_pair(trait.trait_id, question, options, ids))
+        lines = bank.preferences[entry.group]
+        question = _line(pm, rng_for, lines.mcq, ProbeType.TRAIT_MCQ, trait.trait_id)
+        open_question = _line(pm, rng_for, lines.open, ProbeType.TRAIT_MCQ, trait.trait_id)
+        drafts.extend(_mcq_pair(trait.trait_id, question, options, ids, open_question))
     return tuple(drafts), skips
 
 

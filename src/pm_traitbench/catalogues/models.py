@@ -311,6 +311,8 @@ class PreferenceProbeLines(BaseModel):
     presence: StanceLines
     # MCQ stem: a slotless question whose options are the catalogue values.
     mcq: StanceLines
+    # The MCQ's open twin: the same question asked with no options to point at.
+    open: StanceLines
     # A live request the preference bears on, never stating a preference value.
     in_situ: StanceLines
     # A request that presupposes the stale state, the old value in `{old_value}`.

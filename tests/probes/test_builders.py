@@ -414,11 +414,17 @@ def test_each_mcq_is_followed_by_its_open_twin(corpus):
     assert len(drafts) == 4
     for first, twin in zip(drafts[::2], drafts[1::2], strict=True):
         assert first.form == ProbeForm.MCQ and twin.form == ProbeForm.OPEN
-        assert twin.question == first.question and twin.trait_id == first.trait_id
+        assert twin.trait_id == first.trait_id
         assert twin.options == (None,) * 4 and twin.sources == (None,) * 4
         assert twin.answer == first.options[LETTERS.index(first.answer)]
         assert twin.supporting_signal_ids == first.supporting_signal_ids
         assert twin.probe_type == ProbeType.TRAIT_MCQ
+    bias_mcq, bias_twin, pref_mcq, pref_twin = drafts
+    # A bias stem is a situation and stands alone; a preference stem points at options.
+    assert bias_twin.question == bias_mcq.question
+    assert pref_twin.question != pref_mcq.question
+    assert "these" not in pref_twin.question
+    assert pref_twin.question in BANK.preferences[PreferenceGroup.WORKFLOW].open["all"]
 
 
 def test_preference_mcq_lists_every_catalogue_value_once(corpus):

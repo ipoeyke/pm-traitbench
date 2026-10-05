@@ -784,6 +784,7 @@ def check_probes_catalogue(catalogue: Catalogue) -> None:
             frozenset({"value"}),
         )
         _check_probe_lines(f"{prefix} entry 'mcq'", pref_bank.mcq)
+        _check_probe_lines(f"{prefix} entry 'open'", pref_bank.open)
         _check_probe_lines(f"{prefix} entry 'in_situ'", pref_bank.in_situ, _INSTRUMENT_LEVEL)
         _check_probe_lines(
             f"{prefix} entry 'governance'",

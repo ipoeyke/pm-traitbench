@@ -62,6 +62,14 @@ def test_preference_with_off_range_value_count_raises(tmp_path: Path, n_values: 
         _check_modified(tmp_path, mutate, "preferences.yaml")
 
 
+def test_preference_open_line_with_a_slot_raises(tmp_path: Path) -> None:
+    def mutate(d: dict[str, Any]) -> None:
+        d["preferences"]["workflow"]["open"]["all"][0] = "What does the PM want for {value}?"
+
+    with pytest.raises(CatalogueError, match="workflow.*open"):
+        _check_modified(tmp_path, mutate)
+
+
 def test_preference_in_situ_value_slot_raises(tmp_path: Path) -> None:
     def mutate(d: dict[str, Any]) -> None:
         d["preferences"]["workflow"]["in_situ"]["all"][0] = "Do it as {value} on {instrument}."
