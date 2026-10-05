@@ -75,6 +75,14 @@ def session_forbidden(
     )
 
 
+def _round_level(inputs: PlanInputs, trade_idea_id: str) -> str | None:
+    """The idea's round exit level, fixed at entry and carried on every position day."""
+    for row in inputs.position_days:
+        if row.trade_idea_id == trade_idea_id and row.anchor_level is not None:
+            return format_level(row.anchor_level)
+    return None
+
+
 def format_level(x: float) -> str:
     """Render a price or level to at most 4 significant figures."""
     return f"{x:.4g}"
@@ -174,6 +182,9 @@ def _signal_stance(
             values["entry"] = format_level(idea.entry_level)
             values["target"] = format_level(idea.target_level)
             values["stop"] = format_level(idea.stop_level)
+            round_level = _round_level(inputs, idea.trade_idea_id)
+            if round_level is not None:
+                values["round_level"] = round_level
         else:
             values["instrument"] = idea.instrument_id
             values["value"] = str(inputs.value_at(trait.trait_id, session_date))

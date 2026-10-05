@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from pm_traitbench.config import DialogueConfig
-from pm_traitbench.dialogue.context import SessionContext
+from pm_traitbench.dialogue.context import SessionContext, trade_key
 from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS
 from pm_traitbench.dialogue.turns import Opening
 from pm_traitbench.enums import Effort, Side, Tenor
@@ -200,7 +200,9 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
         "invent one. Refer to open positions and the ideas below by instrument, or with a "
         "level mention for a market number you state, never with a trade mention. Fill "
         "`mentions` for every such trade and every market level you state, using the ids "
-        "given. State only the market levels listed under the latest market levels below.",
+        "given. Describe each listed trade as its note says: a trade noted as closing the "
+        "whole position is a full exit, not a trim, and the note names what drove it. "
+        "State only the market levels listed under the latest market levels below.",
         _STANCE_HOLDS,
         f"Today is {ctx.skeleton.date.isoformat()}.",
         f"Asset class: {mandate.asset_class.value}. Sub-style: {mandate.sub_style}. "
@@ -231,11 +233,14 @@ def narrator_system(ctx: SessionContext, feedback: str | None) -> str:
 
 
 def _trade_line(ctx: SessionContext, trade: LedgerRow) -> str:
+    """One listed trade: its legs and size, then what it does to the position and why."""
     name = ctx.instrument_names[trade.instrument_id]
     tenor = f", tenor {trade.tenor.value}" if trade.tenor is not None else ""
+    note = ctx.trade_notes[trade_key(trade)]
+    what = note.kind if note.trigger is None else f"{note.kind}, {note.trigger}"
     return (
         f"{trade.trade_idea_id}: {name} ({trade.instrument_id}){tenor}, {trade.side.value} "
-        f"{trade.size} at {trade.price_or_yield}"
+        f"{trade.size} at {trade.price_or_yield} ({what})"
     )
 
 

@@ -11,8 +11,10 @@ biases:
         - buy more {instrument} while it is losing money against {entry}, ahead of any trigger firing
       hold:
         all:
-        - keep {instrument} under water against your entry at {entry} rather than lock in the loss
-        - stay in {instrument} while it is losing money against {entry}, to avoid taking the loss
+        - hold {instrument} under water against your entry at {entry}, because taking that loss now
+          would sting far more than any gain feels good
+        - stay in {instrument} while it is losing money against {entry}, pushing to get back to even
+          before you do anything with it
     stated:
       all:
       - say a loss stings far more than an equal gain feels good
@@ -89,8 +91,10 @@ biases:
     revealed:
       exit_at_anchor:
         all:
-        - exit {instrument} right at a round level well short of the target at {target}
-        - take profit on {instrument} at a round number, long before it reaches {target}
+        - exit {instrument} right at {round_level}, the round level you fixed on as your way out
+          from the start, not the target at {target}
+        - close {instrument} exactly at the round number {round_level}, because that level, not
+          {target}, is where you had decided to get out
     stated:
       all:
       - say you fixate on round numbers as exit points

@@ -7,7 +7,14 @@ import pytest
 from pm_traitbench.catalogues.loader import load_catalogue
 from pm_traitbench.catalogues.models import Voice
 from pm_traitbench.config import Config, PmFilter
-from pm_traitbench.dialogue.context import PmTables, build_contexts, select_pms
+from pm_traitbench.dialogue.context import (
+    PmTables,
+    TradeNote,
+    annotate_day_trades,
+    build_contexts,
+    select_pms,
+    trade_key,
+)
 from pm_traitbench.dialogue.prompts import narrator_system
 from pm_traitbench.dialogue.tools import MarketLookup
 from pm_traitbench.enums import (
@@ -16,6 +23,7 @@ from pm_traitbench.enums import (
     DriftStatus,
     Expression,
     InstrumentKind,
+    PositionAction,
     RuleScope,
     SessionKind,
     Side,
@@ -410,3 +418,75 @@ def test_rules_are_filtered_to_scope_and_the_sessions_ideas_and_appear_in_the_sy
     assert pm_rule_b.text in system
     assert idea_1_rule.text in system
     assert other_idea_rule.text not in system
+
+
+# --- annotate_day_trades ----------------------------------------------------------------------
+
+_LATER = DEFAULT_DATE + timedelta(days=7)
+
+
+def _notes(trades, position_days=(), rules=(), horizon_end=None, ideas=None):
+    idea = idea_row(entry_date=DEFAULT_DATE)
+    return annotate_day_trades(
+        trades, ideas or {idea.trade_idea_id: idea}, position_days, rules, horizon_end
+    )
+
+
+def test_trade_on_the_entry_date_opens_the_position_with_no_trigger():
+    trade = ledger_row(date=DEFAULT_DATE)
+
+    assert _notes((trade,)) == {trade_key(trade): TradeNote("opens the position", None)}
+
+
+@pytest.mark.parametrize(
+    ("action", "kind"),
+    [
+        (PositionAction.ADD, "adds to the position"),
+        (PositionAction.TRIM, "trims the position"),
+        (PositionAction.EXIT, "closes the whole position"),
+        (PositionAction.CUT, "closes the whole position"),
+        (PositionAction.ROLL, "rolls the position"),
+    ],
+)
+def test_trade_kind_follows_the_position_day_action(action, kind):
+    trade = ledger_row(date=_LATER, side=Side.SELL)
+    day = position_day(date=_LATER, action=action)
+
+    note = _notes((trade,), position_days=(day,))[trade_key(trade)]
+
+    assert note.kind == kind
+    assert note.trigger == "on your own call"
+
+
+def test_trade_trigger_quotes_the_rule_behind_rule_id():
+    trade = ledger_row(date=_LATER, side=Side.SELL, rule_id="r_01")
+    stop = rule(rule_id="r_01", text="Exit a position after a 5 percent drawdown from entry.")
+
+    note = _notes((trade,), rules=(stop,))[trade_key(trade)]
+
+    assert note.trigger == "on your rule: Exit a position after a 5 percent drawdown from entry."
+
+
+def test_trade_on_the_horizon_end_is_triggered_by_the_horizon():
+    trade = ledger_row(date=_LATER, side=Side.SELL)
+
+    note = _notes((trade,), horizon_end=_LATER)[trade_key(trade)]
+
+    assert note.trigger == "at the end of the horizon"
+
+
+def test_trade_without_a_position_day_is_read_off_its_side():
+    sell = ledger_row(date=_LATER, side=Side.SELL)
+    buy = ledger_row(date=_LATER, side=Side.BUY)
+
+    notes = _notes((sell, buy))
+
+    assert notes[trade_key(sell)].kind == "closes the whole position"
+    assert notes[trade_key(buy)].kind == "adds to the position"
+
+
+def test_trade_naming_an_unknown_idea_or_rule_raises():
+    with pytest.raises(DialogueError, match="trade idea 'ti_009'"):
+        _notes((ledger_row(trade_idea_id="ti_009"),))
+    with pytest.raises(DialogueError, match="rule 'r_99'"):
+        _notes((ledger_row(date=_LATER, rule_id="r_99"),))
