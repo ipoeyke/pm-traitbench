@@ -136,6 +136,7 @@ class SessionContext:
     trade_notes: Mapping[TradeKey, TradeNote]
     open_positions: tuple[Idea, ...]
     question_instrument: Instrument | None
+    # Id to name of the session's own instruments, else of the PM's whole asset class.
     instrument_names: Mapping[str, str]
     avoid_lines: tuple[str, ...]
     lookup: MarketLookup
@@ -292,13 +293,14 @@ def build_contexts(
             stream(config.seed.root, "dialogue", pm.persona.pm_id, skeleton.session_id, "turns"),
         )
 
+        kinds = _ASSET_CLASS_KINDS[pm.persona.mandate.asset_class]
+        class_instruments = sorted(
+            (inst for inst in lookup.instruments.values() if inst.kind in kinds),
+            key=lambda inst: inst.instrument_id,
+        )
         question_instrument: Instrument | None = None
         if skeleton.kind == SessionKind.SILENCE:
-            kinds = _ASSET_CLASS_KINDS[pm.persona.mandate.asset_class]
-            candidates = sorted(
-                (inst for inst in lookup.instruments.values() if inst.kind in kinds),
-                key=lambda inst: inst.instrument_id,
-            )
+            candidates = class_instruments
             if not candidates:
                 raise DialogueError(
                     f"session '{skeleton.session_id}' has no instrument of the PM's asset "
@@ -314,6 +316,9 @@ def build_contexts(
         instrument_ids.update(idea.instrument_id for idea in open_positions)
         if question_instrument is not None:
             instrument_ids.add(question_instrument.instrument_id)
+        if not instrument_ids:
+            # A session with nothing of its own: a failed lookup lists the asset class.
+            instrument_ids.update(inst.instrument_id for inst in class_instruments)
         instrument_names = {
             instrument_id: _instrument_name(lookup, instrument_id)
             for instrument_id in sorted(instrument_ids)

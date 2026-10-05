@@ -438,6 +438,15 @@ def test_unknown_instrument_is_an_error_listing_close_names(
     assert "Equity 0001" in outcome.result["error"]
 
 
+def test_unknown_instrument_close_to_an_id_names_it(market_lookup: MarketLookup, fixture_market):
+    today = fixture_market["dates"][0]
+
+    outcome = run_tool(market_lookup, "get_quote", {"instrument": "EQ-001"}, today)
+
+    assert outcome.is_error is True
+    assert "EQ-0001" in outcome.result["error"]
+
+
 def test_unknown_instrument_with_nothing_close_lists_the_sessions_instruments(
     market_lookup: MarketLookup, fixture_market: dict
 ):

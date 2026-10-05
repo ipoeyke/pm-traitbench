@@ -116,7 +116,7 @@ Opening instruction by kind, when turn 1 carries no stance that already sets the
 
 1. Build the turn plan.
 2. For each PM turn: send the narrator request; validate the response against the turn schema (`stop_reason` `end_turn`, parsable JSON matching the schema); whether mentions match the ledger is stage 7's check (decision 1); on failure retry, up to `max_retries` fresh attempts; on success `commit` it to the cache.
-3. For each advisor turn: send; while `stop_reason` is `tool_use` and rounds are below `max_tool_rounds`, run every requested tool, append all `tool_result` blocks in one `user` message and resend. At the cap, resend once with `tool_choice: {"type": "none"}` and record a warning. Validate and commit the final response as in step 2.
+3. For each advisor turn: send; while `stop_reason` is `tool_use` and rounds are below `max_tool_rounds`, run every requested tool, append all `tool_result` blocks in one `user` message and resend. At the cap, append a text block to that last tool-result message telling the advisor lookups are over and to answer in text, naming what it could not look up, then resend once with `tool_choice: {"type": "none"}` and record a warning. Validate and commit the final response as in step 2.
 4. Return the public row and the hidden log.
 
 `feedback`, when set, is appended to the narrator's `system` prompt. Stage 6 never sets it; it is the hook stage 7 uses to regenerate one session, and the changed request gives it a new cache key.

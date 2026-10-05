@@ -350,7 +350,7 @@ def _resolve_or_error(
     resolved = lookup.resolve(instrument)
     if resolved is not None:
         return resolved
-    names = [candidate.name for candidate in lookup.instruments.values()]
+    names = [c.name for c in lookup.instruments.values()] + list(lookup.instruments)
     matches = get_close_matches(instrument, names, n=_MAX_CLOSE_MATCHES)
     if matches:
         return _error(f"unknown instrument '{instrument}'; closest names: {', '.join(matches)}")
