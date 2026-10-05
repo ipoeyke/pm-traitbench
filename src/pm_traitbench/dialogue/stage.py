@@ -319,6 +319,7 @@ def _run(
     return {
         "narrator_model": config.dialogue.narrator_model,
         "advisor_model": config.dialogue.advisor_model,
+        "refusal_fallback_model": config.dialogue.refusal_fallback_model,
         "advisor_prompt_sha256": prompt_sha256(advisor_prompt),
         "skipped": meta["skipped"],
         "pms": [pm.persona.pm_id for pm in selected],

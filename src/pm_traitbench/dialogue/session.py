@@ -90,17 +90,37 @@ def parse_turn(response: Mapping[str, Any]) -> TurnOutput | None:
 
 @dataclass(frozen=True)
 class _Accepted:
-    """One accepted reply: either a validated final turn, or the tool_use blocks to run."""
+    """One accepted reply: a validated final turn, the tool_use blocks to run, or a refusal
+    accepted only so it is cached and the fallback model can answer instead."""
 
     output: TurnOutput | None
     tool_blocks: tuple[Mapping[str, Any], ...]
+    refused: bool = False
 
 
-def _classify(response: Mapping[str, Any], allow_tool_use: bool) -> tuple[_Accepted | None, str]:
-    """Accept a tool-use round or a final parsed turn; on rejection, name the reason why."""
+def _refusal_reason(response: Mapping[str, Any]) -> str:
+    """ "the reply was refused", with the API's category and explanation when it gives them."""
+    details = response.get("stop_details")
+    if not isinstance(details, dict):
+        return "the reply was refused"
+    category = details.get("category") or "uncategorised"
+    explanation = details.get("explanation")
+    return f"the reply was refused ({category}{f': {explanation}' if explanation else ''})"
+
+
+def _classify(
+    response: Mapping[str, Any], allow_tool_use: bool, fallback_available: bool
+) -> tuple[_Accepted | None, str]:
+    """Accept a tool-use round or a final parsed turn; on rejection, name the reason why.
+
+    With a fallback model available, a refusal is accepted as such rather than retried,
+    so `_send_accepted` can commit it and send the request to that model instead.
+    """
     stop_reason = response.get("stop_reason")
     if stop_reason == "refusal":
-        return None, "the reply was refused"
+        if fallback_available:
+            return _Accepted(output=None, tool_blocks=(), refused=True), ""
+        return None, _refusal_reason(response)
     if stop_reason == "max_tokens":
         return None, "the reply hit max_tokens"
     if stop_reason == "tool_use":
@@ -129,16 +149,33 @@ async def _send_accepted(
     session_id: str,
     *,
     allow_tool_use: bool,
-) -> tuple[Reply, _Accepted, int]:
-    """Send `request` through `send_until_accepted`, classifying replies with `_classify`."""
-    return await send_until_accepted(
-        client,
-        request,
-        lambda response: _classify(response, allow_tool_use),
-        scope=session_id,
-        max_retries=config.max_retries,
-        error_type=DialogueError,
-    )
+) -> tuple[Reply, _Accepted, int, str]:
+    """Send `request` until `_classify` accepts a reply; returns it with the model that answered.
+
+    A refusal from the request's model is committed and the request re-sent once to
+    `config.refusal_fallback_model`, with its own retries, when one is configured. The
+    rejected count sums both models' attempts, the refusal included.
+    """
+    fallback = config.refusal_fallback_model
+
+    async def send(
+        body: Mapping[str, Any], fallback_available: bool
+    ) -> tuple[Reply, _Accepted, int]:
+        return await send_until_accepted(
+            client,
+            body,
+            lambda response: _classify(response, allow_tool_use, fallback_available),
+            scope=session_id,
+            max_retries=config.max_retries,
+            error_type=DialogueError,
+        )
+
+    reply, accepted, rejected = await send(request, fallback is not None)
+    if not accepted.refused:
+        return reply, accepted, rejected, request["model"]
+    assert fallback is not None
+    reply, accepted, fallback_rejected = await send({**request, "model": fallback}, False)
+    return reply, accepted, rejected + 1 + fallback_rejected, fallback
 
 
 def _sum_usage(totals: CallUsage, response: Mapping[str, Any]) -> CallUsage:
@@ -187,7 +224,7 @@ async def narrate_session(
     for i in range(n_pm):
         narrator_messages.append({"role": "system", "content": narrator_directive(ctx, i)})
         pm_request = narrator_request(ctx, i, narrator_messages, config, feedback)
-        pm_reply, pm_accepted, pm_rejected = await _send_accepted(
+        pm_reply, pm_accepted, pm_rejected, pm_model = await _send_accepted(
             client, pm_request, config, session_id, allow_tool_use=False
         )
         rejected_replies += pm_rejected
@@ -205,7 +242,7 @@ async def narrate_session(
                 directive=_pm_directive_text(ctx, i),
                 scripted_violation=False,
                 tool_calls=(),
-                model=pm_request["model"],
+                model=pm_model,
                 request_hashes=(pm_reply.key,),
                 usage=usage_of(pm_reply.response),
             )
@@ -227,7 +264,7 @@ async def narrate_session(
             advisor_body = advisor_request(
                 system_advisor, advisor_messages, config, tools_disabled=tools_disabled
             )
-            reply, accepted, turn_rejected = await _send_accepted(
+            reply, accepted, turn_rejected, advisor_model = await _send_accepted(
                 client, advisor_body, config, session_id, allow_tool_use=not tools_disabled
             )
             rejected_replies += turn_rejected
@@ -280,7 +317,7 @@ async def narrate_session(
                     directive=advisor_directive,
                     scripted_violation=is_violation,
                     tool_calls=tuple(tool_calls),
-                    model=advisor_body["model"],
+                    model=advisor_model,
                     request_hashes=tuple(request_hashes),
                     usage=usage,
                 )

@@ -103,7 +103,7 @@ def test_send_accepted_refreshes_past_a_cached_reply_that_fails_validation(tmp_p
         json.dumps({"key": key, "response": stale}), encoding="utf-8"
     )
 
-    reply, accepted, rejected = asyncio.run(
+    reply, accepted, rejected, _ = asyncio.run(
         _send_accepted(client, request, _CONFIG, "s_test", allow_tool_use=False)
     )
 
@@ -215,7 +215,8 @@ def test_refusal_is_retried_and_not_cached(market_lookup, tmp_path):
 
     _, client = _cached_client(responder, tmp_path)
 
-    result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+    # Without a fallback model, a refusal is retried on the same model and never cached.
+    result = asyncio.run(narrate_session(ctx, client, _NO_FALLBACK, _ADVISOR_PROMPT))
 
     assert calls["pm"] == 2
     cache_files = list(tmp_path.rglob("*.json"))
@@ -261,7 +262,7 @@ def test_retry_resends_an_identical_request(market_lookup, tmp_path):
 
     fake, client = _cached_client(responder, tmp_path)
 
-    asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+    asyncio.run(narrate_session(ctx, client, _NO_FALLBACK, _ADVISOR_PROMPT))
 
     narrator_requests = [r for r in fake.requests if "tools" not in r]
     assert len(narrator_requests) == 2
@@ -627,3 +628,79 @@ def test_session_level_requests_never_leak_across_the_narrator_or_advisor_histor
         assert idea_rule.text not in serialized
         assert idea.thesis not in serialized
         assert reaction.stance not in serialized
+
+
+# --- refusal fallback -------------------------------------------------------------------------
+
+_REFUSAL = fake_message(
+    [{"type": "text", "text": "I can't help with that."}], stop_reason="refusal"
+)
+_REFUSAL["stop_details"] = {
+    "type": "refusal",
+    "category": "reasoning_extraction",
+    "explanation": "asked to narrate its reasoning",
+}
+_NO_FALLBACK = _CONFIG.model_copy(update={"refusal_fallback_model": None})
+
+
+def _refuse_primary(request):
+    if request["model"] == _CONFIG.narrator_model and "tools" not in request:
+        return _REFUSAL
+    return default_responder(request)
+
+
+def test_refused_narrator_turn_is_answered_by_the_fallback_model(market_lookup, tmp_path):
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
+    fake, client = _cached_client(_refuse_primary, tmp_path)
+
+    result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    narrator_requests = [r for r in fake.requests if "tools" not in r]
+    assert [r["model"] for r in narrator_requests] == [
+        _CONFIG.narrator_model,
+        _CONFIG.refusal_fallback_model,
+    ]
+    assert narrator_requests[1] == {**narrator_requests[0], "model": _CONFIG.refusal_fallback_model}
+    pm_turn = result.log.turns[0]
+    assert pm_turn.model == _CONFIG.refusal_fallback_model
+    assert result.log.turns[1].model == _CONFIG.advisor_model
+    assert result.rejected_replies == 1
+
+
+def test_cached_refusal_replays_straight_to_the_fallback(market_lookup, tmp_path):
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
+    fake, client = _cached_client(_refuse_primary, tmp_path)
+    asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+    calls_before = len(fake.requests)
+
+    again = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    assert len(fake.requests) == calls_before
+    assert again.log.turns[0].model == _CONFIG.refusal_fallback_model
+
+
+def test_refusal_without_a_fallback_fails_with_the_category(market_lookup, tmp_path):
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
+    fake, client = _cached_client(_refuse_primary, tmp_path)
+
+    with pytest.raises(
+        DialogueError,
+        match=r"the reply was refused \(reasoning_extraction: asked to narrate its reasoning\)",
+    ):
+        asyncio.run(narrate_session(ctx, client, _NO_FALLBACK, _ADVISOR_PROMPT))
+
+    assert {r["model"] for r in fake.requests} == {_CONFIG.narrator_model}
+    assert len(fake.requests) == 1 + _CONFIG.max_retries
+
+
+def test_refusal_by_the_fallback_too_fails_without_a_second_fallback(market_lookup, tmp_path):
+    ctx = session_context(market_lookup, turn_plan=_turn_plan(1))
+    fake, client = _cached_client(lambda _request: _REFUSAL, tmp_path)
+
+    with pytest.raises(DialogueError, match="the reply was refused"):
+        asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
+
+    models = [r["model"] for r in fake.requests]
+    assert models[0] == _CONFIG.narrator_model
+    assert set(models[1:]) == {_CONFIG.refusal_fallback_model}
+    assert len(models) == 1 + 1 + _CONFIG.max_retries

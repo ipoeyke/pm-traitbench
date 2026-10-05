@@ -1028,6 +1028,7 @@ def test_dialogue_defaults() -> None:
     assert config.turns_by_kind.decision == (4, 6, 8)
     assert config.max_tool_rounds == 3
     assert config.max_retries == 3
+    assert config.refusal_fallback_model == "claude-sonnet-5"
     assert config.api_max_retries == 4
     assert config.max_concurrency == 8
     assert config.max_output_tokens == 4000

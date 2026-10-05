@@ -380,6 +380,7 @@ def test_run_metadata_records_models_prompt_hash_voices_and_usage(
     assert metadata["narrator_model"] == config.dialogue.narrator_model
     assert metadata["advisor_model"] == config.dialogue.advisor_model
     assert len(metadata["advisor_prompt_sha256"]) == 64
+    assert metadata["refusal_fallback_model"] == config.dialogue.refusal_fallback_model
     assert metadata["skipped"] == [MULTI_ASSET_PM_ID]
     pm_ids = {s.pm_id for s in store.read(SKELETONS)}
     assert set(metadata["pms"]) == pm_ids
