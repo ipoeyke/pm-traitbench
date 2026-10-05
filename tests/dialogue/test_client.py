@@ -10,6 +10,7 @@ import anthropic
 import httpx2
 import pytest
 
+from pm_traitbench.config import Config
 from pm_traitbench.dialogue import client as client_module
 from pm_traitbench.dialogue.client import (
     AnthropicClient,
@@ -213,6 +214,49 @@ def test_fresh_totals_accumulate_cache_read_tokens(tmp_path: Path) -> None:
 
     asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
     assert cached.totals.cache_read_tokens == 40
+
+
+def test_totals_split_usage_by_model_and_cost_it(tmp_path: Path) -> None:
+    def respond(request):
+        response = fake_message([turn_text("ok")], input_tokens=1_000_000, output_tokens=100_000)
+        response["usage"]["cache_read_input_tokens"] = 500_000
+        response["usage"]["cache_creation_input_tokens"] = 200_000
+        return response
+
+    cached = CachedClient(lambda: FakeClient(respond), tmp_path, token_budget=None)
+    asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
+    asyncio.run(cached.send({**_REQUEST, "model": "claude-sonnet-5"}, scope=_SCOPE))
+    asyncio.run(cached.send({**_REQUEST, "model": "claude-sonnet-5"}, scope="other"))
+    asyncio.run(cached.send({**_REQUEST, "model": "claude-mystery-1"}, scope=_SCOPE))
+
+    prices = Config().prices.models
+    metadata = cached.totals.as_metadata(prices)
+
+    assert cached.totals.cache_creation_tokens == 800_000
+    opus = metadata["usage_by_model"]["claude-opus-5-5"]
+    assert opus["input_tokens"] == 1_000_000 and opus["cache_creation_input_tokens"] == 200_000
+    # 1M input at $4, 100K output at $20, 500K cache reads at $0.20, 200K writes at $5.
+    assert opus["cost_usd"] == 4.0 + 2.0 + 0.1 + 1.0
+    sonnet = metadata["usage_by_model"]["claude-sonnet-5"]
+    assert sonnet["input_tokens"] == 2_000_000
+    assert sonnet["cost_usd"] == 2 * (2.0 + 1.0 + 0.1 + 0.5)
+    assert "cost_usd" not in metadata["usage_by_model"]["claude-mystery-1"]
+    assert metadata["unpriced_models"] == ["claude-mystery-1"]
+    assert metadata["cost_usd"] == round(7.1 + 7.2, 4)
+
+
+def test_cache_hits_add_no_usage_or_cost(tmp_path: Path) -> None:
+    response = fake_message([turn_text("ok")], input_tokens=7, output_tokens=3)
+    cached = CachedClient(lambda: FakeClient(lambda _r: response), tmp_path, token_budget=None)
+    reply = asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
+    cached.commit(reply)
+    asyncio.run(cached.send(_REQUEST, scope=_SCOPE))
+
+    metadata = cached.totals.as_metadata(Config().prices.models)
+
+    assert metadata["cache_hits"] == 1
+    assert metadata["usage_by_model"]["claude-opus-5-5"]["input_tokens"] == 7
+    assert metadata["cost_usd"] == round(7 * 4e-6 + 3 * 20e-6, 4)
 
 
 def test_null_usage_fields_count_as_zero(tmp_path: Path) -> None:

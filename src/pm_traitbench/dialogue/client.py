@@ -14,15 +14,17 @@ import json
 import os
 import tempfile
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 import anthropic
 import httpx2
 
-from pm_traitbench.dialogue.usage import usage_of
+from pm_traitbench.config import ModelPrice
+from pm_traitbench.dialogue.usage import ZERO_USAGE, usage_of
 from pm_traitbench.errors import DialogueBudgetError, DialogueError, PmTraitbenchError
+from pm_traitbench.tables.schema import CallUsage
 
 _NO_CREDENTIALS_MESSAGE = "no Anthropic credentials: run `ant auth login` or set ANTHROPIC_API_KEY"
 # Looked up at call time so a test can replace it.
@@ -90,24 +92,77 @@ class Reply:
     cached: bool
 
 
+def _cost_usd(usage: CallUsage, price: ModelPrice) -> float:
+    """One model's bill for `usage` at `price`, in USD."""
+    per_token = 1e-6
+    return per_token * (
+        usage.input_tokens * price.input
+        + usage.output_tokens * price.output
+        + usage.cache_read_input_tokens * price.cache_read
+        + usage.cache_creation_input_tokens * price.cache_write
+    )
+
+
 @dataclass
 class UsageTotals:
-    """Running call and token counts for a `CachedClient`; token fields exclude cache hits."""
+    """Running call and token counts for a `CachedClient`; token fields exclude cache hits.
+
+    `by_model` keeps the same fresh usage per request model, so a stage that mixes
+    models (a narrator, an advisor, a refusal fallback) can be billed per model.
+    """
 
     calls: int = 0
     cache_hits: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    by_model: dict[str, CallUsage] = field(default_factory=dict)
 
-    def as_metadata(self) -> dict[str, int]:
-        """The five counters keyed by field name, for a stage's run metadata."""
+    def add(self, model: str, usage: CallUsage) -> None:
+        """Count one fresh reply's usage, in the stage totals and under its model."""
+        self.input_tokens += usage.input_tokens
+        self.output_tokens += usage.output_tokens
+        self.cache_read_tokens += usage.cache_read_input_tokens
+        self.cache_creation_tokens += usage.cache_creation_input_tokens
+        before = self.by_model.get(model, ZERO_USAGE)
+        self.by_model[model] = CallUsage(
+            input_tokens=before.input_tokens + usage.input_tokens,
+            output_tokens=before.output_tokens + usage.output_tokens,
+            cache_read_input_tokens=before.cache_read_input_tokens + usage.cache_read_input_tokens,
+            cache_creation_input_tokens=before.cache_creation_input_tokens
+            + usage.cache_creation_input_tokens,
+        )
+
+    def as_metadata(self, prices: Mapping[str, ModelPrice]) -> dict[str, Any]:
+        """The counters, the usage and cost per model, and the total cost, for run metadata.
+
+        `cost_usd` sums the models in `prices`; any other model is listed under
+        `unpriced_models` rather than failing a finished stage.
+        """
+        by_model: dict[str, dict[str, Any]] = {}
+        unpriced: list[str] = []
+        total = 0.0
+        for model, usage in sorted(self.by_model.items()):
+            entry: dict[str, Any] = usage.model_dump()
+            price = prices.get(model)
+            if price is None:
+                unpriced.append(model)
+            else:
+                cost = _cost_usd(usage, price)
+                total += cost
+                entry["cost_usd"] = round(cost, 4)
+            by_model[model] = entry
         return {
             "calls": self.calls,
             "cache_hits": self.cache_hits,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "cache_read_tokens": self.cache_read_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
+            "usage_by_model": by_model,
+            "cost_usd": round(total, 4),
+            "unpriced_models": unpriced,
         }
 
 
@@ -178,11 +233,7 @@ class CachedClient:
             self._inner = self._inner_factory()
         response = await self._inner.send(request)
 
-        usage = usage_of(response)
-        self._totals.input_tokens += usage.input_tokens
-        self._totals.output_tokens += usage.output_tokens
-        self._totals.cache_read_tokens += usage.cache_read_input_tokens
-
+        self._totals.add(request["model"], usage_of(response))
         return Reply(key=key, response=response, cached=False)
 
     def commit(self, reply: Reply) -> None:

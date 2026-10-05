@@ -1228,3 +1228,20 @@ def test_dump_with_basis_covers_every_judge_leaf() -> None:
 def test_judge_sample_size_below_floor_is_rejected() -> None:
     with pytest.raises(ValidationError):
         Config.model_validate({"judge": {"sample_size": 4}})
+
+
+def test_every_configured_model_has_a_price():
+    config = Config()
+    models = {
+        config.dialogue.narrator_model,
+        config.dialogue.advisor_model,
+        config.dialogue.refusal_fallback_model,
+        config.validation.judge_model,
+        config.validation.refusal_fallback_model,
+        config.gate2.model,
+        config.harness.model,
+        config.judge.model,
+    }
+    assert models - {None} <= set(config.prices.models)
+    opus = config.prices.models["claude-opus-5-5"]
+    assert (opus.input, opus.output, opus.cache_read, opus.cache_write) == (4.0, 20.0, 0.2, 5.0)

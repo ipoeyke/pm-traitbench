@@ -596,7 +596,7 @@ def judge_run(
             "prompts_sha256": prompts_sha256(),
             "counts": counts,
             "skipped": selection.skipped,
-            "usage": client.totals.as_metadata(),
+            "usage": client.totals.as_metadata(config.prices.models),
         },
     )
     return JudgeResult(tuple(rows), selection.skipped, run_store)
