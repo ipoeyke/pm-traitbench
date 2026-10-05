@@ -438,6 +438,21 @@ def test_unknown_instrument_is_an_error_listing_close_names(
     assert "Equity 0001" in outcome.result["error"]
 
 
+def test_unknown_instrument_with_nothing_close_lists_the_sessions_instruments(
+    market_lookup: MarketLookup, fixture_market: dict
+):
+    today = fixture_market["dates"][0]
+    session_names = {"EQ-0001": "Equity 0001", "CR-IG-001": "Issuer IG 001"}
+
+    outcome = run_tool(market_lookup, "get_quote", {"instrument": "SPX"}, today, session_names)
+
+    assert outcome.is_error is True
+    assert outcome.result["error"] == (
+        "unknown instrument 'SPX'; the PM's instruments: "
+        "Equity 0001 (EQ-0001), Issuer IG 001 (CR-IG-001)"
+    )
+
+
 def test_unknown_tool_name_is_an_error(market_lookup: MarketLookup, fixture_market: dict):
     outcome = run_tool(market_lookup, "get_weather", {}, fixture_market["dates"][0])
 

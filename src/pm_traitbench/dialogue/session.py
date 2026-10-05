@@ -277,7 +277,13 @@ async def narrate_session(
                 tool_result_blocks = []
                 for block in accepted.tool_blocks:
                     tool_input = block.get("input") or {}
-                    outcome = run_tool(ctx.lookup, block["name"], tool_input, ctx.skeleton.date)
+                    outcome = run_tool(
+                        ctx.lookup,
+                        block["name"],
+                        tool_input,
+                        ctx.skeleton.date,
+                        ctx.instrument_names,
+                    )
                     result_json = canonical_json(outcome.result)
                     tool_calls.append(
                         ToolCall(

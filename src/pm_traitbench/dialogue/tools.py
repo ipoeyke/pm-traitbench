@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from difflib import get_close_matches
+from types import MappingProxyType
 from typing import Any
 
 from pm_traitbench.enums import AdvisorTool, InstrumentKind, Tenor
@@ -23,6 +24,7 @@ from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import CalendarEvent, ConsensusRow, CurvePoint, Instrument, Price
 
 _MAX_CLOSE_MATCHES = 5
+_NO_NAMES: Mapping[str, str] = MappingProxyType({})
 _WINDOW_MIN, _WINDOW_MAX = 0, 20
 _HISTORY_MIN, _HISTORY_MAX = 1, 60
 _CURVE_KINDS = frozenset({InstrumentKind.SOVEREIGN_CURVE, InstrumentKind.COMMODITY})
@@ -339,13 +341,21 @@ def _require_int(tool_input: Mapping[str, Any], key: str) -> int | ToolOutcome:
     return value
 
 
-def _resolve_or_error(lookup: MarketLookup, instrument: str) -> Instrument | ToolOutcome:
+def _resolve_or_error(
+    lookup: MarketLookup, instrument: str, session_names: Mapping[str, str]
+) -> Instrument | ToolOutcome:
+    """The instrument, or an error naming the closest lookup names, else the session's own
+    instruments: the advisor only ever hears those in the PM's words, so a guessed ticker
+    must be answered with the names and ids the lookup knows."""
     resolved = lookup.resolve(instrument)
     if resolved is not None:
         return resolved
     names = [candidate.name for candidate in lookup.instruments.values()]
     matches = get_close_matches(instrument, names, n=_MAX_CLOSE_MATCHES)
-    suffix = f"; closest names: {', '.join(matches)}" if matches else ""
+    if matches:
+        return _error(f"unknown instrument '{instrument}'; closest names: {', '.join(matches)}")
+    listed = ", ".join(f"{name} ({instrument_id})" for instrument_id, name in session_names.items())
+    suffix = f"; the PM's instruments: {listed}" if listed else ""
     return _error(f"unknown instrument '{instrument}'{suffix}")
 
 
@@ -353,11 +363,16 @@ def _no_row_error(name: str, today: date) -> ToolOutcome:
     return _error(f"no row for '{name}' on or before {today.isoformat()}")
 
 
-def _get_quote(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date) -> ToolOutcome:
+def _get_quote(
+    lookup: MarketLookup,
+    tool_input: Mapping[str, Any],
+    today: date,
+    session_names: Mapping[str, str],
+) -> ToolOutcome:
     instrument = _require_str(tool_input, "instrument")
     if isinstance(instrument, ToolOutcome):
         return instrument
-    resolved = _resolve_or_error(lookup, instrument)
+    resolved = _resolve_or_error(lookup, instrument, session_names)
     if isinstance(resolved, ToolOutcome):
         return resolved
     row = lookup.latest_price(resolved.instrument_id, today)
@@ -375,11 +390,16 @@ def _get_quote(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date)
     )
 
 
-def _get_curve(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date) -> ToolOutcome:
+def _get_curve(
+    lookup: MarketLookup,
+    tool_input: Mapping[str, Any],
+    today: date,
+    session_names: Mapping[str, str],
+) -> ToolOutcome:
     instrument = _require_str(tool_input, "instrument")
     if isinstance(instrument, ToolOutcome):
         return instrument
-    resolved = _resolve_or_error(lookup, instrument)
+    resolved = _resolve_or_error(lookup, instrument, session_names)
     if isinstance(resolved, ToolOutcome):
         return resolved
     if not lookup.has_curve(resolved.instrument_id):
@@ -401,11 +421,16 @@ def _get_curve(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date)
     )
 
 
-def _get_consensus(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date) -> ToolOutcome:
+def _get_consensus(
+    lookup: MarketLookup,
+    tool_input: Mapping[str, Any],
+    today: date,
+    session_names: Mapping[str, str],
+) -> ToolOutcome:
     instrument = _require_str(tool_input, "instrument")
     if isinstance(instrument, ToolOutcome):
         return instrument
-    resolved = _resolve_or_error(lookup, instrument)
+    resolved = _resolve_or_error(lookup, instrument, session_names)
     if isinstance(resolved, ToolOutcome):
         return resolved
     if not lookup.has_consensus(resolved.instrument_id):
@@ -427,7 +452,12 @@ def _get_consensus(lookup: MarketLookup, tool_input: Mapping[str, Any], today: d
     )
 
 
-def _get_calendar(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date) -> ToolOutcome:
+def _get_calendar(
+    lookup: MarketLookup,
+    tool_input: Mapping[str, Any],
+    today: date,
+    session_names: Mapping[str, str],
+) -> ToolOutcome:
     instrument = _require_str(tool_input, "instrument")
     if isinstance(instrument, ToolOutcome):
         return instrument
@@ -443,7 +473,7 @@ def _get_calendar(lookup: MarketLookup, tool_input: Mapping[str, Any], today: da
         return _error(
             f"days_forward must be between {_WINDOW_MIN} and {_WINDOW_MAX}, got {days_forward}"
         )
-    resolved = _resolve_or_error(lookup, instrument)
+    resolved = _resolve_or_error(lookup, instrument, session_names)
     if isinstance(resolved, ToolOutcome):
         return resolved
     rows = lookup.calendar_events(resolved.instrument_id, today, days_back, days_forward)
@@ -461,7 +491,12 @@ def _get_calendar(lookup: MarketLookup, tool_input: Mapping[str, Any], today: da
     )
 
 
-def _get_history(lookup: MarketLookup, tool_input: Mapping[str, Any], today: date) -> ToolOutcome:
+def _get_history(
+    lookup: MarketLookup,
+    tool_input: Mapping[str, Any],
+    today: date,
+    session_names: Mapping[str, str],
+) -> ToolOutcome:
     instrument = _require_str(tool_input, "instrument")
     if isinstance(instrument, ToolOutcome):
         return instrument
@@ -470,7 +505,7 @@ def _get_history(lookup: MarketLookup, tool_input: Mapping[str, Any], today: dat
         return n_days
     if not (_HISTORY_MIN <= n_days <= _HISTORY_MAX):
         return _error(f"n_days must be between {_HISTORY_MIN} and {_HISTORY_MAX}, got {n_days}")
-    resolved = _resolve_or_error(lookup, instrument)
+    resolved = _resolve_or_error(lookup, instrument, session_names)
     if isinstance(resolved, ToolOutcome):
         return resolved
     rows = lookup.history(resolved.instrument_id, today, n_days)
@@ -502,9 +537,16 @@ _HANDLERS: dict[str, Callable[[MarketLookup, Mapping[str, Any], date], ToolOutco
 
 
 def run_tool(
-    lookup: MarketLookup, name: str, tool_input: Mapping[str, Any], today: date
+    lookup: MarketLookup,
+    name: str,
+    tool_input: Mapping[str, Any],
+    today: date,
+    session_names: Mapping[str, str] = _NO_NAMES,
 ) -> ToolOutcome:
     """Dispatch one advisor tool call; malformed input returns an error outcome.
+
+    `session_names` maps the session's instrument ids to names, listed back when an
+    instrument matches nothing close.
 
     Each handler validates its own `tool_input` first, so a bad tool name,
     unknown instrument or malformed argument never raises. A bug elsewhere
@@ -513,4 +555,4 @@ def run_tool(
     handler = _HANDLERS.get(name)
     if handler is None:
         return _error(f"unknown tool '{name}'")
-    return handler(lookup, tool_input, today)
+    return handler(lookup, tool_input, today, session_names)
