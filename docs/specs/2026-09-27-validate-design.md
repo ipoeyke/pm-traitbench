@@ -33,9 +33,8 @@ src/pm_traitbench/dialogue/validate/
   stage.py      # VALIDATE_STAGE: read, partition per PM, run loop, write tables and metadata
   ledger.py     # trade-mention matching, coverage, level warnings (pure functions)
   grep.py       # param-name and banned-word regex over PM turns (pure)
-  judge.py      # prompt builders, JSON schemas, result parsing, label-to-param mapping
+  judge.py      # prompt builders, JSON schemas, result parsing
   loop.py       # per-session validate -> regenerate -> revalidate, attempt cap
-src/pm_traitbench/catalogues/bias_labels.yaml   # phrases per bias param a judge label may use
 ```
 
 `dialogue/session.py`, `dialogue/client.py`, `dialogue/context.py` and `dialogue/prompts.py` are reused unchanged. `feedback` is the only stage 6 surface stage 7 drives.
@@ -62,14 +61,13 @@ Input: the session's PM turns' `mentions` (advisor turns cannot carry trade ment
 
 Over every PM turn's `text`, lower-cased: a whole-word or whole-phrase match on any of `BIAS_PARAMS`, the catalogue's preference params (each in its raw and underscore-to-space form, the `_voice_line_matched_param` rule, which moves to a shared helper), or `BANNED_STANCE_WORDS` (substring match, as the loader uses it). A match fails: `names a parameter: <word>`. Advisor turns are not grepped: the advisor never sees the PM's traits, and the narrator is the only side regeneration changes.
 
-### Layer 3: judges (`judge.py`, `bias_labels.yaml`)
+### Layer 3: judges (`judge.py`)
 
 Both judges go through the stage's `CachedClient` (same cache directory `cache/llm`, scope = session id) with `output_config.format` JSON schemas and `output_config.effort = config.validation.effort`, `max_tokens = config.validation.max_output_tokens`. Requests carry only the transcript text (all turns, both roles, in order, as one user message) and the judge instruction; never a trait id, param, stance line, mode or the PM's row. A refusal, truncation or unparsable reply is retried up to `config.dialogue.max_retries` fresh attempts, then the session fails the run (as a stage 6 rejected reply does).
 
 Leakage judge (sessions with a `revealed` or `contradiction` stance):
-- Instruction: read the PM side; decide whether the PM explicitly names or self-labels a psychological or trading tendency of their own, either by a term for it or by stating it as a general habit ("I always", "I tend to", "my weakness is"); describing one decision on its merits is not explicit. Return `{"explicit": bool, "label": string or null, "quote": string}`.
-- `catalogues/bias_labels.yaml`: an authored catalogue, `param -> list of lower-case phrases`, one key per bias param (for example `disposition_ratio`: "disposition", "sell winners", "selling winners", "hold losers", "holding losers"; `loss_aversion_lambda`: "loss aversion", "loss averse", "averaging down", "average down", "get back to even"). Loaded and checked by `catalogues/loader.py` like `avoid.yaml`: keys equal `BIAS_PARAMS`, every list non-empty, phrases lower-case and unique across params, no phrase equal to a raw underscored param string or to another param's underscore-to-space form (a param's own spaced form, such as "exit deficiency", is a natural label and allowed). `judge.map_label(label, labels) -> param or None` returns the first param whose phrase is a substring of the lower-cased label. Same split as the rest of the repo: authored data in YAML, code in the module.
-- Fail when `explicit` and `map_label(label)` equals the `trait.param` of a revealed or contradiction stance in the session: `leaks <param>: "<quote>"`.
+- Instruction: read the PM side; decide whether the PM explicitly names or self-labels a psychological or trading tendency of their own, either by a term for it or by stating it as a general habit ("I always", "I tend to", "my weakness is"); describing one decision on its merits is not explicit. Return `{"explicit": bool, "label": one of the bias params or "other" or null, "quote": string}`. The label is a schema enum of the param ids plus `"other"`: param ids alone, never behaviour descriptions, so the judge is not handed the behaviours it is meant to catch only when named; `"other"` takes every habit that is no planted bias, so a paraphrase ("chasing the move", "crowd-following") can no longer slip past a phrase list. Superseded: a free-text label mapped through a `bias_labels.yaml` phrase catalogue, which missed paraphrases and hyphenation and left the misses as `judge label unmapped` warnings.
+- Fail when `explicit` and `label` equals the `trait.param` of a revealed or contradiction stance in the session: `leaks <param>: "<quote>"`.
 
 Forbidden judge (every session):
 - Instruction, framed as verification with the null result first (a judge asked to "list every item" over-reports on ordinary desk talk): here is a transcript and a numbered list of things the PM must not do; for each item decide whether a PM turn shows the PM doing it; most transcripts show none and the expected answer is an empty list; report an item only when a verbatim quote from a PM turn shows the PM doing it, not discussing the topic or taking one decision their rules allow. Return `{"violations": [{"index": int, "quote": string}]}`. The list is the session's `avoid_lines` (already rendered from `avoid.yaml` for the skeleton's forbidden sets by `context.py`), numbered from 1.
@@ -137,10 +135,10 @@ Validators: `status == pass` iff all `*_ok` are true; `reasons` non-empty iff `s
 
 ## Testing
 
-- `ledger.py`, `grep.py`, `judge.py` parsing and `map_label`: pure unit tests on hand-built `Mention`, `LedgerRow`, `TurnLog` objects and fake judge replies.
+- `ledger.py`, `grep.py`, `judge.py` parsing: pure unit tests on hand-built `Mention`, `LedgerRow`, `TurnLog` objects and fake judge replies.
 - `loop.py`: fake client responder that fails a session on a chosen layer for the first k attempts, asserting feedback text, attempt rows and the drop at the cap.
 - `stage.py`: chain engine, plan, dialogue (fake) and validate (fake) on the fixture market; assert 1:1 `validation` rows on the pass path, replaced and removed rows on regenerate and drop, rerun after partial and full PM drops, byte-identical rerun from cache, budget error writes nothing, metadata keys.
-- `bias_labels.yaml`: loader checks tested in `tests/catalogues/test_loader.py` (bad keys, empty list, duplicate phrase, param string as phrase) and the shipped file in `tests/catalogues/test_shipped.py`. Validate unit tests live under `tests/dialogue/validate/`.
+- Validate unit tests live under `tests/dialogue/validate/`.
 - `ValidateError` is added to `errors.py` with exit code 1, following the one-class-per-stage pattern.
 
 ## Living docs impact

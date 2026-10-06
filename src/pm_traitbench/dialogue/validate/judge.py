@@ -1,5 +1,5 @@
-"""The leakage, forbidden-trait and stance judges of the validate stage: request builders,
-reply parsers and the leak label to bias param mapper.
+"""The leakage, forbidden-trait and stance judges of the validate stage: request builders
+and reply parsers.
 
 The leak and forbidden judges see only transcript text and, for the forbidden
 judge, the session's rendered avoid lines - never a trait id, bias param, trait
@@ -10,9 +10,8 @@ PM turn and the stance line it was told to carry out, and checks adherence only.
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from pm_traitbench.catalogues.models import BiasLabels
 from pm_traitbench.config import BIAS_PARAMS, ValidateConfig
 from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_until_accepted
 from pm_traitbench.dialogue.prompts import base_request
@@ -26,9 +25,13 @@ LEAK_SYSTEM = (
     "their own, either by using a term for it or by stating it as a general habit such as "
     '"I always", "I tend to", "my weakness is". Most transcripts contain no such label: '
     "describing one decision on its merits, or discussing the market, is not explicit, and "
-    "then explicit is false with a null label. When it is explicit, return the label the PM "
-    "used and the shortest verbatim quote from a PM turn that shows it."
+    "then explicit is false with a null label. When it is explicit, name the tendency with "
+    'the one label from the list that fits it, or "other" when none does, and give the '
+    "shortest verbatim quote from a PM turn that shows it."
 )
+
+# The labels a leak verdict may carry: every bias param, or "other" for any other habit.
+LEAK_LABELS: tuple[str, ...] = (*BIAS_PARAMS, "other")
 
 # Framed as verification with the null result first: a judge asked to "list every item"
 # over-reports on ordinary desk talk, and the avoid lines describe ordinary decisions.
@@ -55,7 +58,7 @@ LEAK_SCHEMA: dict[str, Any] = {
     "title": "leak_verdict",
     "properties": {
         "explicit": {"type": "boolean"},
-        "label": {"type": ["string", "null"]},
+        "label": {"type": ["string", "null"], "enum": [*LEAK_LABELS, None]},
         "quote": {"type": "string"},
     },
     "required": ["explicit", "label", "quote"],
@@ -147,13 +150,23 @@ def stance_request(pm_text: str, stance: str, config: ValidateConfig) -> dict[st
 
 
 class LeakVerdict(BaseModel):
-    """One leakage judge verdict: whether the PM named a tendency, its label and quote."""
+    """One leakage judge verdict: whether the PM named a tendency, its label and quote.
+
+    `label` is a bias param, "other" for a habit that is no planted bias, or null.
+    """
 
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
     explicit: bool
     label: str | None
     quote: str
+
+    @field_validator("label")
+    @classmethod
+    def _label_in_list(cls, value: str | None) -> str | None:
+        if value is not None and value not in LEAK_LABELS:
+            raise ValueError(f"label must be one of {LEAK_LABELS} or null")
+        return value
 
 
 class StanceVerdict(BaseModel):
@@ -203,19 +216,6 @@ def parse_forbidden(response: Mapping[str, Any]) -> tuple[Violation, ...] | None
         return _ForbiddenVerdict.model_validate(last_text_json(response)).violations
     except ValidationError:
         return None
-
-
-def map_label(label: str | None, labels: BiasLabels) -> str | None:
-    """First `BIAS_PARAMS` param with a catalogue phrase in `label`; `None` for a blank label."""
-    if label is None:
-        return None
-    normalized = label.strip().lower()
-    if not normalized:
-        return None
-    for param in BIAS_PARAMS:
-        if any(phrase in normalized for phrase in labels.labels.get(param, ())):
-            return param
-    return None
 
 
 _UNPARSABLE_REASON = "the judge reply was unparsable or schema-invalid"

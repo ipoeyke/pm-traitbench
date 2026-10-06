@@ -6,11 +6,11 @@ import json
 
 import pytest
 
-from pm_traitbench.catalogues.loader import load_catalogue
-from pm_traitbench.config import Config
+from pm_traitbench.config import BIAS_PARAMS, Config
 from pm_traitbench.dialogue.client import CachedClient
 from pm_traitbench.dialogue.validate.judge import (
     FORBIDDEN_SCHEMA,
+    LEAK_LABELS,
     LEAK_SCHEMA,
     STANCE_SCHEMA,
     STANCE_SYSTEM,
@@ -19,7 +19,6 @@ from pm_traitbench.dialogue.validate.judge import (
     Violation,
     forbidden_request,
     leak_request,
-    map_label,
     parse_forbidden,
     parse_leak,
     parse_stance,
@@ -158,10 +157,12 @@ def test_parse_stance_accepts_a_valid_reply_and_rejects_bad_shapes():
 
 
 def test_parse_leak_accepts_a_valid_reply_and_rejects_bad_shapes():
-    valid = leak_reply(True, "loss aversion", "I always average down")
+    valid = leak_reply(True, "loss_aversion_lambda", "I always average down")
     assert parse_leak(valid) == LeakVerdict(
-        explicit=True, label="loss aversion", quote="I always average down"
+        explicit=True, label="loss_aversion_lambda", quote="I always average down"
     )
+    assert parse_leak(leak_reply(True, "other", "I like coffee")).label == "other"
+    assert parse_leak(leak_reply(True, "loss aversion", "quote")) is None
 
     string_explicit = fake_message(
         [{"type": "text", "text": '{"explicit": "yes", "label": null, "quote": ""}'}]
@@ -171,7 +172,7 @@ def test_parse_leak_accepts_a_valid_reply_and_rejects_bad_shapes():
     missing_quote = fake_message([{"type": "text", "text": '{"explicit": false, "label": null}'}])
     assert parse_leak(missing_quote) is None
 
-    hit_max_tokens = leak_reply(True, "loss aversion", "quote")
+    hit_max_tokens = leak_reply(True, "loss_aversion_lambda", "quote")
     hit_max_tokens = {**hit_max_tokens, "stop_reason": "max_tokens"}
     assert parse_leak(hit_max_tokens) is None
 
@@ -192,21 +193,9 @@ def test_parse_forbidden_accepts_empty_and_filled_lists_and_rejects_non_integer_
     assert parse_forbidden(bad_index) is None
 
 
-def test_map_label_uses_catalogue_phrases_case_insensitively():
-    labels = load_catalogue().bias_labels
-
-    assert map_label("Disposition effect", labels) == "disposition_ratio"
-    assert map_label("I like coffee", labels) is None
-    assert map_label(None, labels) is None
-    assert map_label("   ", labels) is None
-    # Matches both loss_aversion_lambda ("loss aversion") and disposition_ratio
-    # ("disposition"); the earlier param in BIAS_PARAMS order must win.
-    assert map_label("loss aversion and disposition too", labels) == "loss_aversion_lambda"
-
-
 _REQUEST = {"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "hi"}]}
 _UNPARSABLE = fake_message([{"type": "text", "text": "not json"}])
-_VERDICT = LeakVerdict(explicit=True, label="loss aversion", quote="I always average down")
+_VERDICT = LeakVerdict(explicit=True, label="loss_aversion_lambda", quote="I always average down")
 
 
 def _cached_client(responder, tmp_path):
@@ -360,3 +349,9 @@ def test_send_judged_raises_when_the_fallback_also_refuses(tmp_path):
 
     # one primary refusal, then 1 + max_retries fallback attempts; no fallback of the fallback
     assert [r["model"] for r in fake.requests] == [_REQUEST["model"], _FALLBACK, _FALLBACK]
+
+
+def test_leak_schema_label_enum_is_every_bias_param_other_or_null():
+    enum = LEAK_SCHEMA["properties"]["label"]["enum"]
+    assert enum == [*LEAK_LABELS, None]
+    assert set(LEAK_LABELS) == set(BIAS_PARAMS) | {"other"}

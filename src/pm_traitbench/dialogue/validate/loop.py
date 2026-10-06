@@ -15,7 +15,6 @@ from pm_traitbench.dialogue.validate.grep import check_grep
 from pm_traitbench.dialogue.validate.judge import (
     forbidden_request,
     leak_request,
-    map_label,
     parse_forbidden,
     parse_leak,
     parse_stance,
@@ -179,15 +178,12 @@ async def validate_once(
     pm_text = " ".join(t.text for t in log.turns if t.role == TurnRole.PM)
     leak_reasons: tuple[str, ...] = ()
     warnings: list[str] = []
-    if verdict is not None and verdict.explicit:
-        mapped = map_label(verdict.label, catalogue.bias_labels)
-        if mapped is not None and mapped in revealed:
-            if is_direct_quote(verdict.quote, pm_text):
-                leak_reasons = (f'leaks {mapped}: "{verdict.quote}"',)
-            else:
-                warnings.append(f"{prefix}leak judge quote not in a PM turn: {verdict.quote}")
-        elif mapped is None and verdict.label and not verdict.label.isspace():
-            warnings.append(f"{prefix}judge label unmapped: {verdict.label}")
+    # The judge names a bias param, "other" or null; only a revealed param can fail.
+    if verdict is not None and verdict.explicit and verdict.label in revealed:
+        if is_direct_quote(verdict.quote, pm_text):
+            leak_reasons = (f'leaks {verdict.label}: "{verdict.quote}"',)
+        else:
+            warnings.append(f"{prefix}leak judge quote not in a PM turn: {verdict.quote}")
 
     forbidden_reasons: list[str] = []
     for v in violations:

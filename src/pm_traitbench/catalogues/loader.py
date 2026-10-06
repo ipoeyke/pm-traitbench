@@ -15,7 +15,6 @@ from pm_traitbench.catalogues.models import (
     ADAPTER_FORMS,
     AvoidLines,
     BiasDefinitions,
-    BiasLabels,
     Catalogue,
     Phrasings,
     PreferenceEntry,
@@ -43,7 +42,6 @@ _FILE_NAMES = (
     "stances.yaml",
     "voices.yaml",
     "avoid.yaml",
-    "bias_labels.yaml",
     "bias_definitions.yaml",
     "probes.yaml",
 )
@@ -197,7 +195,6 @@ def _build_catalogue(base: Any) -> Catalogue:
         stances = Stances.model_validate(raw["stances.yaml"])
         voices = _VoicesFile.model_validate(raw["voices.yaml"]).voices
         avoid = AvoidLines.model_validate(raw["avoid.yaml"])
-        bias_labels = BiasLabels.model_validate(raw["bias_labels.yaml"])
         bias_definitions = BiasDefinitions.model_validate(raw["bias_definitions.yaml"])
         probes = ProbeBank.model_validate(raw["probes.yaml"])
     except ValidationError as e:
@@ -212,7 +209,6 @@ def _build_catalogue(base: Any) -> Catalogue:
         stances=stances,
         voices=voices,
         avoid=avoid,
-        bias_labels=bias_labels,
         bias_definitions=bias_definitions,
         probes=probes,
     )
@@ -895,49 +891,6 @@ def check_dialogue_catalogue(catalogue: Catalogue) -> None:
                 raise CatalogueError(f"avoid: param '{param}' overlaps itself")
         if len(set(overlapped)) != len(overlapped):
             raise CatalogueError(f"avoid: overlaps of '{param}' repeats a param")
-
-
-def check_validate_catalogue(catalogue: Catalogue) -> None:
-    """Check the bias label catalogue the validation stage's leakage judge maps labels through.
-
-    A judge never writes a raw param identifier, so any phrase equal to one is a
-    labeling error under any param. A phrase equal to a different param's spaced-out
-    name is filed under the wrong bias; a phrase equal to its own param's spaced-out
-    name is that bias's plain-English name and is expected.
-    """
-    labels = catalogue.bias_labels.labels
-    _check_key_set("bias_labels: keys", set(labels), set(BIAS_PARAMS), "the bias parameter set")
-
-    forms = {param: _param_forms(param) for param in BIAS_PARAMS}
-    raw_forms = {raw for raw, _ in forms.values()}
-    spaced_forms = {param: spaced for param, (_, spaced) in forms.items()}
-
-    seen: dict[str, str] = {}
-    for param, phrases in labels.items():
-        if not phrases:
-            raise CatalogueError(f"bias_labels: param '{param}' has no phrases")
-        for phrase in phrases:
-            if not phrase.strip() or phrase != phrase.strip().lower():
-                raise CatalogueError(
-                    f"bias_labels: param '{param}' phrase '{phrase}' must be "
-                    "lower-case and non-blank"
-                )
-            if phrase in raw_forms:
-                raise CatalogueError(
-                    f"bias_labels: param '{param}' phrase '{phrase}' is a raw param string"
-                )
-            for other, spaced in spaced_forms.items():
-                if other != param and phrase == spaced:
-                    raise CatalogueError(
-                        f"bias_labels: param '{param}' phrase '{phrase}' equals "
-                        f"the name of param '{other}'"
-                    )
-            if phrase in seen and seen[phrase] != param:
-                raise CatalogueError(
-                    f"bias_labels: phrase '{phrase}' appears under both "
-                    f"'{seen[phrase]}' and '{param}'"
-                )
-            seen[phrase] = param
 
 
 def check_gate2_catalogue(catalogue: Catalogue) -> None:
