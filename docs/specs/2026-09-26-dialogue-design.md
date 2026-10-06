@@ -116,7 +116,7 @@ Opening instruction by kind, when turn 1 carries no stance that already sets the
 
 1. Build the turn plan.
 2. For each PM turn: send the narrator request; validate the response against the turn schema (`stop_reason` `end_turn`, parsable JSON matching the schema); whether mentions match the ledger is stage 7's check (decision 1); on failure retry, up to `max_retries` fresh attempts; on success `commit` it to the cache.
-3. For each advisor turn: send; while `stop_reason` is `tool_use` and rounds are below `max_tool_rounds`, run every requested tool, append all `tool_result` blocks in one `user` message and resend. At the cap, append a text block to that last tool-result message telling the advisor lookups are over and to answer in text, naming what it could not look up, then resend once with `tool_choice: {"type": "none"}` and record a warning. Validate and commit the final response as in step 2.
+3. For each advisor turn: send; while `stop_reason` is `tool_use` and rounds are below `max_tool_rounds`, run every requested tool, append all `tool_result` blocks in one `user` message and resend. At the cap, append a text block to that last tool-result message telling the advisor lookups are over and to answer in text, naming what it could not look up, then resend once with `tool_choice: {"type": "none"}` and record a warning that every round was used, with the last round's failed lookup count (an all-failed round means the answer went out without data; a clean one means heavy research). Validate and commit the final response as in step 2.
 4. Return the public row and the hidden log.
 
 `feedback`, when set, is appended to the narrator's `system` prompt. Stage 6 never sets it; it is the hook stage 7 uses to regenerate one session, and the changed request gives it a new cache key.
@@ -139,7 +139,7 @@ Opening instruction by kind, when turn 1 carries no stance that already sets the
 | `effort` | `low` | design (decision 15) |
 | `advisor_prompt_path` | null (the packaged `advisor_prompt.md`) | design (decision 5) |
 | `turns_by_kind` | silence {2, 4}, check_in {2, 4, 6}, decision {4, 6, 8} | guess |
-| `max_tool_rounds` | 3 | guess: one round covers most answers with parallel tool calls |
+| `max_tool_rounds` | 4 | sourced: one round covers most answers with parallel tool calls; the first baseline run used every one of three rounds on 62 replies |
 | `max_retries` | 3 | guess |
 | `max_concurrency` | 8 | guess: stays well inside default API rate limits |
 | `max_output_tokens` | 4000 | design: room for low-effort thinking plus a short turn |

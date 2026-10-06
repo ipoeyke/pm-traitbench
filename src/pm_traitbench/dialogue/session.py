@@ -312,8 +312,12 @@ async def narrate_session(
                 if rounds >= config.max_tool_rounds and not tools_disabled:
                     tools_disabled = True
                     tool_result_blocks.append({"type": "text", "text": _TOOLS_OFF_NOTE})
+                    # The last round's error count splits heavy research from failed guessing.
+                    failed = sum(1 for block in tool_result_blocks if block.get("is_error"))
                     warnings.append(
-                        f"{session_prefix(session_id)}advisor reply {i} hit the tool-round cap"
+                        f"{session_prefix(session_id)}advisor reply {i} used every tool round "
+                        f"({failed} of {len(accepted.tool_blocks)} lookups in the last round "
+                        "failed)"
                     )
                 advisor_messages.append({"role": "user", "content": tool_result_blocks})
                 continue

@@ -2013,11 +2013,14 @@ class DialogueConfig(BaseModel):
     )
     turns_by_kind: TurnRanges = Field(default_factory=TurnRanges)
     max_tool_rounds: int = Field(
-        3,
+        4,
         ge=1,
         json_schema_extra={
-            "basis": "guess",
-            "note": "parallel tool calls answer most turns in one round",
+            "basis": "sourced",
+            "note": (
+                "parallel tool calls answer most turns in one round; the first baseline "
+                "run used every one of three rounds on 62 replies"
+            ),
         },
     )
     max_retries: int = Field(
