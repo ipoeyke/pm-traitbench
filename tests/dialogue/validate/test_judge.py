@@ -352,6 +352,7 @@ def test_send_judged_raises_when_the_fallback_also_refuses(tmp_path):
 
 
 def test_leak_schema_label_enum_is_every_bias_param_other_or_null():
-    enum = LEAK_SCHEMA["properties"]["label"]["enum"]
-    assert enum == [*LEAK_LABELS, None]
+    string_branch, null_branch = LEAK_SCHEMA["properties"]["label"]["anyOf"]
+    assert string_branch == {"type": "string", "enum": list(LEAK_LABELS)}
+    assert null_branch == {"type": "null"}
     assert set(LEAK_LABELS) == set(BIAS_PARAMS) | {"other"}

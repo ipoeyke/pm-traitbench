@@ -58,7 +58,8 @@ LEAK_SCHEMA: dict[str, Any] = {
     "title": "leak_verdict",
     "properties": {
         "explicit": {"type": "boolean"},
-        "label": {"type": ["string", "null"], "enum": [*LEAK_LABELS, None]},
+        # A nullable enum must be an anyOf: the API rejects an enum under a type list.
+        "label": {"anyOf": [{"type": "string", "enum": list(LEAK_LABELS)}, {"type": "null"}]},
         "quote": {"type": "string"},
     },
     "required": ["explicit", "label", "quote"],
