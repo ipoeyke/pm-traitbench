@@ -204,6 +204,10 @@ preferences:
       all:
       - "Which of these does this PM want from the copilot?"
       - "Which of these is the PM's standing preference for how the copilot writes?"
+    open:
+      all:
+      - "What does this PM want from the copilot in how it writes?"
+      - "What is the PM's standing preference for how the copilot writes?"
     in_situ:
       all:
       - "Give me your read on {instrument} at {level}."
@@ -221,6 +225,10 @@ preferences:
       all:
       - "Which of these does this PM want from the copilot?"
       - "Which of these is the PM's standing preference for the information the copilot gives?"
+    open:
+      all:
+      - "What does this PM want from the copilot in the information it gives?"
+      - "What is the PM's standing preference for the information the copilot gives?"
     in_situ:
       all:
       - "What is the read on {instrument} at {level}?"
@@ -238,6 +246,10 @@ preferences:
       all:
       - "Which of these does this PM want from the copilot?"
       - "Which of these is the PM's standing preference for how the copilot works with the desk?"
+    open:
+      all:
+      - "What does this PM want from the copilot in how it works with the desk?"
+      - "What is the PM's standing preference for how the copilot works with the desk?"
     in_situ:
       all:
       - "I need a view on {instrument} at {level}. Go ahead."
@@ -255,6 +267,10 @@ preferences:
       all:
       - "Which of these does this PM want from the copilot?"
       - "Which of these is the PM's standing preference for the form a trade idea takes?"
+    open:
+      all:
+      - "What does this PM want from the copilot in the form a trade idea takes?"
+      - "What is the PM's standing preference for the form a trade idea takes?"
     in_situ:
       all:
       - "I like {instrument} at {level}. How should I size and shape the trade?"

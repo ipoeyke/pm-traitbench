@@ -156,23 +156,25 @@ def test_explicit_label_of_the_revealed_param_fails_and_other_labels_pass(market
         client = scripted_client(tmp_path / tmp_sub, _raise, leak_fn, _clean_forbidden)
         return _once(ctx, client, log=log, trait_param_by_id={"t_01": "disposition_ratio"})
 
-    revealed_label = once("a", lambda _r: leak_reply(True, "disposition effect", "I sold winners"))
+    revealed_label = once("a", lambda _r: leak_reply(True, "disposition_ratio", "I sold winners"))
     assert revealed_label.leak_reasons == ('leaks disposition_ratio: "I sold winners"',)
     assert revealed_label.passed is False
 
-    unquoted = once("d", lambda _r: leak_reply(True, "disposition effect", "not in the turn"))
+    unquoted = once("d", lambda _r: leak_reply(True, "disposition_ratio", "not in the turn"))
     assert unquoted.leak_reasons == ()
     assert unquoted.warnings == (
         f"session {SESSION_ID}: leak judge quote not in a PM turn: not in the turn",
     )
     assert unquoted.passed is True
 
-    other_label = once("b", lambda _r: leak_reply(True, "loss aversion", "average down again"))
+    other_label = once(
+        "b", lambda _r: leak_reply(True, "loss_aversion_lambda", "average down again")
+    )
     assert other_label.leak_reasons == ()
     assert other_label.warnings == ()
     assert other_label.passed is True
 
-    not_explicit = once("c", lambda _r: leak_reply(False, "disposition effect", "quote"))
+    not_explicit = once("c", lambda _r: leak_reply(False, None, "quote"))
     assert not_explicit.leak_reasons == ()
     assert not_explicit.passed is True
 
@@ -192,7 +194,7 @@ def test_explicit_label_naming_a_stated_traits_param_passes(market_lookup, tmp_p
     client = scripted_client(
         tmp_path,
         _raise,
-        lambda _r: leak_reply(True, "loss aversion", "average down again"),
+        lambda _r: leak_reply(True, "loss_aversion_lambda", "average down again"),
         _clean_forbidden,
     )
     log = log_of(
@@ -213,31 +215,19 @@ def test_explicit_label_naming_a_stated_traits_param_passes(market_lookup, tmp_p
     assert result.passed is True
 
 
-def test_unmapped_label_is_a_warning_not_a_failure(market_lookup, tmp_path):
+def test_other_label_passes_without_a_warning(market_lookup, tmp_path):
     ctx = validate_context(
         market_lookup, stances=(stance("t_01", SignalMode.REVEALED, StanceEntry.REVEALED, "line"),)
     )
     client = scripted_client(
-        tmp_path,
-        _raise,
-        lambda _r: leak_reply(True, "a label nobody catalogued", "quote"),
-        _clean_forbidden,
+        tmp_path, _raise, lambda _r: leak_reply(True, "other", "quote"), _clean_forbidden
     )
 
     result = _once(ctx, client, trait_param_by_id={"t_01": "disposition_ratio"})
 
     assert result.leak_reasons == ()
-    assert result.warnings == (
-        f"session {SESSION_ID}: judge label unmapped: a label nobody catalogued",
-    )
+    assert result.warnings == ()
     assert result.passed is True
-
-    blank_client = scripted_client(
-        tmp_path / "blank", _raise, lambda _r: leak_reply(True, "   ", "quote"), _clean_forbidden
-    )
-    blank_result = _once(ctx, blank_client, trait_param_by_id={"t_01": "disposition_ratio"})
-    assert blank_result.warnings == ()
-    assert blank_result.passed is True
 
 
 def test_forbidden_violation_fails_with_the_avoid_line_and_out_of_range_index_is_dropped(

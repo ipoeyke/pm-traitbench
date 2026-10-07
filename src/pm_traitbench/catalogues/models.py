@@ -311,6 +311,8 @@ class PreferenceProbeLines(BaseModel):
     presence: StanceLines
     # MCQ stem: a slotless question whose options are the catalogue values.
     mcq: StanceLines
+    # The MCQ's open twin: the same question asked with no options to point at.
+    open: StanceLines
     # A live request the preference bears on, never stating a preference value.
     in_situ: StanceLines
     # A request that presupposes the stale state, the old value in `{old_value}`.
@@ -357,18 +359,6 @@ class AvoidLines(BaseModel):
     overlaps: dict[str, tuple[str, ...]]
 
 
-class BiasLabels(BaseModel):
-    """Free-text phrases a leakage judge might use for each bias param.
-
-    Keyed by bias param so a judge's raw label can be matched back to the bias it
-    names; every phrase is lower-case.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    labels: dict[str, tuple[str, ...]]
-
-
 class BiasDefinitions(BaseModel):
     """One neutral definition line per bias param, shown beside the param name in a prompt.
 
@@ -395,7 +385,6 @@ class Catalogue(BaseModel):
     stances: Stances
     voices: tuple[Voice, ...]
     avoid: AvoidLines
-    bias_labels: BiasLabels
     bias_definitions: BiasDefinitions
     probes: ProbeBank
 

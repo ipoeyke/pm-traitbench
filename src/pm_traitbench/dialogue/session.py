@@ -66,6 +66,14 @@ class SessionResult:
     rejected_replies: int
 
 
+# Appended to the last tool results once the round cap is hit, so the advisor answers
+# in text rather than returning nothing when its lookups failed.
+_TOOLS_OFF_NOTE = (
+    "No more lookups are available for this reply. Answer the PM in text now, and say "
+    "plainly which figures you could not look up rather than guessing them."
+)
+
+
 def parse_turn(response: Mapping[str, Any]) -> TurnOutput | None:
     """The last text block parsed as JSON and validated into a `TurnOutput`.
 
@@ -277,7 +285,13 @@ async def narrate_session(
                 tool_result_blocks = []
                 for block in accepted.tool_blocks:
                     tool_input = block.get("input") or {}
-                    outcome = run_tool(ctx.lookup, block["name"], tool_input, ctx.skeleton.date)
+                    outcome = run_tool(
+                        ctx.lookup,
+                        block["name"],
+                        tool_input,
+                        ctx.skeleton.date,
+                        ctx.instrument_names,
+                    )
                     result_json = canonical_json(outcome.result)
                     tool_calls.append(
                         ToolCall(
@@ -295,12 +309,17 @@ async def narrate_session(
                             "is_error": outcome.is_error,
                         }
                     )
-                advisor_messages.append({"role": "user", "content": tool_result_blocks})
                 if rounds >= config.max_tool_rounds and not tools_disabled:
                     tools_disabled = True
+                    tool_result_blocks.append({"type": "text", "text": _TOOLS_OFF_NOTE})
+                    # The last round's error count splits heavy research from failed guessing.
+                    failed = sum(1 for block in tool_result_blocks if block.get("is_error"))
                     warnings.append(
-                        f"{session_prefix(session_id)}advisor reply {i} hit the tool-round cap"
+                        f"{session_prefix(session_id)}advisor reply {i} used every tool round "
+                        f"({failed} of {len(accepted.tool_blocks)} lookups in the last round "
+                        "failed)"
                     )
+                advisor_messages.append({"role": "user", "content": tool_result_blocks})
                 continue
 
             advisor_messages.append({"role": "assistant", "content": reply.response["content"]})

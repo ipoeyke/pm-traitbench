@@ -9,7 +9,7 @@ biases:
   exit_deficiency: do not describe noticing a trigger and not acting on it, adding to a position past its trigger, or rolling a position later than planned
 
 preferences:
-  response_format: do not ask the advisor for a particular answer format
+  response_format: do not ask the advisor to lay answers out as bullets, a table, a prose paragraph or a memo
   pushback_style: do not ask the advisor to push back more or less on your view
   register: do not ask the advisor to change its tone
   number_language: do not ask the advisor to quote moves in a particular unit

@@ -16,7 +16,6 @@ from typing import Any
 
 from pm_traitbench.catalogues.loader import (
     check_dialogue_catalogue,
-    check_validate_catalogue,
     leak_param_names,
     load_catalogue,
 )
@@ -206,7 +205,6 @@ def _run(
 
     catalogue = load_catalogue()
     check_dialogue_catalogue(catalogue)
-    check_validate_catalogue(catalogue)
 
     advisor_prompt = read_advisor_prompt(config.dialogue.advisor_prompt_path)
     advisor_sha256 = prompt_sha256(advisor_prompt)

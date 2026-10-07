@@ -237,6 +237,25 @@ def test_open_positions_come_from_position_days_on_the_date(market_lookup, catal
     assert contexts[0].open_positions == (idea_1,)
 
 
+def test_session_with_no_instruments_of_its_own_names_the_whole_asset_class(
+    market_lookup, catalogue
+):
+    skeleton = _skeleton(
+        session_id="s_pm001_2026-01-05_a", kind=SessionKind.CHECK_IN, session_date=DEFAULT_DATE
+    )
+    pm = _pm_tables(skeletons=(skeleton,))
+
+    contexts = build_contexts(pm, _VOICE, market_lookup, catalogue, Config())
+
+    equities = {
+        i.instrument_id: i.name
+        for i in market_lookup.instruments.values()
+        if i.kind == InstrumentKind.EQUITY
+    }
+    assert equities
+    assert contexts[0].instrument_names == equities
+
+
 def test_silence_session_draws_a_question_instrument_of_the_pm_asset_class(
     market_lookup, catalogue
 ):
