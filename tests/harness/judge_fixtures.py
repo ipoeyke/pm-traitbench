@@ -44,13 +44,13 @@ def open_pair(
     options: tuple[str, ...] = ("sell now", "hold", "add"),
     answer: str = "B",
 ) -> tuple[ProbeRow, ProbeRow]:
-    """A trait MCQ and its open twin (ids n and n + 1) with the same question."""
+    """A trait MCQ and its open twin (ids n and n + 1); the twin asks its own question."""
     # probe_row only validates the current option as the answer, so set the real one by copy.
     mcq = probe_row(pm_id, n, day, options=options).model_copy(update={"answer": answer})
     twin = probe_row(
         pm_id, n + 1, day, form=ProbeForm.OPEN, options=(), answer=options[_LETTERS.index(answer)]
     )
-    return mcq, twin.model_copy(update={"question": mcq.question})
+    return mcq, twin.model_copy(update={"question": f"Open form: {mcq.question}"})
 
 
 def _open_row(

@@ -89,6 +89,9 @@ def test_sibling_mcq_found_and_errors() -> None:
     other = mcq.model_copy(update={"probe_id": probe_id(PM, 9)})
     with pytest.raises(HarnessError, match=twin.probe_id):
         sibling_mcq(twin, mcq_index([mcq, other, twin]))
+    wrong_answer = twin.model_copy(update={"answer": "not an option"})
+    with pytest.raises(HarnessError, match="not the correct option"):
+        sibling_mcq(wrong_answer, mcq_index([mcq, twin]))
 
 
 def test_active_bias_phrases_respects_dormancy() -> None:
