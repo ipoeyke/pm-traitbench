@@ -35,6 +35,16 @@ OPEN_INSTRUCTION = "Reply to the PM as you would in the session."
 _LETTERS = "ABCD"
 
 
+# The advisor prompt tells the copilot to look every figure up; a probe comes with no
+# tools, so without this the copilot declines to state numbers and format checks on them
+# come back not applicable.
+NO_TOOLS_NOTE = (
+    "This is a standalone question with no lookup tools. Work from the figures the PM "
+    "quotes in the question, and say plainly when a figure is not available to you. "
+    "Follow the PM's preferences for how answers are written."
+)
+
+
 def render_probe(probe: PublicProbe) -> str:
     """The question, its lettered options for an MCQ, then the reply instruction for its form."""
     lines = [probe.question]
@@ -105,7 +115,7 @@ class _Baseline:
         """Ask the model the probe and return its answer string, or "" when it stays unparsable."""
         config = self._config
         system = f"{read_advisor_prompt(config.dialogue.advisor_prompt_path)}\n\n"
-        system += profile_text(self._profile)
+        system += f"{NO_TOOLS_NOTE}\n\n{profile_text(self._profile)}"
         user = "\n\n".join(
             [*self._memory_text(), f"Today is {as_of.isoformat()}.", render_probe(probe)]
         )

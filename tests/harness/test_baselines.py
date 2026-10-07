@@ -12,6 +12,7 @@ from pm_traitbench.gates.gate2.prompt_parts import mandate_line, pm_rules_sectio
 from pm_traitbench.gates.gate2.transcript import render_pm
 from pm_traitbench.harness.baselines import (
     MCQ_INSTRUCTION,
+    NO_TOOLS_NOTE,
     OPEN_INSTRUCTION,
     FullContext,
     NoMemory,
@@ -106,6 +107,8 @@ def test_full_context_sends_observed_transcript(tmp_path) -> None:
     system = request["system"]
     profile = _profile()
     assert read_advisor_prompt(config.dialogue.advisor_prompt_path) in system
+    assert NO_TOOLS_NOTE in system
+    assert "tools" not in request
     assert mandate_line(profile.mandate) in system
     assert pm_rules_section(profile.rules) in system
     sut.close()
