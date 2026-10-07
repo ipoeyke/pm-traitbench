@@ -170,29 +170,38 @@ def judge_only_values(
     return tuple(found)
 
 
-SiblingKey = tuple[str, date, str | None, str]
+SiblingKey = tuple[str, date, str | None]
 
 
 def mcq_index(probes: Sequence[ProbeRow]) -> dict[SiblingKey, list[ProbeRow]]:
-    """Multiple-choice trait probes keyed by (pm, checkpoint, trait, question) for twin lookup."""
+    """Multiple-choice trait probes keyed by (pm, checkpoint, trait) for twin lookup."""
     index: dict[SiblingKey, list[ProbeRow]] = {}
     for p in probes:
         if p.probe_type == ProbeType.TRAIT_MCQ and p.form == ProbeForm.MCQ:
-            index.setdefault((p.pm_id, p.checkpoint_date, p.trait_id, p.question), []).append(p)
+            index.setdefault((p.pm_id, p.checkpoint_date, p.trait_id), []).append(p)
     return index
 
 
 def sibling_mcq(row: ProbeRow, index: Mapping[SiblingKey, Sequence[ProbeRow]]) -> ProbeRow:
     """The multiple-choice probe an open trait twin was drafted with.
 
-    The probes stage emits both from one draft, so exactly one matches.
+    The probes stage emits one MCQ per trait per checkpoint and the twin from the same
+    draft, so the trait identifies it; a preference twin asks its own question, so the
+    question text is no part of the key. The twin's answer must be the sibling's correct
+    option, which catches a wrong join.
     """
-    matches = index.get((row.pm_id, row.checkpoint_date, row.trait_id, row.question), ())
+    matches = index.get((row.pm_id, row.checkpoint_date, row.trait_id), ())
     if len(matches) != 1:
         raise HarnessError(
             f"probe {row.probe_id}: expected one multiple-choice sibling, found {len(matches)}"
         )
-    return matches[0]
+    sibling = matches[0]
+    if dict(_options(sibling)).get(sibling.answer) != row.answer:
+        raise HarnessError(
+            f"probe {row.probe_id}: its answer is not the correct option of sibling "
+            f"{sibling.probe_id}"
+        )
+    return sibling
 
 
 def active_bias_phrases(
