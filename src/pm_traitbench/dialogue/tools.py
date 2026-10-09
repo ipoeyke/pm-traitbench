@@ -12,18 +12,45 @@ surprise is masked rather than omitted.
 """
 
 import bisect
+import re
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from difflib import get_close_matches
+from difflib import SequenceMatcher
 from types import MappingProxyType
 from typing import Any
 
-from pm_traitbench.enums import AdvisorTool, InstrumentKind, Tenor
+from pm_traitbench.enums import AdvisorTool, Family, InstrumentKind, Tenor
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import CalendarEvent, ConsensusRow, CurvePoint, Instrument, Price
 
 _MAX_CLOSE_MATCHES = 5
+# difflib's own cutoff: a suggestion needs that much similarity, or half its words matched.
+_MIN_SCORE = 0.5
+# Desk shorthand for a sovereign curve, by the currency that names it in the universe.
+_SOVEREIGN_SHORTHAND: Mapping[str, str] = MappingProxyType(
+    {
+        "us": "USD",
+        "ust": "USD",
+        "usts": "USD",
+        "treasury": "USD",
+        "treasuries": "USD",
+        "eu": "EUR",
+        "bund": "EUR",
+        "bunds": "EUR",
+        "btp": "EUR",
+        "btps": "EUR",
+        "oat": "EUR",
+        "oats": "EUR",
+        "uk": "GBP",
+        "gilt": "GBP",
+        "gilts": "GBP",
+        "japan": "JPY",
+        "jgb": "JPY",
+        "jgbs": "JPY",
+    }
+)
 _NO_NAMES: Mapping[str, str] = MappingProxyType({})
 _WINDOW_MIN, _WINDOW_MAX = 0, 20
 _HISTORY_MIN, _HISTORY_MAX = 1, 60
@@ -55,6 +82,9 @@ class MarketLookup:
     _consensus: Mapping[str, tuple[ConsensusRow, ...]] = field(repr=False)
     _calendar_by_instrument: Mapping[str, tuple[CalendarEvent, ...]] = field(repr=False)
     _calendar_market_wide: tuple[CalendarEvent, ...] = field(repr=False)
+    # Words of each instrument's name and id, and the words too common to pick one out.
+    _words: Mapping[str, frozenset[str]] = field(repr=False, default_factory=dict)
+    _common_words: frozenset[str] = field(repr=False, default_factory=frozenset)
 
     @classmethod
     def build(
@@ -122,10 +152,18 @@ class MarketLookup:
             else:
                 calendar_by_instrument.setdefault(row.instrument_id, []).append(row)
 
+        words = {
+            instrument_id: frozenset(_name_words(inst.name) | _name_words(instrument_id))
+            for instrument_id, inst in instruments_by_id.items()
+        }
+        counts = Counter(word for word_set in words.values() for word in word_set)
         return cls(
             seed=seed,
             dates=dates,
             instruments=instruments_by_id,
+            _words=words,
+            # A word on more than a quarter of the universe ("eq", "issuer") picks nothing out.
+            _common_words=frozenset(w for w, n in counts.items() if n > len(words) / 4),
             _prices={
                 instrument_id: tuple(sorted(rows, key=lambda r: r.date))
                 for instrument_id, rows in prices_by_instrument.items()
@@ -341,22 +379,72 @@ def _require_int(tool_input: Mapping[str, Any], key: str) -> int | ToolOutcome:
     return value
 
 
+def _name_words(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _score(
+    lookup: MarketLookup,
+    query: str,
+    distinct: set[str],
+    n_words: int,
+    named: set[str],
+    c: Instrument,
+) -> float:
+    """How well `query` names `c`: the better of edit similarity and the share of the
+    query's distinctive words on the name or id, plus one for a sovereign curve whose
+    currency the query names ("bund", "usd")."""
+    shared = len(distinct & lookup._words[c.instrument_id]) / n_words
+    similarity = max(
+        SequenceMatcher(None, query, text.lower()).ratio() for text in (c.name, c.instrument_id)
+    )
+    curve = 1.0 if c.family == Family.RATES and c.currency in named else 0.0
+    return max(shared, similarity) + curve
+
+
+def _suggestions(lookup: MarketLookup, instrument: str) -> list[str]:
+    """Names the query could mean, best first: one score per instrument, ties by id."""
+    query = instrument.strip().lower()
+    query_words = _name_words(query)
+    if not query_words:
+        return []
+    # The query-only inputs, computed once rather than per instrument.
+    distinct = query_words - lookup._common_words
+    named = {_SOVEREIGN_SHORTHAND.get(w, w.upper()) for w in query_words}
+    scored = sorted(
+        (
+            (_score(lookup, query, distinct, len(query_words), named, c), c)
+            for c in lookup.instruments.values()
+        ),
+        key=lambda item: (-item[0], item[1].instrument_id),
+    )
+    return [_label(c.instrument_id, c.name) for score, c in scored if score >= _MIN_SCORE][
+        :_MAX_CLOSE_MATCHES
+    ]
+
+
+def _label(instrument_id: str, name: str) -> str:
+    """The name the PM would use with the id a lookup takes; the id alone when they match."""
+    return instrument_id if name == instrument_id else f"{name} ({instrument_id})"
+
+
 def _resolve_or_error(
     lookup: MarketLookup, instrument: str, session_names: Mapping[str, str]
 ) -> Instrument | ToolOutcome:
-    """The instrument, or an error naming the closest lookup names, else the session's own
+    """The instrument, or an error naming the closest lookup names and the session's own
     instruments: the advisor only ever hears those in the PM's words, so a guessed ticker
     must be answered with the names and ids the lookup knows."""
     resolved = lookup.resolve(instrument)
     if resolved is not None:
         return resolved
-    names = [c.name for c in lookup.instruments.values()] + list(lookup.instruments)
-    matches = get_close_matches(instrument, names, n=_MAX_CLOSE_MATCHES)
+    message = f"unknown instrument '{instrument}'"
+    matches = _suggestions(lookup, instrument)
     if matches:
-        return _error(f"unknown instrument '{instrument}'; closest names: {', '.join(matches)}")
-    listed = ", ".join(f"{name} ({instrument_id})" for instrument_id, name in session_names.items())
-    suffix = f"; the PM's instruments: {listed}" if listed else ""
-    return _error(f"unknown instrument '{instrument}'{suffix}")
+        message += f"; closest names: {', '.join(matches)}"
+    listed = ", ".join(_label(instrument_id, name) for instrument_id, name in session_names.items())
+    if listed:
+        message += f"; the PM's instruments: {listed}"
+    return _error(message)
 
 
 def _no_row_error(name: str, today: date) -> ToolOutcome:

@@ -462,6 +462,35 @@ def test_unknown_instrument_with_nothing_close_lists_the_sessions_instruments(
     )
 
 
+def test_unknown_instrument_lists_close_names_and_the_sessions_instruments(
+    market_lookup: MarketLookup, fixture_market: dict
+):
+    today = fixture_market["dates"][0]
+    session_names = {"CR-IG-001": "Issuer IG 001"}
+
+    outcome = run_tool(market_lookup, "get_quote", {"instrument": "EQ-001"}, today, session_names)
+
+    assert outcome.is_error is True
+    assert "closest names: " in outcome.result["error"]
+    assert "EQ-0001" in outcome.result["error"]
+    assert outcome.result["error"].endswith("; the PM's instruments: Issuer IG 001 (CR-IG-001)")
+
+
+@pytest.mark.parametrize("query", ["usd", "UST", "treasuries", "usd curve", "USD sovereign"])
+def test_unknown_instrument_suggests_the_curve_its_currency_names(
+    market_lookup: MarketLookup, fixture_market: dict, query: str
+):
+    today = fixture_market["dates"][0]
+    curves = [c for c in market_lookup.instruments.values() if c.family == Family.RATES]
+    usd = next(c for c in curves if c.currency == "USD")
+
+    outcome = run_tool(market_lookup, "get_curve", {"instrument": query}, today)
+
+    assert outcome.is_error is True
+    suggested = outcome.result["error"].split("closest names: ")[1].split("; the PM")[0]
+    assert suggested.split(", ")[0] == f"{usd.name} ({usd.instrument_id})"
+
+
 def test_unknown_tool_name_is_an_error(market_lookup: MarketLookup, fixture_market: dict):
     outcome = run_tool(market_lookup, "get_weather", {}, fixture_market["dates"][0])
 

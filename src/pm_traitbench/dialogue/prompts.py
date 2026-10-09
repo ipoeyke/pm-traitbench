@@ -8,7 +8,7 @@ non-deterministic step, so identical inputs give identical cache keys.
 """
 
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from importlib import resources
 from pathlib import Path
@@ -18,10 +18,10 @@ from pm_traitbench.config import DialogueConfig
 from pm_traitbench.dialogue.context import SessionContext, trade_key
 from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS
 from pm_traitbench.dialogue.turns import Opening
-from pm_traitbench.enums import Effort, Side, Tenor
+from pm_traitbench.enums import Effort, Family, Side, Tenor
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.levels import idea_level_text
-from pm_traitbench.tables.schema import LedgerRow
+from pm_traitbench.tables.schema import Instrument, LedgerRow
 
 NARRATOR_OPENING_MESSAGE = "The advisor is ready for your first message."
 
@@ -308,13 +308,49 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
     return "\n".join(lines)
 
 
-def advisor_system(advisor_prompt: str, day: date) -> str:
-    """The advisor prompt, the mentions instruction, then the session date.
+def advisor_instruments(ctx: SessionContext) -> list[Instrument]:
+    """The instruments the advisor may look up: the session's own (its trades, open
+    positions and question instrument, or its asset class) plus every sovereign curve,
+    which PMs reference by shorthand without holding."""
+    return [
+        inst
+        for inst in ctx.lookup.instruments.values()
+        if inst.instrument_id in ctx.instrument_names or inst.family == Family.RATES
+    ]
 
-    The mentions instruction is appended here rather than living in the
-    authored prompt file, so swapping that file can never drop it.
+
+def instruments_section(instruments: Iterable[Instrument]) -> str:
+    """The instruments a lookup accepts, one line per family as `id: name` pairs (the id
+    alone when it is the name); empty when there are none."""
+    by_family: dict[Family, list[str]] = {}
+    for inst in sorted(instruments, key=lambda i: i.instrument_id):
+        entry = (
+            inst.instrument_id
+            if inst.name == inst.instrument_id
+            else f"{inst.instrument_id}: {inst.name}"
+        )
+        by_family.setdefault(inst.family, []).append(entry)
+    if not by_family:
+        return ""
+    lines = [f"- {family.value}: {'; '.join(entries)}" for family, entries in by_family.items()]
+    return (
+        "Instruments a lookup accepts, by id or name; nothing else can be looked up:\n"
+        + "\n".join(lines)
+    )
+
+
+def advisor_system(advisor_prompt: str, day: date, instruments: Iterable[Instrument]) -> str:
+    """The advisor prompt, the mentions instruction, the instruments, then the session date.
+
+    The mentions instruction and the instruments are appended here rather than living
+    in the authored prompt file, so swapping that file can never drop them.
     """
-    return f"{advisor_prompt}\n\n{_ADVISOR_MENTIONS_INSTRUCTION}\n\nToday is {day.isoformat()}."
+    parts = [
+        advisor_prompt,
+        _ADVISOR_MENTIONS_INSTRUCTION,
+        instruments_section(instruments),
+    ]
+    return "\n\n".join(part for part in parts if part) + f"\n\nToday is {day.isoformat()}."
 
 
 def base_request(
