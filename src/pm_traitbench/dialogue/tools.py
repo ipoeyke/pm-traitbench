@@ -153,7 +153,7 @@ class MarketLookup:
                 calendar_by_instrument.setdefault(row.instrument_id, []).append(row)
 
         words = {
-            instrument_id: frozenset(_words(inst.name) | _words(instrument_id))
+            instrument_id: frozenset(_name_words(inst.name) | _name_words(instrument_id))
             for instrument_id, inst in instruments_by_id.items()
         }
         counts = Counter(word for word_set in words.values() for word in word_set)
@@ -379,20 +379,25 @@ def _require_int(tool_input: Mapping[str, Any], key: str) -> int | ToolOutcome:
     return value
 
 
-def _words(text: str) -> set[str]:
+def _name_words(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
-def _score(lookup: MarketLookup, query: str, query_words: set[str], c: Instrument) -> float:
+def _score(
+    lookup: MarketLookup,
+    query: str,
+    distinct: set[str],
+    n_words: int,
+    named: set[str],
+    c: Instrument,
+) -> float:
     """How well `query` names `c`: the better of edit similarity and the share of the
-    query's words on the name or id, plus one for a sovereign curve the query names by
-    desk shorthand or currency ("bund", "usd")."""
-    words = lookup._words[c.instrument_id]
-    shared = len((query_words - lookup._common_words) & words) / len(query_words)
+    query's distinctive words on the name or id, plus one for a sovereign curve whose
+    currency the query names ("bund", "usd")."""
+    shared = len(distinct & lookup._words[c.instrument_id]) / n_words
     similarity = max(
         SequenceMatcher(None, query, text.lower()).ratio() for text in (c.name, c.instrument_id)
     )
-    named = {_SOVEREIGN_SHORTHAND.get(w, w.upper()) for w in query_words}
     curve = 1.0 if c.family == Family.RATES and c.currency in named else 0.0
     return max(shared, similarity) + curve
 
@@ -400,19 +405,29 @@ def _score(lookup: MarketLookup, query: str, query_words: set[str], c: Instrumen
 def _suggestions(lookup: MarketLookup, instrument: str) -> list[str]:
     """Names the query could mean, best first: one score per instrument, ties by id."""
     query = instrument.strip().lower()
-    query_words = _words(query)
+    query_words = _name_words(query)
     if not query_words:
         return []
+    # The query-only inputs, computed once rather than per instrument.
+    distinct = query_words - lookup._common_words
+    named = {_SOVEREIGN_SHORTHAND.get(w, w.upper()) for w in query_words}
     scored = sorted(
-        ((_score(lookup, query, query_words, c), c) for c in lookup.instruments.values()),
+        (
+            (_score(lookup, query, distinct, len(query_words), named, c), c)
+            for c in lookup.instruments.values()
+        ),
         key=lambda item: (-item[0], item[1].instrument_id),
     )
     return [_labelled(c) for score, c in scored if score >= _MIN_SCORE][:_MAX_CLOSE_MATCHES]
 
 
+def _label(instrument_id: str, name: str) -> str:
+    """The name the PM would use with the id a lookup takes; the id alone when they match."""
+    return instrument_id if name == instrument_id else f"{name} ({instrument_id})"
+
+
 def _labelled(c: Instrument) -> str:
-    """The name the PM would use with the id a lookup takes."""
-    return c.instrument_id if c.name == c.instrument_id else f"{c.name} ({c.instrument_id})"
+    return _label(c.instrument_id, c.name)
 
 
 def _resolve_or_error(
@@ -428,10 +443,7 @@ def _resolve_or_error(
     matches = _suggestions(lookup, instrument)
     if matches:
         message += f"; closest names: {', '.join(matches)}"
-    listed = ", ".join(
-        instrument_id if name == instrument_id else f"{name} ({instrument_id})"
-        for instrument_id, name in session_names.items()
-    )
+    listed = ", ".join(_label(instrument_id, name) for instrument_id, name in session_names.items())
     if listed:
         message += f"; the PM's instruments: {listed}"
     return _error(message)
