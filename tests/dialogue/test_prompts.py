@@ -17,6 +17,7 @@ from pm_traitbench.dialogue.prompts import (
     NARRATOR_OPENING_MESSAGE,
     advisor_request,
     advisor_system,
+    instrument_universe_section,
     market_levels_section,
     narrator_directive,
     narrator_request,
@@ -210,14 +211,14 @@ def test_advisor_request_uses_the_advisor_only_turn_schema():
 
 
 def test_advisor_mentions_instruction_names_level_for_a_curve_point():
-    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE)
+    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE, ())
 
     assert "level" in system
     assert "curve" in system.lower()
 
 
 def test_advisor_system_appends_the_mentions_instruction_before_the_date():
-    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE)
+    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE, ())
 
     assert "AUTHORED PROMPT TEXT" in system
     assert "mentions" in system
@@ -225,8 +226,31 @@ def test_advisor_system_appends_the_mentions_instruction_before_the_date():
     assert system.rindex("mentions") < system.index(f"Today is {DEFAULT_DATE.isoformat()}")
 
 
+def test_advisor_system_lists_the_universe_by_family_before_the_date(market_lookup):
+    instruments = list(market_lookup.instruments.values())
+    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE, instruments)
+
+    universe = instrument_universe_section(instruments)
+    assert universe in system
+    assert system.rindex("mentions") < system.index(universe)
+    assert system.index(universe) < system.index(f"Today is {DEFAULT_DATE.isoformat()}")
+    families = {inst.family for inst in instruments}
+    for family in families:
+        assert f"- {family.value}: " in universe
+    for inst in instruments:
+        assert f"{inst.instrument_id}: {inst.name}" in universe
+    assert universe.count("\n") == len(families)
+
+
+def test_advisor_prompt_points_lookups_at_the_listed_universe():
+    prompt = read_advisor_prompt(None)
+
+    assert "id or exact name from the market universe listed below" in prompt
+    assert "by the names the PM uses" not in prompt
+
+
 def test_advisor_system_asks_for_a_summarised_price_history():
-    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE)
+    system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE, ())
 
     assert "Summarise a price history" in system
 
@@ -573,7 +597,7 @@ def test_advisor_request_contains_no_persona_rules_ideas_or_skeleton_text(market
     ctx = dataclasses.replace(ctx, pm_rules=(pm_rule,), ideas=(idea,))
 
     advisor_prompt = read_advisor_prompt(None)
-    system = advisor_system(advisor_prompt, ctx.skeleton.date)
+    system = advisor_system(advisor_prompt, ctx.skeleton.date, market_lookup.instruments.values())
     messages = [{"role": "user", "content": "Any levels I should know about on my names?"}]
     request = advisor_request(system, messages, _CONFIG.dialogue)
 

@@ -200,12 +200,16 @@ def test_tool_round_cap_forces_a_final_reply_and_warns(market_lookup, tmp_path):
     )
     advisor_log = result.log.turns[1]
     assert len(advisor_log.tool_calls) == _CONFIG.max_tool_rounds
-    # The capped request's last user message ends with the tool results and the note.
+    # The capped request ends with the tool results, then the note as an operator message.
     capped = next(r for r in fake.requests if r.get("tool_choice") == {"type": "none"})
-    last_blocks = capped["messages"][-1]["content"]
-    assert [b["type"] for b in last_blocks] == ["tool_result", "text"]
-    assert "could not look up" in last_blocks[-1]["text"]
+    results, note = capped["messages"][-2:]
+    assert results["role"] == "user"
+    assert [b["type"] for b in results["content"]] == ["tool_result"]
+    assert note["role"] == "system"
+    assert "No more lookups" in note["content"]
+    assert "state no figure" in note["content"]
     earlier = [r for r in fake.requests if "tools" in r and "tool_choice" not in r]
+    assert all(r["messages"][-1]["role"] == "user" for r in earlier)
     assert all(
         b["type"] == "tool_result" for r in earlier[1:] for b in r["messages"][-1]["content"]
     )

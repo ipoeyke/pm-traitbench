@@ -12,18 +12,41 @@ surprise is masked rather than omitted.
 """
 
 import bisect
+import re
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from difflib import get_close_matches
+from difflib import SequenceMatcher, get_close_matches
 from types import MappingProxyType
 from typing import Any
 
-from pm_traitbench.enums import AdvisorTool, InstrumentKind, Tenor
+from pm_traitbench.enums import AdvisorTool, Family, InstrumentKind, Tenor
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import CalendarEvent, ConsensusRow, CurvePoint, Instrument, Price
 
 _MAX_CLOSE_MATCHES = 5
+# difflib's own cutoff, applied to the similarity ranking so ids sort by id on a tie.
+_MIN_SIMILARITY = 0.6
+# Desk shorthand for a sovereign curve, by the currency that names it in the universe.
+_SOVEREIGN_SHORTHAND: Mapping[str, str] = MappingProxyType(
+    {
+        "ust": "USD",
+        "usts": "USD",
+        "treasury": "USD",
+        "treasuries": "USD",
+        "bund": "EUR",
+        "bunds": "EUR",
+        "btp": "EUR",
+        "btps": "EUR",
+        "oat": "EUR",
+        "oats": "EUR",
+        "gilt": "GBP",
+        "gilts": "GBP",
+        "jgb": "JPY",
+        "jgbs": "JPY",
+    }
+)
 _NO_NAMES: Mapping[str, str] = MappingProxyType({})
 _WINDOW_MIN, _WINDOW_MAX = 0, 20
 _HISTORY_MIN, _HISTORY_MAX = 1, 60
@@ -341,22 +364,63 @@ def _require_int(tool_input: Mapping[str, Any], key: str) -> int | ToolOutcome:
     return value
 
 
+def _tokens(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _suggestions(lookup: MarketLookup, instrument: str) -> list[str]:
+    """Names the query could mean, best first: those sharing a word with it ("usd curve"),
+    a sovereign curve its words name by shorthand or currency ("bund", "ust"), then the
+    closest names and ids by edit similarity (a near-miss id such as "EQ-001")."""
+    instruments = list(lookup.instruments.values())
+    by_instrument = {
+        c.instrument_id: _tokens(c.name) | _tokens(c.instrument_id) for c in instruments
+    }
+    # A word on more than a quarter of the universe ("eq", "issuer") picks nothing out.
+    counts = Counter(token for tokens in by_instrument.values() for token in tokens)
+    common = {token for token, n in counts.items() if n > len(by_instrument) / 4}
+    query = _tokens(instrument) - common
+    shared = sorted(
+        ((len(query & by_instrument[c.instrument_id]), c.instrument_id, c) for c in instruments),
+        key=lambda item: (-item[0], item[1]),
+    )
+    ranked = [c.name for n, _, c in shared if n]
+    curves = [c for c in instruments if c.family == Family.RATES]
+    named = {_SOVEREIGN_SHORTHAND.get(t, t.upper()) for t in _tokens(instrument)}
+    ranked += [c.name for c in curves if c.currency in named]
+    ranked += [
+        c.name for c in curves if get_close_matches(instrument.lower(), [c.currency.lower()])
+    ]
+    lowered = instrument.lower()
+    similar = sorted(
+        ((SequenceMatcher(None, lowered, text.lower()).ratio(), text) for text in _names(lookup)),
+        key=lambda item: (-item[0], item[1]),
+    )
+    ranked += [text for ratio, text in similar[:_MAX_CLOSE_MATCHES] if ratio >= _MIN_SIMILARITY]
+    return list(dict.fromkeys(ranked))[:_MAX_CLOSE_MATCHES]
+
+
+def _names(lookup: MarketLookup) -> list[str]:
+    return [c.name for c in lookup.instruments.values()] + list(lookup.instruments)
+
+
 def _resolve_or_error(
     lookup: MarketLookup, instrument: str, session_names: Mapping[str, str]
 ) -> Instrument | ToolOutcome:
-    """The instrument, or an error naming the closest lookup names, else the session's own
+    """The instrument, or an error naming the closest lookup names and the session's own
     instruments: the advisor only ever hears those in the PM's words, so a guessed ticker
     must be answered with the names and ids the lookup knows."""
     resolved = lookup.resolve(instrument)
     if resolved is not None:
         return resolved
-    names = [c.name for c in lookup.instruments.values()] + list(lookup.instruments)
-    matches = get_close_matches(instrument, names, n=_MAX_CLOSE_MATCHES)
+    message = f"unknown instrument '{instrument}'"
+    matches = _suggestions(lookup, instrument)
     if matches:
-        return _error(f"unknown instrument '{instrument}'; closest names: {', '.join(matches)}")
+        message += f"; closest names: {', '.join(matches)}"
     listed = ", ".join(f"{name} ({instrument_id})" for instrument_id, name in session_names.items())
-    suffix = f"; the PM's instruments: {listed}" if listed else ""
-    return _error(f"unknown instrument '{instrument}'{suffix}")
+    if listed:
+        message += f"; the PM's instruments: {listed}"
+    return _error(message)
 
 
 def _no_row_error(name: str, today: date) -> ToolOutcome:

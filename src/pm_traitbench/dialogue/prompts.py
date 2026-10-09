@@ -8,7 +8,7 @@ non-deterministic step, so identical inputs give identical cache keys.
 """
 
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from importlib import resources
 from pathlib import Path
@@ -18,10 +18,10 @@ from pm_traitbench.config import DialogueConfig
 from pm_traitbench.dialogue.context import SessionContext, trade_key
 from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS
 from pm_traitbench.dialogue.turns import Opening
-from pm_traitbench.enums import Effort, Side, Tenor
+from pm_traitbench.enums import Effort, Family, Side, Tenor
 from pm_traitbench.errors import DialogueError
 from pm_traitbench.levels import idea_level_text
-from pm_traitbench.tables.schema import LedgerRow
+from pm_traitbench.tables.schema import Instrument, LedgerRow
 
 NARRATOR_OPENING_MESSAGE = "The advisor is ready for your first message."
 
@@ -308,13 +308,25 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
     return "\n".join(lines)
 
 
-def advisor_system(advisor_prompt: str, day: date) -> str:
-    """The advisor prompt, the mentions instruction, then the session date.
+def instrument_universe_section(instruments: Iterable[Instrument]) -> str:
+    """Every instrument the tools resolve, one line per family as `id: name` pairs."""
+    by_family: dict[Family, list[str]] = {}
+    for inst in sorted(instruments, key=lambda i: i.instrument_id):
+        by_family.setdefault(inst.family, []).append(f"{inst.instrument_id}: {inst.name}")
+    lines = [f"- {family.value}: {'; '.join(entries)}" for family, entries in by_family.items()]
+    return "Market universe, the instruments a lookup accepts, by id or name:\n" + "\n".join(lines)
 
-    The mentions instruction is appended here rather than living in the
-    authored prompt file, so swapping that file can never drop it.
+
+def advisor_system(advisor_prompt: str, day: date, instruments: Iterable[Instrument]) -> str:
+    """The advisor prompt, the mentions instruction, the universe, then the session date.
+
+    The mentions instruction and the universe are appended here rather than living
+    in the authored prompt file, so swapping that file can never drop them.
     """
-    return f"{advisor_prompt}\n\n{_ADVISOR_MENTIONS_INSTRUCTION}\n\nToday is {day.isoformat()}."
+    return (
+        f"{advisor_prompt}\n\n{_ADVISOR_MENTIONS_INSTRUCTION}\n\n"
+        f"{instrument_universe_section(instruments)}\n\nToday is {day.isoformat()}."
+    )
 
 
 def base_request(

@@ -66,11 +66,12 @@ class SessionResult:
     rejected_replies: int
 
 
-# Appended to the last tool results once the round cap is hit, so the advisor answers
-# in text rather than returning nothing when its lookups failed.
+# Sent as an operator message after the last tool results once the round cap is hit,
+# so the advisor answers in text rather than returning nothing when its lookups failed.
 _TOOLS_OFF_NOTE = (
-    "No more lookups are available for this reply. Answer the PM in text now, and say "
-    "plainly which figures you could not look up rather than guessing them."
+    "No more lookups are available for this reply. Answer the PM in text now, briefly. "
+    "Where a lookup failed or returned no data, say so plainly and state no figure for it; "
+    "a short reply that names what you could not check is the right answer here."
 )
 
 
@@ -219,7 +220,9 @@ async def narrate_session(
     """Narrate one session: alternate PM and advisor turns and return the row plus its log."""
     session_id = ctx.skeleton.session_id
     n_pm = len(ctx.turn_plan.pm_directives)
-    system_advisor = advisor_system(advisor_prompt, ctx.skeleton.date)
+    system_advisor = advisor_system(
+        advisor_prompt, ctx.skeleton.date, ctx.lookup.instruments.values()
+    )
 
     narrator_messages: list[dict[str, Any]] = [
         {"role": "user", "content": NARRATOR_OPENING_MESSAGE}
@@ -309,9 +312,10 @@ async def narrate_session(
                             "is_error": outcome.is_error,
                         }
                     )
+                advisor_messages.append({"role": "user", "content": tool_result_blocks})
                 if rounds >= config.max_tool_rounds and not tools_disabled:
                     tools_disabled = True
-                    tool_result_blocks.append({"type": "text", "text": _TOOLS_OFF_NOTE})
+                    advisor_messages.append({"role": "system", "content": _TOOLS_OFF_NOTE})
                     # The last round's error count splits heavy research from failed guessing.
                     failed = sum(1 for block in tool_result_blocks if block.get("is_error"))
                     warnings.append(
@@ -319,7 +323,6 @@ async def narrate_session(
                         f"({failed} of {len(accepted.tool_blocks)} lookups in the last round "
                         "failed)"
                     )
-                advisor_messages.append({"role": "user", "content": tool_result_blocks})
                 continue
 
             advisor_messages.append({"role": "assistant", "content": reply.response["content"]})
