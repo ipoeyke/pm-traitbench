@@ -17,7 +17,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from difflib import SequenceMatcher, get_close_matches
+from difflib import SequenceMatcher
 from types import MappingProxyType
 from typing import Any
 
@@ -26,23 +26,27 @@ from pm_traitbench.errors import DialogueError
 from pm_traitbench.tables.schema import CalendarEvent, ConsensusRow, CurvePoint, Instrument, Price
 
 _MAX_CLOSE_MATCHES = 5
-# difflib's own cutoff, applied to the similarity ranking so ids sort by id on a tie.
-_MIN_SIMILARITY = 0.6
+# difflib's own cutoff: a suggestion needs that much similarity, or half its words matched.
+_MIN_SCORE = 0.5
 # Desk shorthand for a sovereign curve, by the currency that names it in the universe.
 _SOVEREIGN_SHORTHAND: Mapping[str, str] = MappingProxyType(
     {
+        "us": "USD",
         "ust": "USD",
         "usts": "USD",
         "treasury": "USD",
         "treasuries": "USD",
+        "eu": "EUR",
         "bund": "EUR",
         "bunds": "EUR",
         "btp": "EUR",
         "btps": "EUR",
         "oat": "EUR",
         "oats": "EUR",
+        "uk": "GBP",
         "gilt": "GBP",
         "gilts": "GBP",
+        "japan": "JPY",
         "jgb": "JPY",
         "jgbs": "JPY",
     }
@@ -78,6 +82,9 @@ class MarketLookup:
     _consensus: Mapping[str, tuple[ConsensusRow, ...]] = field(repr=False)
     _calendar_by_instrument: Mapping[str, tuple[CalendarEvent, ...]] = field(repr=False)
     _calendar_market_wide: tuple[CalendarEvent, ...] = field(repr=False)
+    # Words of each instrument's name and id, and the words too common to pick one out.
+    _words: Mapping[str, frozenset[str]] = field(repr=False, default_factory=dict)
+    _common_words: frozenset[str] = field(repr=False, default_factory=frozenset)
 
     @classmethod
     def build(
@@ -145,10 +152,18 @@ class MarketLookup:
             else:
                 calendar_by_instrument.setdefault(row.instrument_id, []).append(row)
 
+        words = {
+            instrument_id: frozenset(_words(inst.name) | _words(instrument_id))
+            for instrument_id, inst in instruments_by_id.items()
+        }
+        counts = Counter(word for word_set in words.values() for word in word_set)
         return cls(
             seed=seed,
             dates=dates,
             instruments=instruments_by_id,
+            _words=words,
+            # A word on more than a quarter of the universe ("eq", "issuer") picks nothing out.
+            _common_words=frozenset(w for w, n in counts.items() if n > len(words) / 4),
             _prices={
                 instrument_id: tuple(sorted(rows, key=lambda r: r.date))
                 for instrument_id, rows in prices_by_instrument.items()
@@ -364,44 +379,40 @@ def _require_int(tool_input: Mapping[str, Any], key: str) -> int | ToolOutcome:
     return value
 
 
-def _tokens(text: str) -> set[str]:
+def _words(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
+def _score(lookup: MarketLookup, query: str, query_words: set[str], c: Instrument) -> float:
+    """How well `query` names `c`: the better of edit similarity and the share of the
+    query's words on the name or id, plus one for a sovereign curve the query names by
+    desk shorthand or currency ("bund", "usd")."""
+    words = lookup._words[c.instrument_id]
+    shared = len((query_words - lookup._common_words) & words) / len(query_words)
+    similarity = max(
+        SequenceMatcher(None, query, text.lower()).ratio() for text in (c.name, c.instrument_id)
+    )
+    named = {_SOVEREIGN_SHORTHAND.get(w, w.upper()) for w in query_words}
+    curve = 1.0 if c.family == Family.RATES and c.currency in named else 0.0
+    return max(shared, similarity) + curve
+
+
 def _suggestions(lookup: MarketLookup, instrument: str) -> list[str]:
-    """Names the query could mean, best first: those sharing a word with it ("usd curve"),
-    a sovereign curve its words name by shorthand or currency ("bund", "ust"), then the
-    closest names and ids by edit similarity (a near-miss id such as "EQ-001")."""
-    instruments = list(lookup.instruments.values())
-    by_instrument = {
-        c.instrument_id: _tokens(c.name) | _tokens(c.instrument_id) for c in instruments
-    }
-    # A word on more than a quarter of the universe ("eq", "issuer") picks nothing out.
-    counts = Counter(token for tokens in by_instrument.values() for token in tokens)
-    common = {token for token, n in counts.items() if n > len(by_instrument) / 4}
-    query = _tokens(instrument) - common
-    shared = sorted(
-        ((len(query & by_instrument[c.instrument_id]), c.instrument_id, c) for c in instruments),
-        key=lambda item: (-item[0], item[1]),
+    """Names the query could mean, best first: one score per instrument, ties by id."""
+    query = instrument.strip().lower()
+    query_words = _words(query)
+    if not query_words:
+        return []
+    scored = sorted(
+        ((_score(lookup, query, query_words, c), c) for c in lookup.instruments.values()),
+        key=lambda item: (-item[0], item[1].instrument_id),
     )
-    ranked = [c.name for n, _, c in shared if n]
-    curves = [c for c in instruments if c.family == Family.RATES]
-    named = {_SOVEREIGN_SHORTHAND.get(t, t.upper()) for t in _tokens(instrument)}
-    ranked += [c.name for c in curves if c.currency in named]
-    ranked += [
-        c.name for c in curves if get_close_matches(instrument.lower(), [c.currency.lower()])
-    ]
-    lowered = instrument.lower()
-    similar = sorted(
-        ((SequenceMatcher(None, lowered, text.lower()).ratio(), text) for text in _names(lookup)),
-        key=lambda item: (-item[0], item[1]),
-    )
-    ranked += [text for ratio, text in similar[:_MAX_CLOSE_MATCHES] if ratio >= _MIN_SIMILARITY]
-    return list(dict.fromkeys(ranked))[:_MAX_CLOSE_MATCHES]
+    return [_labelled(c) for score, c in scored if score >= _MIN_SCORE][:_MAX_CLOSE_MATCHES]
 
 
-def _names(lookup: MarketLookup) -> list[str]:
-    return [c.name for c in lookup.instruments.values()] + list(lookup.instruments)
+def _labelled(c: Instrument) -> str:
+    """The name the PM would use with the id a lookup takes."""
+    return c.instrument_id if c.name == c.instrument_id else f"{c.name} ({c.instrument_id})"
 
 
 def _resolve_or_error(
@@ -417,7 +428,10 @@ def _resolve_or_error(
     matches = _suggestions(lookup, instrument)
     if matches:
         message += f"; closest names: {', '.join(matches)}"
-    listed = ", ".join(f"{name} ({instrument_id})" for instrument_id, name in session_names.items())
+    listed = ", ".join(
+        instrument_id if name == instrument_id else f"{name} ({instrument_id})"
+        for instrument_id, name in session_names.items()
+    )
     if listed:
         message += f"; the PM's instruments: {listed}"
     return _error(message)

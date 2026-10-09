@@ -488,7 +488,7 @@ def test_unknown_instrument_suggests_the_curve_its_currency_names(
 
     assert outcome.is_error is True
     suggested = outcome.result["error"].split("closest names: ")[1].split("; the PM")[0]
-    assert suggested.split(", ")[0] == usd.name
+    assert suggested.split(", ")[0] == f"{usd.name} ({usd.instrument_id})"
 
 
 def test_unknown_tool_name_is_an_error(market_lookup: MarketLookup, fixture_market: dict):

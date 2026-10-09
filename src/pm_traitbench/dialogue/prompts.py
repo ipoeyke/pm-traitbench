@@ -309,10 +309,18 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
 
 
 def instrument_universe_section(instruments: Iterable[Instrument]) -> str:
-    """Every instrument the tools resolve, one line per family as `id: name` pairs."""
+    """Every instrument the tools resolve, one line per family as `id: name` pairs (the id
+    alone when it is the name); empty when there are none."""
     by_family: dict[Family, list[str]] = {}
     for inst in sorted(instruments, key=lambda i: i.instrument_id):
-        by_family.setdefault(inst.family, []).append(f"{inst.instrument_id}: {inst.name}")
+        entry = (
+            inst.instrument_id
+            if inst.name == inst.instrument_id
+            else f"{inst.instrument_id}: {inst.name}"
+        )
+        by_family.setdefault(inst.family, []).append(entry)
+    if not by_family:
+        return ""
     lines = [f"- {family.value}: {'; '.join(entries)}" for family, entries in by_family.items()]
     return "Market universe, the instruments a lookup accepts, by id or name:\n" + "\n".join(lines)
 
@@ -323,10 +331,12 @@ def advisor_system(advisor_prompt: str, day: date, instruments: Iterable[Instrum
     The mentions instruction and the universe are appended here rather than living
     in the authored prompt file, so swapping that file can never drop them.
     """
-    return (
-        f"{advisor_prompt}\n\n{_ADVISOR_MENTIONS_INSTRUCTION}\n\n"
-        f"{instrument_universe_section(instruments)}\n\nToday is {day.isoformat()}."
-    )
+    parts = [
+        advisor_prompt,
+        _ADVISOR_MENTIONS_INSTRUCTION,
+        instrument_universe_section(instruments),
+    ]
+    return "\n\n".join(part for part in parts if part) + f"\n\nToday is {day.isoformat()}."
 
 
 def base_request(

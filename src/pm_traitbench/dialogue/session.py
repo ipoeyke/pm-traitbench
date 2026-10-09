@@ -69,9 +69,10 @@ class SessionResult:
 # Sent as an operator message after the last tool results once the round cap is hit,
 # so the advisor answers in text rather than returning nothing when its lookups failed.
 _TOOLS_OFF_NOTE = (
-    "No more lookups are available for this reply. Answer the PM in text now, briefly. "
-    "Where a lookup failed or returned no data, say so plainly and state no figure for it; "
-    "a short reply that names what you could not check is the right answer here."
+    "No more lookups are available for this reply; later replies may use the tools again. "
+    "Answer the PM in text now, briefly. Where a lookup failed or returned no data, say so "
+    "plainly and state no figure for it; a short reply that names what you could not check "
+    "is the right answer here."
 )
 
 

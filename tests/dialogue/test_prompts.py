@@ -242,10 +242,22 @@ def test_advisor_system_lists_the_universe_by_family_before_the_date(market_look
     assert universe.count("\n") == len(families)
 
 
+def test_advisor_system_omits_an_empty_universe_and_prints_a_bare_id_for_a_self_named_one(
+    market_lookup,
+):
+    assert instrument_universe_section([]) == ""
+    assert "Market universe" not in advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE, ())
+    inst = next(iter(market_lookup.instruments.values()))
+    self_named = inst.model_copy(update={"name": inst.instrument_id})
+    section = instrument_universe_section([self_named])
+    assert section.endswith(f"- {inst.family.value}: {inst.instrument_id}")
+
+
 def test_advisor_prompt_points_lookups_at_the_listed_universe():
     prompt = read_advisor_prompt(None)
 
-    assert "id or exact name from the market universe listed below" in prompt
+    assert "id or exact name from the market universe" in prompt
+    assert "look up only the instruments the PM raises" in prompt
     assert "by the names the PM uses" not in prompt
 
 
