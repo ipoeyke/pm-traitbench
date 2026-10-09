@@ -22,6 +22,7 @@ from pm_traitbench.dialogue.client import (
 from pm_traitbench.dialogue.context import SessionContext
 from pm_traitbench.dialogue.prompts import (
     NARRATOR_OPENING_MESSAGE,
+    advisor_instruments,
     advisor_request,
     advisor_system,
     narrator_directive,
@@ -221,9 +222,7 @@ async def narrate_session(
     """Narrate one session: alternate PM and advisor turns and return the row plus its log."""
     session_id = ctx.skeleton.session_id
     n_pm = len(ctx.turn_plan.pm_directives)
-    system_advisor = advisor_system(
-        advisor_prompt, ctx.skeleton.date, ctx.lookup.instruments.values()
-    )
+    system_advisor = advisor_system(advisor_prompt, ctx.skeleton.date, advisor_instruments(ctx))
 
     narrator_messages: list[dict[str, Any]] = [
         {"role": "user", "content": NARRATOR_OPENING_MESSAGE}

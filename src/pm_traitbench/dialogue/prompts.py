@@ -308,8 +308,19 @@ def narrator_directive(ctx: SessionContext, pm_index: int) -> str:
     return "\n".join(lines)
 
 
-def instrument_universe_section(instruments: Iterable[Instrument]) -> str:
-    """Every instrument the tools resolve, one line per family as `id: name` pairs (the id
+def advisor_instruments(ctx: SessionContext) -> list[Instrument]:
+    """The instruments the advisor may look up: the session's own (its trades, open
+    positions and question instrument, or its asset class) plus every sovereign curve,
+    which PMs reference by shorthand without holding."""
+    return [
+        inst
+        for inst in ctx.lookup.instruments.values()
+        if inst.instrument_id in ctx.instrument_names or inst.family == Family.RATES
+    ]
+
+
+def instruments_section(instruments: Iterable[Instrument]) -> str:
+    """The instruments a lookup accepts, one line per family as `id: name` pairs (the id
     alone when it is the name); empty when there are none."""
     by_family: dict[Family, list[str]] = {}
     for inst in sorted(instruments, key=lambda i: i.instrument_id):
@@ -322,19 +333,22 @@ def instrument_universe_section(instruments: Iterable[Instrument]) -> str:
     if not by_family:
         return ""
     lines = [f"- {family.value}: {'; '.join(entries)}" for family, entries in by_family.items()]
-    return "Market universe, the instruments a lookup accepts, by id or name:\n" + "\n".join(lines)
+    return (
+        "Instruments a lookup accepts, by id or name; nothing else can be looked up:\n"
+        + "\n".join(lines)
+    )
 
 
 def advisor_system(advisor_prompt: str, day: date, instruments: Iterable[Instrument]) -> str:
-    """The advisor prompt, the mentions instruction, the universe, then the session date.
+    """The advisor prompt, the mentions instruction, the instruments, then the session date.
 
-    The mentions instruction and the universe are appended here rather than living
+    The mentions instruction and the instruments are appended here rather than living
     in the authored prompt file, so swapping that file can never drop them.
     """
     parts = [
         advisor_prompt,
         _ADVISOR_MENTIONS_INSTRUCTION,
-        instrument_universe_section(instruments),
+        instruments_section(instruments),
     ]
     return "\n\n".join(part for part in parts if part) + f"\n\nToday is {day.isoformat()}."
 

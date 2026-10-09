@@ -15,9 +15,10 @@ from pm_traitbench.dialogue.context import PmTables, TradeNote, build_contexts, 
 from pm_traitbench.dialogue.prompts import (
     ADVISOR_TURN_SCHEMA,
     NARRATOR_OPENING_MESSAGE,
+    advisor_instruments,
     advisor_request,
     advisor_system,
-    instrument_universe_section,
+    instruments_section,
     market_levels_section,
     narrator_directive,
     narrator_request,
@@ -28,6 +29,7 @@ from pm_traitbench.dialogue.prompts import (
 from pm_traitbench.dialogue.session import parse_turn
 from pm_traitbench.dialogue.tools import TOOL_DEFINITIONS
 from pm_traitbench.enums import (
+    Family,
     InstrumentKind,
     Kind,
     RuleScope,
@@ -226,30 +228,49 @@ def test_advisor_system_appends_the_mentions_instruction_before_the_date():
     assert system.rindex("mentions") < system.index(f"Today is {DEFAULT_DATE.isoformat()}")
 
 
-def test_advisor_system_lists_the_universe_by_family_before_the_date(market_lookup):
-    instruments = list(market_lookup.instruments.values())
+def test_advisor_instruments_are_the_sessions_own_plus_every_sovereign_curve(market_lookup):
+    ctx = session_context(market_lookup)
+    chosen = advisor_instruments(ctx)
+
+    ids = {inst.instrument_id for inst in chosen}
+    assert set(ctx.instrument_names) <= ids
+    curves = {
+        i.instrument_id for i in market_lookup.instruments.values() if i.family == Family.RATES
+    }
+    assert curves <= ids
+    assert ids == set(ctx.instrument_names) | curves
+    assert ids < set(market_lookup.instruments)
+
+
+def test_advisor_system_lists_the_instruments_by_family_before_the_date(market_lookup):
+    instruments = advisor_instruments(session_context(market_lookup))
     system = advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE, instruments)
 
-    universe = instrument_universe_section(instruments)
-    assert universe in system
-    assert system.rindex("mentions") < system.index(universe)
-    assert system.index(universe) < system.index(f"Today is {DEFAULT_DATE.isoformat()}")
+    section = instruments_section(instruments)
+    assert section in system
+    assert "nothing else can be looked up" in section
+    assert system.rindex("mentions") < system.index(section)
+    assert system.index(section) < system.index(f"Today is {DEFAULT_DATE.isoformat()}")
     families = {inst.family for inst in instruments}
     for family in families:
-        assert f"- {family.value}: " in universe
+        assert f"- {family.value}: " in section
     for inst in instruments:
-        assert f"{inst.instrument_id}: {inst.name}" in universe
-    assert universe.count("\n") == len(families)
+        assert f"{inst.instrument_id}: {inst.name}" in section
+    assert section.count("\n") == len(families)
+    others = set(market_lookup.instruments) - {inst.instrument_id for inst in instruments}
+    assert others and not any(other in system for other in others)
 
 
 def test_advisor_system_omits_an_empty_universe_and_prints_a_bare_id_for_a_self_named_one(
     market_lookup,
 ):
-    assert instrument_universe_section([]) == ""
-    assert "Market universe" not in advisor_system("AUTHORED PROMPT TEXT", DEFAULT_DATE, ())
+    assert instruments_section([]) == ""
+    assert "Instruments a lookup accepts" not in advisor_system(
+        "AUTHORED PROMPT TEXT", DEFAULT_DATE, ()
+    )
     inst = next(iter(market_lookup.instruments.values()))
     self_named = inst.model_copy(update={"name": inst.instrument_id})
-    section = instrument_universe_section([self_named])
+    section = instruments_section([self_named])
     assert section.endswith(f"- {inst.family.value}: {inst.instrument_id}")
 
 
@@ -609,7 +630,7 @@ def test_advisor_request_contains_no_persona_rules_ideas_or_skeleton_text(market
     ctx = dataclasses.replace(ctx, pm_rules=(pm_rule,), ideas=(idea,))
 
     advisor_prompt = read_advisor_prompt(None)
-    system = advisor_system(advisor_prompt, ctx.skeleton.date, market_lookup.instruments.values())
+    system = advisor_system(advisor_prompt, ctx.skeleton.date, advisor_instruments(ctx))
     messages = [{"role": "user", "content": "Any levels I should know about on my names?"}]
     request = advisor_request(system, messages, _CONFIG.dialogue)
 
