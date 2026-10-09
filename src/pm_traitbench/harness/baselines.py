@@ -33,6 +33,7 @@ MCQ_INSTRUCTION = "Reply with the letter of one option only."
 OPEN_INSTRUCTION = "Reply to the PM as you would in the session."
 
 _LETTERS = "ABCD"
+_CACHED = {"cache_control": {"type": "ephemeral"}}
 
 
 # The advisor prompt tells the copilot to look every figure up; a probe comes with no
@@ -111,26 +112,32 @@ class _Baseline:
         """The parts of the user message that precede the date and probe."""
         return []
 
+    def _user_content(self, as_of: datetime.date, probe: PublicProbe) -> list[dict[str, Any]]:
+        """The memory as one cached block, when there is any, then the date and probe."""
+        blocks: list[dict[str, Any]] = []
+        memory = self._memory_text()
+        if memory:
+            blocks.append({"type": "text", "text": "\n\n".join(memory), **_CACHED})
+        tail = f"Today is {as_of.isoformat()}.\n\n{render_probe(probe)}"
+        blocks.append({"type": "text", "text": tail})
+        return blocks
+
     def answer(self, as_of: datetime.date, probe: PublicProbe) -> str:
         """Ask the model the probe and return its answer string, or "" when it stays unparsable."""
         config = self._config
         system = f"{read_advisor_prompt(config.dialogue.advisor_prompt_path)}\n\n"
         system += f"{NO_TOOLS_NOTE}\n\n{profile_text(self._profile)}"
-        user = "\n\n".join(
-            [*self._memory_text(), f"Today is {as_of.isoformat()}.", render_probe(probe)]
+        request = base_request(
+            config.harness.model,
+            config.harness.max_answer_tokens,
+            config.harness.effort,
+            system,
+            [{"role": "user", "content": self._user_content(as_of, probe)}],
+            ANSWER_SCHEMA,
         )
-        # Top-level cache_control lets a PM's probes share the long prefix.
-        request = {
-            **base_request(
-                config.harness.model,
-                config.harness.max_answer_tokens,
-                config.harness.effort,
-                system,
-                [{"role": "user", "content": user}],
-                ANSWER_SCHEMA,
-            ),
-            "cache_control": {"type": "ephemeral"},
-        }
+        # Breakpoints end the shared prefixes (system, then memory) so a PM's probes read
+        # them; the probe itself stays unmarked, as a marker there is written and never read.
+        request["system"] = [{"type": "text", "text": system, **_CACHED}]
         try:
             parsed, _ = self._runner.run(
                 send_parsed(

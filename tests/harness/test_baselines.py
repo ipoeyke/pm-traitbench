@@ -98,13 +98,13 @@ def test_full_context_sends_observed_transcript(tmp_path) -> None:
     assert sut.answer(AS_OF, _probe()) == "B"
 
     (request,) = clients[0].requests
-    user = request["messages"][0]["content"]
-    assert user.startswith(render_pm(sessions))
-    assert "Idea rules discussed:\nTrim at 10 percent." in user
-    assert user.count("Trim at 10 percent.") == 1
-    assert f"Today is {AS_OF.isoformat()}." in user
-    assert user.endswith(render_probe(_probe()))
-    system = request["system"]
+    memory, tail = request["messages"][0]["content"]
+    assert memory["text"].startswith(render_pm(sessions))
+    assert "Idea rules discussed:\nTrim at 10 percent." in memory["text"]
+    assert memory["text"].count("Trim at 10 percent.") == 1
+    assert tail["text"] == f"Today is {AS_OF.isoformat()}.\n\n{render_probe(_probe())}"
+    (system_block,) = request["system"]
+    system = system_block["text"]
     profile = _profile()
     assert read_advisor_prompt(config.dialogue.advisor_prompt_path) in system
     assert NO_TOOLS_NOTE in system
@@ -135,9 +135,10 @@ def test_no_memory_ignores_sessions(tmp_path) -> None:
     sut.answer(AS_OF, _probe())
 
     request = clients[0].requests[0]
-    assert "Session " not in request["messages"][0]["content"]
-    assert "Idea rules discussed" not in request["messages"][0]["content"]
-    assert "Cut losers at 5 percent." in request["system"]
+    (tail,) = request["messages"][0]["content"]
+    assert "Session " not in tail["text"]
+    assert "Idea rules discussed" not in tail["text"]
+    assert "Cut losers at 5 percent." in request["system"][0]["text"]
     sut.close()
 
 
@@ -150,7 +151,31 @@ def test_request_uses_harness_config(tmp_path) -> None:
     assert request["model"] == config.harness.model
     assert request["max_tokens"] == config.harness.max_answer_tokens
     assert request["output_config"]["effort"] == config.harness.effort.value
-    assert request["cache_control"] == {"type": "ephemeral"}
+    sut.close()
+
+
+def test_cache_breakpoints_end_the_shared_prefixes(tmp_path) -> None:
+    """System and memory are marked so a PM's probes read them; the probe block is not."""
+    cached = {"type": "ephemeral"}
+    sut, clients, _ = _make(FullContext, tmp_path)
+    for session in _sessions():
+        sut.observe(session)
+    sut.answer(AS_OF, _probe())
+    request = clients[0].requests[0]
+    assert "cache_control" not in request
+    assert request["system"][0]["cache_control"] == cached
+    memory, tail = request["messages"][0]["content"]
+    assert memory["cache_control"] == cached
+    assert "cache_control" not in tail
+    sut.close()
+
+    sut, clients, _ = _make(NoMemory, tmp_path)
+    sut.answer(AS_OF, _probe())
+    request = clients[0].requests[0]
+    assert "cache_control" not in request
+    assert request["system"][0]["cache_control"] == cached
+    (tail,) = request["messages"][0]["content"]
+    assert "cache_control" not in tail
     sut.close()
 
 
