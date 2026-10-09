@@ -418,16 +418,14 @@ def _suggestions(lookup: MarketLookup, instrument: str) -> list[str]:
         ),
         key=lambda item: (-item[0], item[1].instrument_id),
     )
-    return [_labelled(c) for score, c in scored if score >= _MIN_SCORE][:_MAX_CLOSE_MATCHES]
+    return [_label(c.instrument_id, c.name) for score, c in scored if score >= _MIN_SCORE][
+        :_MAX_CLOSE_MATCHES
+    ]
 
 
 def _label(instrument_id: str, name: str) -> str:
     """The name the PM would use with the id a lookup takes; the id alone when they match."""
     return instrument_id if name == instrument_id else f"{name} ({instrument_id})"
-
-
-def _labelled(c: Instrument) -> str:
-    return _label(c.instrument_id, c.name)
 
 
 def _resolve_or_error(
