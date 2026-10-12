@@ -11,7 +11,7 @@ from datetime import date
 
 from pm_traitbench.catalogues.loader import REVEALED_PATTERNS
 from pm_traitbench.engine.adapters import FORM_FOR_PREFERENCE
-from pm_traitbench.enums import CarrierSource, Kind, RuleResponse
+from pm_traitbench.enums import CarrierSource, Kind, PositionAction, RuleResponse
 from pm_traitbench.errors import PlanError
 from pm_traitbench.signals.inputs import PlanInputs
 from pm_traitbench.tables.schema import Trait
@@ -112,6 +112,9 @@ def carrier_pools(inputs: PlanInputs) -> dict[str, tuple[Carrier, ...]]:
                     )
                 trait = active_biases.get(param)
                 if flag in HOLD_FLAGS and source is CarrierSource.POSITION_DAY:
+                    # A hold flag can share a row with a same-day exit; that day is no hold.
+                    if row.action != PositionAction.HOLD:
+                        continue
                     dormant = trait is not None and inputs.is_dormant(trait.trait_id, row.date)
                     hold_key = (row.trade_idea_id, flag)
                     if not dormant:

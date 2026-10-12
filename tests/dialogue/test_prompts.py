@@ -485,6 +485,23 @@ def test_directive_carries_the_stance_line_and_day_trades(market_lookup):
     assert trade.trade_idea_id in opening_text
 
 
+def test_third_party_directive_tells_the_pm_not_to_adopt_it(market_lookup):
+    stance = Stance(
+        signal_id="sg_001",
+        trait_id="t_02",
+        mode=SignalMode.STATED,
+        entry=StanceEntry.THIRD_PARTY,
+        stance="say a colleague keeps pushing to get back to even after a loss",
+    )
+    ctx = session_context(market_lookup, stances=(stance,))
+    index = next(i for i, d in enumerate(ctx.turn_plan.pm_directives) if d.stance is not None)
+    assert "This is about them, not you" in narrator_directive(ctx, index)
+    own = Stance(**{**stance.model_dump(), "entry": StanceEntry.STATED})
+    ctx = session_context(market_lookup, stances=(own,))
+    index = next(i for i, d in enumerate(ctx.turn_plan.pm_directives) if d.stance is not None)
+    assert "This is about them" not in narrator_directive(ctx, index)
+
+
 def test_directive_trade_line_says_what_the_trade_does_and_why(market_lookup):
     trade = ledger_row(trade_idea_id="ti_001", date=DEFAULT_DATE)
     ctx = session_context(market_lookup, day_trades=(trade,))

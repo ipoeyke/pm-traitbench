@@ -439,6 +439,7 @@ class McqAction(StrEnum):
 
 class ProbeSkip(StrEnum):
     NO_SUPPORT = "no_supporting_signal"
+    OVERLAP = "overlapping_active_bias"
     NO_SITUATION = "no_situation"
     NO_HORIZON = "no_horizon"
 

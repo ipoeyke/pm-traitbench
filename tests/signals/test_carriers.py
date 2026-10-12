@@ -6,7 +6,15 @@ import pytest
 
 from pm_traitbench.catalogues.loader import REVEALED_PATTERNS
 from pm_traitbench.config import BIAS_PARAMS
-from pm_traitbench.enums import CarrierSource, DriftEventType, Expression, RuleResponse, Side, Tenor
+from pm_traitbench.enums import (
+    CarrierSource,
+    DriftEventType,
+    Expression,
+    PositionAction,
+    RuleResponse,
+    Side,
+    Tenor,
+)
 from pm_traitbench.errors import PlanError
 from pm_traitbench.signals.carriers import (
     BREACH_RESPONSES,
@@ -90,6 +98,24 @@ def test_hold_flags_count_only_first_day_per_idea() -> None:
     pools = carrier_pools(inputs)
     assert pools["t_01"] == (
         Carrier("t_01", "ti_001", date(2026, 1, 5), CarrierSource.POSITION_DAY, "hold"),
+    )
+
+
+def test_hold_flag_on_an_exit_day_is_no_carrier() -> None:
+    """A hold draw and a same-day discretionary exit share one row; the next held day counts."""
+    inputs = plan_inputs(
+        traits=(bias_trait("loss_aversion_lambda", trait_id="t_01"),),
+        ideas={"ti_001": idea_row()},
+        position_days=(
+            position_day(
+                date=date(2026, 1, 5), bias_flag="loss_aversion:hold", action=PositionAction.EXIT
+            ),
+            position_day(date=date(2026, 1, 6), bias_flag="loss_aversion:hold"),
+        ),
+    )
+    pools = carrier_pools(inputs)
+    assert pools["t_01"] == (
+        Carrier("t_01", "ti_001", date(2026, 1, 6), CarrierSource.POSITION_DAY, "hold"),
     )
 
 

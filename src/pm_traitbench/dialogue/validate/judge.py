@@ -50,7 +50,9 @@ STANCE_SYSTEM = (
     "out. Different wording, a paraphrase, or first acknowledging a point the advisor made all "
     "still count, as long as the message ends up doing what the instruction says. It fails "
     "only when it drops, reverses or waters down the instruction, for example by giving in to "
-    "the advisor's pushback. Give a one-sentence reason."
+    "the advisor's pushback. When the instruction attributes a habit or a request to someone "
+    "other than the PM, the message also fails if the PM claims that habit or request as "
+    "their own, or says they agree with it. Give a one-sentence reason."
 )
 
 LEAK_SCHEMA: dict[str, Any] = {

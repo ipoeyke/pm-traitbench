@@ -118,6 +118,7 @@ def test_stance_request_tags_the_message_before_the_instruction():
 
     assert set(request.keys()) == {"model", "max_tokens", "system", "messages", "output_config"}
     assert request["system"] == STANCE_SYSTEM
+    assert "someone other than the PM" in STANCE_SYSTEM
     assert request["messages"] == [
         {
             "role": "user",

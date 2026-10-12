@@ -48,7 +48,7 @@ BANK = CATALOGUE.probes
 ENTRIES = CATALOGUE.preferences_for(AssetClass.EQUITIES)
 HORIZONS = horizons(CONFIG)
 T = 25
-LOSS, DISP = "loss_aversion_lambda", "disposition_ratio"
+LOSS, DISP, EXIT = "loss_aversion_lambda", "disposition_ratio", "exit_deficiency"
 UPDATE_T, SIGNAL_T = 10, 12
 
 
@@ -137,8 +137,9 @@ def corpus(fixture_view, env_rules):
     return Corpus(env, persona, rules, fixture_view.dates)
 
 
-def presence(c, config=CONFIG, cp=None):
-    return presence_drafts(c.inputs(), cp or c.cp(), c.signals, BANK, rng_for, config)
+def presence(c, config=CONFIG, cp=None, overlaps=None):
+    overlaps = CATALOGUE.avoid.overlaps if overlaps is None else overlaps
+    return presence_drafts(c.inputs(), cp or c.cp(), c.signals, BANK, rng_for, config, overlaps)
 
 
 def mcq(c, cp=None, hz=HORIZONS, t=T):
@@ -168,7 +169,7 @@ def of_trait(drafts, trait_id):
 def test_active_bias_with_support_answers_yes_on_current(corpus):
     tid = corpus.bias(LOSS)
     sid = corpus.sig(tid)
-    drafts, skips = presence(corpus)
+    drafts, skips = presence(corpus, overlaps={})
     (d,) = of_trait(drafts, tid)
     assert (d.options, d.answer, d.sources) == (
         ("yes", "no", None, None),
@@ -178,6 +179,26 @@ def test_active_bias_with_support_answers_yes_on_current(corpus):
     assert d.supporting_signal_ids == (sid,)
     assert d.probe_type == ProbeType.TRAIT_PRESENCE
     assert not skips
+
+
+def test_inactive_bias_overlapped_by_an_evidenced_active_bias_gets_no_probe(corpus):
+    active = corpus.bias(LOSS)
+    corpus.sig(active)
+    overlapped = corpus.bias(EXIT, active=False)
+    drafts, skips = presence(corpus, overlaps={LOSS: (EXIT,)})
+    assert of_trait(drafts, overlapped) == []
+    assert skips == Counter({ProbeSkip.OVERLAP: 1})
+
+
+def test_overlap_skip_needs_support_and_reads_the_map_one_way(corpus):
+    active = corpus.bias(LOSS)
+    overlapped = corpus.bias(EXIT, active=False)
+    drafts, skips = presence(corpus, overlaps={LOSS: (EXIT,)})
+    assert len(of_trait(drafts, overlapped)) == 1
+    corpus.sig(active)
+    drafts, skips = presence(corpus, overlaps={EXIT: (LOSS,)})
+    assert len(of_trait(drafts, overlapped)) == 1
+    assert ProbeSkip.OVERLAP not in skips
 
 
 def test_active_bias_without_support_is_skipped_and_counted(corpus):

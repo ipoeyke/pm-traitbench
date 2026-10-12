@@ -163,13 +163,26 @@ def presence_drafts(
     bank: ProbeBank,
     rng_for: RngFor,
     config: Config,
+    overlaps: Mapping[str, tuple[str, ...]],
 ) -> Built:
-    """Yes/no probes: each bias, each held and former preference value, and never-held values."""
+    """Yes/no probes: each bias, each held and former preference value, and never-held values.
+
+    `overlaps` is the avoid catalogue's map; an inactive bias whose behaviour an active,
+    evidenced bias can show gets no "no" probe, since the transcript cannot tell them apart.
+    """
     drafts: list[Draft] = []
     skips: Skips = Counter()
     ptype = ProbeType.TRAIT_PRESENCE
+    biases = _biases(pm)
+    shown = {
+        overlapped
+        for param, t in biases
+        if bias_active_at(t, pm.drift_events, cp.day)
+        and supporting_ids(t, signals, pm.drift_events, cp.day)
+        for overlapped in overlaps.get(param, ())
+    }
 
-    for param, t in _biases(pm):
+    for param, t in biases:
         question = _line(pm, rng_for, bank.biases[param].presence, ptype, t.trait_id)
         if bias_active_at(t, pm.drift_events, cp.day):
             ids = supporting_ids(t, signals, pm.drift_events, cp.day)
@@ -180,6 +193,8 @@ def presence_drafts(
         elif t.active:
             ids = own_confirm_ids(t.trait_id, signals)
             drafts.append(_presence(t.trait_id, question, OptionSource.PRE_UPDATE, ids))
+        elif param in shown:
+            skips[ProbeSkip.OVERLAP] += 1
         else:
             ids = tuple(s.signal_id for s in third_party_signals(t.trait_id, signals))
             source = OptionSource.THIRD_PARTY if ids else OptionSource.NONE
