@@ -277,8 +277,10 @@ def test_advisor_system_omits_an_empty_universe_and_prints_a_bare_id_for_a_self_
 def test_advisor_prompt_points_lookups_at_the_listed_universe():
     prompt = read_advisor_prompt(None)
 
-    assert "id or exact name from the market universe" in prompt
-    assert "look up only the instruments the PM raises" in prompt
+    assert "id or exact name from that universe" in prompt
+    assert "look up only the instruments the PM names" in prompt
+    assert "one calendar lookup with no instrument" in prompt
+    assert "never a list to walk" in prompt
     assert "by the names the PM uses" not in prompt
 
 

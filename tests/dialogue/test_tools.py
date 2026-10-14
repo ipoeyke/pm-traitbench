@@ -300,6 +300,38 @@ def test_get_calendar_hides_surprise_on_future_rows(
     assert events[(dates[25].isoformat(), "macro_print")] == 0.4
 
 
+def test_get_calendar_without_an_instrument_returns_market_wide_rows_only(
+    market_lookup: MarketLookup, fixture_market: dict
+):
+    dates = fixture_market["dates"]
+    today = dates[25]
+
+    outcome = run_tool(
+        market_lookup,
+        "get_calendar",
+        {"instrument": None, "days_back": 15, "days_forward": 15},
+        today,
+    )
+
+    assert outcome.is_error is False
+    assert outcome.result["instrument_id"] is None
+    assert outcome.result["name"] is None
+    events = {e["event"] for e in outcome.result["events"]}
+    assert "macro_print" in events
+    assert "earnings" not in events
+
+
+def test_get_calendar_with_a_non_string_instrument_is_an_error(market_lookup: MarketLookup):
+    outcome = run_tool(
+        market_lookup,
+        "get_calendar",
+        {"instrument": 7, "days_back": 1, "days_forward": 1},
+        date(2026, 1, 5),
+    )
+    assert outcome.is_error is True
+    assert "must be a string or null" in outcome.result["error"]
+
+
 def test_get_calendar_with_string_days_back_is_an_error(
     market_lookup: MarketLookup, fixture_market: dict
 ):
