@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pm_traitbench.config import Gate2Config
-from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_parsed
+from pm_traitbench.dialogue.client import CachedClient, last_text_json, send_until_accepted
 from pm_traitbench.dialogue.prompts import base_request
 from pm_traitbench.enums import (
     Kind,
@@ -44,6 +44,9 @@ _MATERIALITY = (
 _QUOTE_INSTRUCTION = "Quote each statement verbatim from a PM turn in the transcript below."
 
 _IDEA_RULE_PARAMS = ("stop", "target")
+
+# A PM turn carries at most two stances and one described action worth quoting.
+STATEMENTS_PER_TURN = 3
 
 CLASSIFY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -126,8 +129,9 @@ class ClassifyUnit:
     """One session's classifiable signals, ready for a classification request and its scorer.
 
     `n_statements` is what the request asks the model to find: every self-statement turn,
-    classifiable or not, since the model counts them all. `max_statements` is the PM turn
-    count, the most a reply can list before it is rejected as runaway.
+    classifiable or not, since the model counts them all. `max_statements` is
+    `STATEMENTS_PER_TURN` per PM turn, the most a reply can list before it is rejected as
+    runaway.
     """
 
     session: Session
@@ -183,7 +187,8 @@ def classify_units(
                 signals=session_signals,
                 turn_index_by_signal=turn_index_by_signal,
                 n_statements=n_statements,
-                max_statements=sum(1 for turn in log.turns if turn.role == TurnRole.PM),
+                max_statements=STATEMENTS_PER_TURN
+                * sum(1 for turn in log.turns if turn.role == TurnRole.PM),
             )
         )
     return tuple(units)
@@ -286,20 +291,23 @@ class _ClassificationReply(BaseModel):
 
 def parse_classification(
     response: Mapping[str, Any], max_statements: int
-) -> tuple[Statement, ...] | None:
-    """A validated 1-to-`max_statements` statements, else `None`.
+) -> tuple[tuple[Statement, ...] | None, str]:
+    """A validated 1-to-`max_statements` statements with an empty reason, else `None` and why.
 
-    The ceiling is the session's PM turn count, not the count asked for: a reply that
+    The ceiling is a few statements per PM turn, not the count asked for: a reply that
     also quotes a retraction's two halves or a described action is fine, since the
     scorer takes only the quote in each signal's own turn.
     """
     try:
         reply = _ClassificationReply.model_validate(last_text_json(response))
-    except ValidationError:
-        return None
-    if not 1 <= len(reply.statements) <= max_statements:
-        return None
-    return reply.statements
+    except ValidationError as exc:
+        return None, f"the classification reply was unparsable or schema-invalid: {exc}"
+    n = len(reply.statements)
+    if n == 0:
+        return None, "the classification reply listed no statement"
+    if n > max_statements:
+        return None, f"the classification reply listed {n} statements, ceiling {max_statements}"
+    return reply.statements, ""
 
 
 def normalise(text: str) -> str:
@@ -347,13 +355,13 @@ async def send_classification(
     session_id: str,
     max_retries: int,
 ) -> tuple[tuple[Statement, ...], int]:
-    """Send the classification request through `send_parsed`; raises `Gate2Error` at the cap."""
-    return await send_parsed(
+    """Send the classification request until it parses; raises `Gate2Error` at the cap."""
+    _, statements, rejected = await send_until_accepted(
         client,
         request,
         lambda response: parse_classification(response, max_statements),
         scope=session_id,
         max_retries=max_retries,
         error_type=Gate2Error,
-        reason="the classification reply was unparsable, schema-invalid or out of bounds",
     )
+    return statements, rejected

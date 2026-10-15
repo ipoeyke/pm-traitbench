@@ -19,6 +19,7 @@ from pm_traitbench.enums import (
 from pm_traitbench.errors import Gate2Error
 from pm_traitbench.gates.gate2.classify import (
     SELF_STATEMENT_ENTRIES,
+    STATEMENTS_PER_TURN,
     ClassifyUnit,
     Statement,
     classify_request,
@@ -121,9 +122,9 @@ def test_classify_units_keep_only_own_confirm_stated_signals_in_surviving_sessio
     assert [s.signal_id for s in unit.signals] == ["sg_001", "sg_002"]
     assert unit.turn_index_by_signal == {"sg_001": 2, "sg_002": 0}
     # The model is asked for every self-statement turn, the claim included, and may list
-    # up to one statement per PM turn.
+    # up to a few statements per PM turn.
     assert unit.n_statements == 3
-    assert unit.max_statements == 3
+    assert unit.max_statements == 3 * STATEMENTS_PER_TURN
 
 
 def test_classify_units_raises_when_a_surviving_session_has_no_log_or_skeleton():
@@ -241,17 +242,25 @@ def test_classify_request_ledger_section_says_none_when_empty():
 
 def test_parse_classification_bounds_and_enum():
     zero = classify_reply([])
-    assert parse_classification(zero, max_statements=2) is None
+    assert parse_classification(zero, max_statements=2) == (
+        None,
+        "the classification reply listed no statement",
+    )
 
     too_many = classify_reply([("a", "bias"), ("b", "preference"), ("c", "bias")])
-    assert parse_classification(too_many, max_statements=2) is None
+    assert parse_classification(too_many, max_statements=2) == (
+        None,
+        "the classification reply listed 3 statements, ceiling 2",
+    )
 
     bad_kind = classify_reply([("a", "habit")])
-    assert parse_classification(bad_kind, max_statements=2) is None
+    parsed, reason = parse_classification(bad_kind, max_statements=2)
+    assert parsed is None
+    assert reason.startswith("the classification reply was unparsable or schema-invalid")
 
     good = classify_reply([("a", "bias"), ("b", "preference")])
-    statements = parse_classification(good, max_statements=2)
-    assert statements is not None
+    statements, reason = parse_classification(good, max_statements=2)
+    assert statements is not None and reason == ""
     assert [s.quote for s in statements] == ["a", "b"]
     assert [s.kind for s in statements] == [Kind.BIAS, Kind.PREFERENCE]
 

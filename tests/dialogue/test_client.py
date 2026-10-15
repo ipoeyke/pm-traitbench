@@ -774,6 +774,33 @@ def test_cached_client_aclose_is_a_noop_when_the_inner_client_has_no_aclose(
     asyncio.run(cached.aclose())  # must not raise despite no aclose method
 
 
+def test_send_until_accepted_saves_each_rejected_reply_with_its_reason(tmp_path: Path) -> None:
+    def never_parses(_response):
+        return None, "the reply was refused"
+
+    cached = CachedClient(lambda: FakeClient(default_responder), tmp_path, token_budget=None)
+
+    with pytest.raises(DialogueError):
+        asyncio.run(
+            send_until_accepted(
+                cached,
+                _REQUEST,
+                never_parses,
+                scope=_SCOPE,
+                max_retries=1,
+                error_type=DialogueError,
+            )
+        )
+
+    saved = sorted((tmp_path / "rejected" / _SCOPE).glob("*.json"))
+    assert [path.name.rsplit("-", 1)[1] for path in saved] == ["1.json", "2.json"]
+    payload = json.loads(saved[0].read_text(encoding="utf-8"))
+    assert payload["reason"] == "the reply was refused"
+    assert payload["cached"] is False
+    assert payload["response"]["content"]
+    assert not list(tmp_path.glob("??/*.json"))
+
+
 def test_send_until_accepted_uses_the_label_in_its_error(tmp_path: Path) -> None:
     def never_parses(_response):
         return None, "the reply was refused"
