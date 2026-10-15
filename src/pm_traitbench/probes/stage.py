@@ -177,7 +177,7 @@ def run(config: Config, store: DataStore) -> dict[str, Any]:
                 return stream(config.seed.root, "probes", pm_id, day.isoformat(), purpose, *keys)
 
             built = (
-                presence_drafts(pm, cp, signals, bank, rng_for, config),
+                presence_drafts(pm, cp, signals, bank, rng_for, config, catalogue.avoid.overlaps),
                 mcq_drafts(pm, cp, signals, bank, rng_for, env, t, mcq_horizon, config),
                 in_situ_drafts(pm, cp, signals, bank, rng_for, env, t, config),
                 routine_drafts(pm, cp, signals, bank, rng_for, env, t, config),

@@ -233,9 +233,10 @@ def test_refusal_is_retried_and_not_cached(market_lookup, tmp_path):
     result = asyncio.run(narrate_session(ctx, client, _NO_FALLBACK, _ADVISOR_PROMPT))
 
     assert calls["pm"] == 2
-    cache_files = list(tmp_path.rglob("*.json"))
+    cache_files = list(tmp_path.glob("??/*.json"))
     # one cache file per accepted reply: the retried pm turn plus the advisor turn
     assert len(cache_files) == 2
+    assert len(list((tmp_path / "rejected").rglob("*.json"))) == 1
     assert result.rejected_replies == 1
 
 
@@ -256,9 +257,10 @@ def test_blank_reply_is_retried_and_never_committed(market_lookup, tmp_path):
     result = asyncio.run(narrate_session(ctx, client, _CONFIG, _ADVISOR_PROMPT))
 
     assert calls["pm"] == 2
-    cache_files = list(tmp_path.rglob("*.json"))
+    cache_files = list(tmp_path.glob("??/*.json"))
     # one cache file per accepted reply: the blank reply is never cached
     assert len(cache_files) == 2
+    assert len(list((tmp_path / "rejected").rglob("*.json"))) == 1
     assert result.rejected_replies == 1
 
 

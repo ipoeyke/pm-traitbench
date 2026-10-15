@@ -58,7 +58,7 @@ src/pm_traitbench/catalogues/advisor_prompt.md
 - `LlmClient` protocol: `async send(request: dict) -> dict`. The request is the full Messages API body (model, system, messages, tools, `output_config`); the response is the SDK message serialised to a dict.
 - `AnthropicClient`: wraps `AsyncAnthropic` behind an `asyncio.Semaphore(max_concurrency)`. SDK retries handle 429, 5xx and connection errors; errors are handled by typed exception class, never by message text. Built lazily so a fully cached run needs no credentials.
 - `CachedClient(inner, cache_dir, token_budget)`: `send(request, *, scope)` keys on sha256 of the session id (the scope) plus the canonical request JSON (sorted keys, no whitespace; model id is part of the body), so two sessions that happen to build byte-identical requests never share a reply. Hit: read `<cache_dir>/<key[:2]>/<key>.json`. Miss: call `inner`, and write only after the caller accepts the response (`commit(key, response)`), via a temp file and rename, so an invalid or refused response is never cached and a crash never leaves a partial entry. Counts calls, hits and fresh `input`, `output` and cache-read tokens; raises `DialogueBudgetError` before a fresh call once fresh input plus output tokens reach `token_budget`; the budget is a soft stop, since calls already in flight can overshoot it by up to the concurrency limit. An unreadable cache entry (for example after a power loss) is treated as a miss and rewritten on commit.
-- Cache root: `<data-dir>/cache/llm/`, under the already gitignored `data/`.
+- Cache root: `<data-dir>/cache/llm/`, under the already gitignored `data/`. A reply a caller rejects is saved with its reason under `cache/llm/rejected/<scope>/<key>-<attempt>.json`, outside the lookup path, so a failed run shows what the model said and why it was refused.
 
 ## Tools (`tools.py`)
 
@@ -69,7 +69,7 @@ Five tools, `strict: true`, each taking `instrument` (an `instrument_id` or an i
 | `get_quote` | price and, for a credit issuer, `spread_bp` on the session date | `market/prices` |
 | `get_curve` | levels by tenor for a sovereign or commodity curve | `market/curves` |
 | `get_consensus` | `street_score`, `street_view`, `positioning_pct`, `positioning` | `market/consensus` |
-| `get_calendar` | events for the instrument (and market-wide rows) in a window of at most 20 trading days back and 20 forward; forward rows carry date and event, with `surprise` always null | `market/calendar` |
+| `get_calendar` | events for the instrument (and market-wide rows), or the market-wide rows alone when `instrument` is null, in a window of at most 20 trading days back and 20 forward; forward rows carry date and event, with `surprise` always null | `market/calendar` |
 | `get_history` | the trailing `n` (at most 60) trading days of price or spread | `market/prices` |
 
 An unknown instrument, a missing field or an out-of-range window returns an `is_error` tool result listing the valid choices; the advisor carries on. Forward calendar rows are the schedule a real desk knows in advance; their surprise is future information and is withheld.
@@ -93,7 +93,7 @@ Opening instruction by kind, when turn 1 carries no stance that already sets the
 
 **Narrator request.** The narrator is the `assistant`; the advisor's texts arrive as `user` messages. The first message is a fixed `user` line opening the session.
 - `system` (stable for the whole session, cache-marked): role instruction (write only the PM's side, in the given voice, never name a psychological bias or trait); mandate facts; `stated_profile.self_description`; PM-scope rule texts and the idea-scope rule texts of the session's ideas; those ideas (instrument name, side, entry, target, stop, thesis template); the voice line; the forbidden list rendered from `avoid.yaml` for the skeleton's `forbidden_trait_ids` (by the trait's param) and `forbidden_pref_params`; the instruction to mention only the trades listed in a turn's directive and never to invent a trade.
-- Per PM turn: a mid-conversation `system` message with that turn's directive (stance line, trades to mention with their `trade_idea_id`, side, size, instrument and price, or opening instruction; "continue naturally" when the turn carries nothing).
+- Per PM turn: a mid-conversation `system` message with that turn's directive (stance line, trades to mention with their `trade_idea_id`, side, size, instrument and price, or opening instruction; "continue naturally" when the turn carries nothing). A third-party stance adds that it is about someone else and the PM must not share, agree with or want the same; the stance judge fails a turn that does.
 - `output_config.format`: JSON schema `{text: string, mentions: [Mention]}`.
 - The narrator never sees a trait id, bias param, bias trait value, mode, or which directive lines are signals (plan section 4). A preference value reaches it only inside the stance line that plants it, since that stance is the PM stating or reacting to the preference.
 

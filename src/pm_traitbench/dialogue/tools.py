@@ -232,16 +232,18 @@ class MarketLookup:
         return rows[idx] if idx >= 0 else None
 
     def calendar_events(
-        self, instrument_id: str, today: date, days_back: int, days_forward: int
+        self, instrument_id: str | None, today: date, days_back: int, days_forward: int
     ) -> tuple[CalendarEvent, ...]:
         """Own and market-wide calendar rows in a trading-day window around `today`.
+
+        With no instrument, the market-wide rows alone.
 
         The window spans `days_back` trading days before through
         `days_forward` trading days after `today`, always including `today`
         itself even when it falls on a holiday.
         """
         lo, hi = self._calendar_window(today, days_back, days_forward)
-        own = self._calendar_by_instrument.get(instrument_id, ())
+        own = () if instrument_id is None else self._calendar_by_instrument.get(instrument_id, ())
         combined = [row for row in own if lo <= row.date <= hi]
         combined += [row for row in self._calendar_market_wide if lo <= row.date <= hi]
         return tuple(sorted(combined, key=lambda r: (r.date, r.event.value, r.instrument_id or "")))
@@ -313,14 +315,18 @@ TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {
         "name": AdvisorTool.GET_CALENDAR.value,
         "description": (
-            "Look up scheduled and past market events near today for an instrument, "
-            "including market-wide events."
+            "Look up scheduled and past market events near today: market-wide events, plus "
+            "an instrument's own events when one is given. Pass null for the market as a whole."
         ),
         "strict": True,
         "input_schema": {
             "type": "object",
             "properties": {
-                "instrument": _instrument_schema("Instrument id or name."),
+                # A nullable string must be an anyOf: the API rejects a type list here.
+                "instrument": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": "Instrument id or name, or null for market-wide events only.",
+                },
                 "days_back": {
                     "type": "integer",
                     "description": "Trading days before today to include, 0 to 20.",
@@ -546,9 +552,13 @@ def _get_calendar(
     today: date,
     session_names: Mapping[str, str],
 ) -> ToolOutcome:
-    instrument = _require_str(tool_input, "instrument")
-    if isinstance(instrument, ToolOutcome):
-        return instrument
+    if "instrument" not in tool_input:
+        return _error("missing required field 'instrument'")
+    instrument = tool_input["instrument"]
+    if instrument is not None and not isinstance(instrument, str):
+        return _error(
+            f"field 'instrument' must be a string or null, got {type(instrument).__name__}"
+        )
     days_back = _require_int(tool_input, "days_back")
     if isinstance(days_back, ToolOutcome):
         return days_back
@@ -561,10 +571,15 @@ def _get_calendar(
         return _error(
             f"days_forward must be between {_WINDOW_MIN} and {_WINDOW_MAX}, got {days_forward}"
         )
-    resolved = _resolve_or_error(lookup, instrument, session_names)
-    if isinstance(resolved, ToolOutcome):
-        return resolved
-    rows = lookup.calendar_events(resolved.instrument_id, today, days_back, days_forward)
+    if instrument is None:
+        instrument_id: str | None = None
+        name: str | None = None
+    else:
+        resolved = _resolve_or_error(lookup, instrument, session_names)
+        if isinstance(resolved, ToolOutcome):
+            return resolved
+        instrument_id, name = resolved.instrument_id, resolved.name
+    rows = lookup.calendar_events(instrument_id, today, days_back, days_forward)
     events = [
         {
             "date": row.date.isoformat(),
@@ -574,7 +589,7 @@ def _get_calendar(
         for row in rows
     ]
     return ToolOutcome(
-        result={"instrument_id": resolved.instrument_id, "name": resolved.name, "events": events},
+        result={"instrument_id": instrument_id, "name": name, "events": events},
         is_error=False,
     )
 

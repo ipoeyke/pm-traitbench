@@ -200,6 +200,20 @@ class CachedClient:
     def _path_for(self, key: str) -> Path:
         return self._cache_dir / key[:2] / f"{key}.json"
 
+    def reject(self, reply: Reply, scope: str, reason: str) -> None:
+        """Save a rejected reply with its reason under `rejected/`, outside the lookup path.
+
+        Attempts of one request number upwards, so a retry never overwrites the one before.
+        """
+        folder = self._cache_dir / "rejected" / scope
+        folder.mkdir(parents=True, exist_ok=True)
+        attempt = sum(1 for _ in folder.glob(f"{reply.key}-*.json")) + 1
+        payload = {"key": reply.key, "reason": reason, "cached": reply.cached}
+        payload["response"] = reply.response
+        (folder / f"{reply.key}-{attempt}.json").write_text(
+            json.dumps(payload, sort_keys=True), encoding="utf-8"
+        )
+
     async def send(self, request: Mapping[str, Any], *, scope: str, refresh: bool = False) -> Reply:
         """Send `request`; `refresh=True` skips the cache read, forcing a fresh inner call.
 
@@ -351,9 +365,10 @@ async def send_until_accepted[T](
     A rejected reply that came from the cache makes every later attempt bypass
     the cache too, so an entry that no longer validates is never replayed forever
     and a run does not alternate between it and a fresh call. An accepted reply is
-    committed before it is returned with the rejected count; at the cap, raises
-    `error_type` with the last rejection's reason, led by `label` and `scope`
-    (a session id by default, a unit id of another kind when `label` is set).
+    committed before it is returned with the rejected count; a rejected one is saved
+    with its reason by `client.reject`. At the cap, raises `error_type` with the last
+    rejection's reason, led by `label` and `scope` (a session id by default, a unit id
+    of another kind when `label` is set).
     """
     refresh = False
     rejected = 0
@@ -364,6 +379,7 @@ async def send_until_accepted[T](
         if accepted is not None:
             client.commit(reply)
             return reply, accepted, rejected
+        client.reject(reply, scope, reason)
         refresh = refresh or reply.cached
         rejected += 1
     raise error_type(f"{scope_prefix(label, scope)}{reason}")
